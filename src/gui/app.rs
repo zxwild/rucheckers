@@ -20,7 +20,8 @@ use rucheckers::settings::Settings;
 use rucheckers::sound::Sound;
 use rucheckers::tree::{GameTree, NodeId};
 use rucheckers::ui::anim::{segment_seconds, MoveAnimation};
-use rucheckers::ui::geometry::BoardLayout;
+use rucheckers::ui::fx::Discharge;
+use rucheckers::ui::geometry::{screen_cell, BoardLayout};
 use rucheckers::ui::input::InputEvent;
 use rucheckers::ui::session::{Nav, Session, SessionEvent};
 use std::collections::VecDeque;
@@ -84,7 +85,10 @@ pub struct CheckersApp {
     anims: VecDeque<Playing>,
     glide: Option<Glide>,
     dragging: Option<Square>,
-    last_input_was_drop: bool,
+    /// Сколько прыжков хода человека уже показано на доске к моменту его завершения.
+    human_first_step: Option<usize>,
+    /// Электрические разряды, которые сейчас видны на доске.
+    effects: Vec<Discharge>,
     /// Отложенные звуки: время и сигнал.
     sounds: Vec<(f64, Sound)>,
     new_game: Option<NewGameDraft>,
@@ -115,7 +119,8 @@ impl CheckersApp {
             anims: VecDeque::new(),
             glide: None,
             dragging: None,
-            last_input_was_drop: false,
+            human_first_step: None,
+            effects: Vec::new(),
             sounds: Vec::new(),
             // Перед первой партией игрок выбирает цвет и уровень.
             new_game: Some(NewGameDraft {
@@ -160,6 +165,7 @@ impl CheckersApp {
 
     fn reset_view(&mut self) {
         self.anims.clear();
+        self.effects.clear();
         self.glide = None;
         self.dragging = None;
         self.sounds.clear();
@@ -194,15 +200,15 @@ impl CheckersApp {
         let outcome = played.outcome();
         let human = self.session.human();
 
-        // Ход компьютера показывается целиком. У хода человека уже показаны все шаги,
-        // кроме последнего, а при перетаскивании — и он тоже.
+        // Ход компьютера показывается целиком. У хода человека показываются только
+        // прыжки, которых ещё не было на доске: все оставшиеся, если конечное поле
+        // указано щелчком, и ни одного, если шашку на него перетащили.
         let steps = mv.path().len();
+        let shown = self.human_first_step.take();
         let first_step = if by_computer {
             0
-        } else if self.last_input_was_drop {
-            steps
         } else {
-            steps - 1
+            shown.unwrap_or(steps - 1).min(steps)
         };
         let queued_end = self.anims.back().map(|p| p.anim.start() + p.anim.total_seconds());
         let start = queued_end.map_or(now, |end| end.max(now));
@@ -217,13 +223,29 @@ impl CheckersApp {
             self.sounds.push((time, step_sound(&mv, first_step + i)));
             last_landing = time;
         }
+        // Несколько побитых шашек: из бьющей шашки по ним проходит электрический разряд.
+        if let Some(discharge_start) = anim.discharge_start() {
+            let flipped = human == Color::Black;
+            let cell = |sq: Square| screen_cell(f32::from(sq.file()), f32::from(sq.rank()), flipped);
+            let targets = anim.strike_order().into_iter().map(cell).collect();
+            self.effects.push(Discharge::new(
+                cell(mv.to()),
+                targets,
+                discharge_start,
+                entropy_seed(),
+            ));
+            self.sounds.push((discharge_start, Sound::Discharge));
+        }
         if let Some(outcome) = outcome {
             let sound = match outcome.winner() {
                 Some(winner) if winner == human => Sound::Win,
                 Some(_) => Sound::Loss,
                 None => Sound::Draw,
             };
-            self.sounds.push((last_landing + END_SOUND_DELAY, sound));
+            // Звук окончания партии не накладывается на разряд.
+            let after_move = start + anim.total_seconds() + 0.15;
+            self.sounds
+                .push(((last_landing + END_SOUND_DELAY).max(after_move), sound));
         }
 
         self.anims.push_back(Playing { anim, before });
@@ -466,6 +488,7 @@ impl CheckersApp {
         }
         let square_at = |point: Option<Pos2>| point.and_then(|p| layout.square_at(p.x, p.y));
         let promoted_before = self.session.input().promoted_so_far();
+        let steps_before = self.session.input().steps().len();
 
         if response.drag_started() {
             let origin = ctx.input(|i| i.pointer.press_origin()).or(pointer);
@@ -479,14 +502,14 @@ impl CheckersApp {
         if response.drag_stopped() && self.dragging.take().is_some() {
             if let Some(sq) = square_at(pointer) {
                 let event = self.session.drop_on(sq);
-                self.after_input(event, true, promoted_before, now);
+                self.after_input(event, true, promoted_before, steps_before, now);
             }
         }
         if response.clicked() {
             match square_at(response.interact_pointer_pos().or(pointer)) {
                 Some(sq) => {
                     let event = self.session.click(sq);
-                    self.after_input(event, false, promoted_before, now);
+                    self.after_input(event, false, promoted_before, steps_before, now);
                 }
                 None => {
                     // Щелчок мимо игровых полей снимает выбор, но не прерывает начатое взятие.
@@ -503,7 +526,14 @@ impl CheckersApp {
         }
     }
 
-    fn after_input(&mut self, event: InputEvent, via_drop: bool, promoted_before: bool, now: f64) {
+    fn after_input(
+        &mut self,
+        event: InputEvent,
+        via_drop: bool,
+        promoted_before: bool,
+        steps_before: usize,
+        now: f64,
+    ) {
         match event {
             InputEvent::Step { from, to } => {
                 let landing = if via_drop {
@@ -526,8 +556,10 @@ impl CheckersApp {
                     },
                 ));
             }
-            InputEvent::Move(_) => {
-                self.last_input_was_drop = via_drop;
+            InputEvent::Move(mv) => {
+                // Перетащенная шашка уже стоит на конечном поле; после щелчка остаётся
+                // показать прыжки, которые ещё не были сделаны по шагам.
+                self.human_first_step = Some(if via_drop { mv.path().len() } else { steps_before });
                 self.process_events(now);
             }
             InputEvent::Selected(_) | InputEvent::Cleared | InputEvent::None => self.glide = None,
@@ -551,10 +583,11 @@ impl CheckersApp {
             self.sprites = Some(board::PieceSprites::new(ctx, cell_px));
         }
 
-        // Законченные анимации убираются из очереди.
+        // Законченные анимации и погасшие разряды убираются.
         while self.anims.front().is_some_and(|p| p.anim.frame(now).finished) {
             self.anims.pop_front();
         }
+        self.effects.retain(|effect| !effect.is_finished(now));
         if self
             .glide
             .as_ref()
@@ -575,7 +608,6 @@ impl CheckersApp {
         let mut position = *node.position();
         let mut hidden: Option<Square> = None;
         let mut dimmed: u32 = 0;
-        let mut dim_alpha = CAPTURED_ALPHA;
         let mut mover: Option<(Pos2, Piece, bool)> = None;
         let mut highlighted: Option<Move> = node.mv().copied();
 
@@ -585,9 +617,6 @@ impl CheckersApp {
             position = playing.before;
             hidden = Some(mv.from());
             dimmed = frame.jumped;
-            if frame.arrived {
-                dim_alpha = CAPTURED_ALPHA * frame.captured_alpha;
-            }
             let mut piece = playing.anim.piece();
             if frame.is_king {
                 piece.kind = Kind::King;
@@ -647,7 +676,13 @@ impl CheckersApp {
                 let Some(piece) = position.piece_at(sq) else {
                     continue;
                 };
-                let alpha = if dimmed & sq.bit() != 0 { dim_alpha } else { 1.0 };
+                // Побитая шашка бледнеет, а в конце хода исчезает (каждая — в свой момент).
+                let alpha = if dimmed & sq.bit() != 0 {
+                    let fade = self.anims.front().map_or(1.0, |p| p.anim.captured_alpha(sq, now));
+                    CAPTURED_ALPHA * fade
+                } else {
+                    1.0
+                };
                 if alpha > 0.01 {
                     board::draw_piece(
                         painter,
@@ -678,6 +713,11 @@ impl CheckersApp {
             for &sq in &targets {
                 board::draw_target(painter, layout, sq, hovered == Some(sq));
             }
+            // Конечные поля серийного взятия: их можно указать сразу.
+            let finals = input.final_targets();
+            for &sq in &finals {
+                board::draw_final_target(painter, layout, sq, hovered == Some(sq));
+            }
             if let Some(sq) = hovered {
                 let over_piece = pointer.is_some_and(|p| {
                     p.distance(board::square_center(layout, sq)) <= board::piece_hit_radius(layout.cell)
@@ -687,7 +727,7 @@ impl CheckersApp {
                 } else {
                     movable.contains(&sq)
                 };
-                hover_hand = targets.contains(&sq) || (can_pick && over_piece);
+                hover_hand = targets.contains(&sq) || finals.contains(&sq) || (can_pick && over_piece);
             }
         }
 
@@ -714,9 +754,14 @@ impl CheckersApp {
             );
         }
 
-        // Движущаяся шашка — поверх всего.
+        // Движущаяся шашка — поверх остальных.
         if let Some((at, piece, lifted)) = mover {
             board::draw_piece(painter, sprites, at, layout.cell, piece, 1.0, lifted);
+        }
+
+        // Разряды и искры — поверх шашек.
+        for effect in &self.effects {
+            board::draw_discharge(painter, layout, &effect.frame(now), ppp);
         }
 
         if interactive {
@@ -1211,7 +1256,10 @@ impl eframe::App for CheckersApp {
 
         // Перерисовка: непрерывно во время анимации и перетаскивания, реже — пока
         // компьютер думает или открыт системный диалог.
-        let animating = !self.anims.is_empty() || self.glide.is_some() || self.dragging.is_some();
+        let animating = !self.anims.is_empty()
+            || !self.effects.is_empty()
+            || self.glide.is_some()
+            || self.dragging.is_some();
         if animating {
             ctx.request_repaint();
         } else if self.session.is_thinking() || self.file_job.is_some() {

@@ -9,6 +9,18 @@ use crate::board::Square;
 /// Доля стороны доски, занимаемая рамкой с координатами (с каждой стороны).
 pub const FRAME_FRACTION: f32 = 0.05;
 
+/// Точка доски в экранных клетках: единица — сторона клетки, ось Y направлена вниз,
+/// начало — левый верхний угол игрового поля. Целым `file` и `rank` соответствует
+/// центр клетки. `flipped` — доска перевёрнута (внизу чёрные).
+pub fn screen_cell(file: f32, rank: f32, flipped: bool) -> (f32, f32) {
+    let (column, row) = if flipped {
+        (7.0 - file, rank)
+    } else {
+        (file, 7.0 - rank)
+    };
+    (column + 0.5, row + 0.5)
+}
+
 /// Размещение доски в прямоугольной области.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct BoardLayout {
@@ -118,14 +130,14 @@ impl BoardLayout {
     /// Точка, соответствующая дробным координатам доски (центр клетки `(file, rank)`
     /// при целых значениях). Используется для движущихся шашек.
     pub fn point_at(&self, file: f32, rank: f32) -> (f32, f32) {
-        let (column, row) = if self.flipped {
-            (7.0 - file, rank)
-        } else {
-            (file, 7.0 - rank)
-        };
+        self.cell_to_point(screen_cell(file, rank, self.flipped))
+    }
+
+    /// Точка окна, соответствующая точке в экранных клетках (см. [`screen_cell`]).
+    pub fn cell_to_point(&self, cell: (f32, f32)) -> (f32, f32) {
         (
-            self.field_x + (column + 0.5) * self.cell,
-            self.field_y + (row + 0.5) * self.cell,
+            self.field_x + cell.0 * self.cell,
+            self.field_y + cell.1 * self.cell,
         )
     }
 }
@@ -161,6 +173,23 @@ mod tests {
                     "{w}x{h}@{ppp}: {cell_px}"
                 );
                 assert!((l.frame() * 2.0 + l.field_size() - l.outer_size).abs() < 1e-3);
+            }
+        }
+    }
+
+    #[test]
+    fn screen_cells_follow_the_orientation() {
+        // Белые внизу: a1 — левая нижняя клетка, h8 — правая верхняя.
+        assert_eq!(screen_cell(0.0, 0.0, false), (0.5, 7.5));
+        assert_eq!(screen_cell(7.0, 7.0, false), (7.5, 0.5));
+        // Доска перевёрнута: a1 справа вверху.
+        assert_eq!(screen_cell(0.0, 0.0, true), (7.5, 0.5));
+        assert_eq!(screen_cell(7.0, 7.0, true), (0.5, 7.5));
+        for flipped in [false, true] {
+            let layout = BoardLayout::fit(13.0, 7.0, 640.0, 480.0, flipped, 1.5);
+            for sq in Square::all() {
+                let cell = screen_cell(f32::from(sq.file()), f32::from(sq.rank()), flipped);
+                assert_eq!(layout.cell_to_point(cell), layout.square_center(sq));
             }
         }
     }

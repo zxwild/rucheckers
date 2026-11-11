@@ -1,8 +1,9 @@
 //! Выбор хода мышью: щелчки и перетаскивание, пошаговое выполнение серийного взятия.
 //!
 //! Модуль не знает ни об окне, ни о координатах: он получает поля доски и возвращает
-//! события. Серийное взятие выполняется по одному прыжку; когда маршрутов несколько,
-//! игрок сам выбирает следующее поле.
+//! события. Серийное взятие можно выполнять по одному прыжку — тогда при нескольких
+//! маршрутах игрок сам выбирает следующее поле — или сразу указать конечное поле,
+//! если результат взятия при этом определён однозначно.
 
 use crate::board::Square;
 use crate::moves::Move;
@@ -117,6 +118,62 @@ impl MoveInput {
         squares
     }
 
+    /// Взятие, которое завершится на поле `sq`, если указать это поле сразу, минуя
+    /// промежуточные прыжки.
+    ///
+    /// Возвращает ход, только если результат однозначен: все подходящие маршруты бьют
+    /// одни и те же шашки (тогда берётся первый из них). Если на одно поле ведут взятия
+    /// с разным результатом, маршрут нужно уточнить шагами.
+    fn shortcut(&self, sq: Square) -> Option<Move> {
+        if self.current_square() == Some(sq) {
+            // Щелчок по самой шашке — это снятие выбора, а не обход по кругу.
+            return None;
+        }
+        let done = self.steps.len();
+        let mut found: Option<Move> = None;
+        for mv in self.candidates() {
+            if mv.to() != sq || mv.path().len() <= done + 1 {
+                continue;
+            }
+            match found {
+                None => found = Some(*mv),
+                Some(first) => {
+                    if first.captured() != mv.captured() || first.promotes() != mv.promotes() {
+                        return None;
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// Конечные поля серийного взятия, которые можно указать сразу: щелчок по такому
+    /// полю выполняет все оставшиеся прыжки. Поля следующего шага сюда не входят.
+    pub fn final_targets(&self) -> Vec<Square> {
+        let next = self.targets();
+        let mut squares: Vec<Square> = Vec::new();
+        for mv in self.candidates() {
+            let sq = mv.to();
+            if !next.contains(&sq) && !squares.contains(&sq) && self.shortcut(sq).is_some() {
+                squares.push(sq);
+            }
+        }
+        squares
+    }
+
+    /// Выбор поля для выбранной шашки: следующий шаг либо сразу конечное поле взятия.
+    /// Шаг имеет приоритет: поле, до которого один прыжок, всегда означает этот прыжок.
+    fn choose(&mut self, sq: Square) -> Option<InputEvent> {
+        self.origin?;
+        if self.targets().contains(&sq) {
+            return Some(self.advance(sq));
+        }
+        let mv = self.shortcut(sq)?;
+        self.origin = None;
+        self.steps.clear();
+        Some(InputEvent::Move(mv))
+    }
+
     /// Маска шашек, уже побитых в незаконченном взятии (они остаются на доске до конца хода).
     pub fn captured_so_far(&self) -> u32 {
         let done = self.steps.len();
@@ -139,8 +196,8 @@ impl MoveInput {
 
     /// Щелчок по полю.
     pub fn click(&mut self, sq: Square) -> InputEvent {
-        if self.origin.is_some() && self.targets().contains(&sq) {
-            return self.advance(sq);
+        if let Some(event) = self.choose(sq) {
+            return event;
         }
         if self.in_progress() {
             // Посреди взятия посторонние щелчки игнорируются: бой нужно довести до конца.
@@ -177,11 +234,7 @@ impl MoveInput {
     /// Конец перетаскивания над полем `sq`. Если поле недоступно, шашка возвращается
     /// на место, а выбор сохраняется.
     pub fn drop_on(&mut self, sq: Square) -> InputEvent {
-        if self.origin.is_some() && self.targets().contains(&sq) {
-            self.advance(sq)
-        } else {
-            InputEvent::None
-        }
+        self.choose(sq).unwrap_or(InputEvent::None)
     }
 
     /// Снимает выбор и отменяет незаконченное взятие.

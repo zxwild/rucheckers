@@ -18,6 +18,8 @@ pub enum Sound {
     Capture,
     /// Превращение в дамку.
     Promotion,
+    /// Электрический разряд при взятии нескольких шашек.
+    Discharge,
     /// Партия выиграна человеком.
     Win,
     /// Партия проиграна человеком.
@@ -28,10 +30,11 @@ pub enum Sound {
 
 impl Sound {
     /// Все сигналы.
-    pub const ALL: [Sound; 6] = [
+    pub const ALL: [Sound; 7] = [
         Sound::Move,
         Sound::Capture,
         Sound::Promotion,
+        Sound::Discharge,
         Sound::Win,
         Sound::Loss,
         Sound::Draw,
@@ -89,6 +92,31 @@ fn note(buffer: &mut [f32], at: f32, frequency: f32, seconds: f32, gain: f32) {
     }
 }
 
+/// Добавляет в буфер треск электрического разряда: частые шумовые щелчки, которые
+/// редеют и затихают, и короткое низкое гудение.
+fn crackle(buffer: &mut [f32], seconds: f32, rng: &mut Rng) {
+    let length = samples(seconds).min(buffer.len());
+    let mut pulse = 0.0f32; // текущая громкость щелчка
+    let mut previous = 0.0f32;
+    for (i, slot) in buffer.iter_mut().enumerate().take(length) {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let progress = t / seconds;
+        // Новые щелчки возникают случайно; к концу — всё реже.
+        let rate = 900.0 * (1.0 - progress).powi(2) + 40.0;
+        if rng.unit() < f64::from(rate / SAMPLE_RATE as f32) {
+            pulse = 0.5 + 0.5 * rng.unit() as f32;
+        }
+        pulse *= 0.9965;
+        // Шум с подавленными низкими частотами звучит как сухой треск.
+        let white = rng.unit() as f32 * 2.0 - 1.0;
+        let crisp = white - 0.85 * previous;
+        previous = white;
+        let overall = (-t / (0.45 * seconds)).exp();
+        let buzz = (TAU * 96.0 * t).sin().signum() * 0.10 * (-t / 0.07).exp();
+        *slot += overall * (0.8 * pulse * crisp + buzz);
+    }
+}
+
 /// Сглаживает края и ограничивает пик, чтобы звук не щёлкал и не перегружал выход.
 fn finish(mut buffer: Vec<f32>, peak: f32) -> Vec<f32> {
     let fade = samples(0.004).min(buffer.len() / 2);
@@ -130,6 +158,11 @@ pub fn synthesize(sound: Sound) -> Vec<f32> {
             note(&mut buffer, 0.02, 659.25, 0.30, 0.6);
             note(&mut buffer, 0.14, 987.77, 0.38, 0.6);
             finish(buffer, 0.50)
+        }
+        Sound::Discharge => {
+            let mut buffer = vec![0.0; samples(0.46)];
+            crackle(&mut buffer, 0.44, &mut rng);
+            finish(buffer, 0.42)
         }
         Sound::Win => {
             let mut buffer = vec![0.0; samples(0.95)];

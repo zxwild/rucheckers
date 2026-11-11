@@ -7,6 +7,7 @@ use eframe::egui::{
     self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind,
 };
 use rucheckers::board::{Color, Kind, Piece, Square};
+use rucheckers::ui::fx::{self, DischargeFrame};
 use rucheckers::ui::geometry::BoardLayout;
 use rucheckers::ui::sprite::{self, PIECE_RADIUS};
 use std::f32::consts::TAU;
@@ -183,6 +184,149 @@ pub fn draw_target(painter: &Painter, layout: &BoardLayout, sq: Square, hovered:
         Color32::from_black_alpha(50),
     );
     painter.circle_filled(center, radius, theme::TARGET);
+}
+
+/// Отметка конечного поля серийного взятия: щелчок по нему выполняет все оставшиеся
+/// прыжки. От обычного доступного поля отличается кольцом.
+pub fn draw_final_target(painter: &Painter, layout: &BoardLayout, sq: Square, hovered: bool) {
+    draw_target(painter, layout, sq, hovered);
+    let center = square_center(layout, sq);
+    let radius = layout.cell * if hovered { 0.30 } else { 0.25 };
+    let width = (layout.cell * 0.03).max(1.5);
+    painter.circle_stroke(
+        center,
+        radius,
+        Stroke::new(width + 1.5, Color32::from_black_alpha(40)),
+    );
+    painter.circle_stroke(center, radius, Stroke::new(width, theme::TARGET));
+}
+
+/// Свечение: цвет прибавляется к фону и при этом слегка его приглушает. Чистое
+/// сложение на светлых тёплых полях даёт почти белый цвет и теряет оттенок.
+fn glow(color: [f32; 3], intensity: f32) -> Color32 {
+    let intensity = intensity.clamp(0.0, 1.0);
+    let channel = |v: f32| (v * intensity * 255.0).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgba_premultiplied(
+        channel(color[0]),
+        channel(color[1]),
+        channel(color[2]),
+        (0.55 * intensity * 255.0).round() as u8,
+    )
+}
+
+/// Цвет с заданной непрозрачностью, перекрывающий фон.
+fn blended(color: [f32; 3], alpha: f32) -> Color32 {
+    let alpha = alpha.clamp(0.0, 1.0);
+    let channel = |v: f32| (v * alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgba_premultiplied(
+        channel(color[0]),
+        channel(color[1]),
+        channel(color[2]),
+        (alpha * 255.0).round() as u8,
+    )
+}
+
+/// Круглое свечение: яркое в центре и сходящее на нет к краю.
+fn glow_disc(center: Pos2, radius: f32, intensity: f32) -> Shape {
+    const SEGMENTS: u32 = 32;
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(center, glow(fx::BOLT_CORE, 0.85 * intensity));
+    for ring in [
+        (0.4, glow(fx::GLOW, 0.55 * intensity)),
+        (1.0, Color32::TRANSPARENT),
+    ] {
+        for i in 0..SEGMENTS {
+            let angle = TAU * i as f32 / SEGMENTS as f32;
+            mesh.colored_vertex(center + vec2(angle.cos(), angle.sin()) * radius * ring.0, ring.1);
+        }
+    }
+    for i in 0..SEGMENTS {
+        let next = (i + 1) % SEGMENTS;
+        let (inner, inner_next) = (1 + i, 1 + next);
+        let (outer, outer_next) = (1 + SEGMENTS + i, 1 + SEGMENTS + next);
+        mesh.add_triangle(0, inner, inner_next);
+        mesh.add_triangle(inner, outer, outer_next);
+        mesh.add_triangle(inner, outer_next, inner_next);
+    }
+    Shape::mesh(mesh)
+}
+
+/// Электрический разряд: вспышки, молнии и искры поверх шашек.
+///
+/// Всё рисуется обычными треугольниками через ту же аппаратно ускоренную отрисовку
+/// (OpenGL), что и остальной интерфейс, поэтому эффект одинаково работает на macOS
+/// и Linux и не требует собственных шейдеров.
+pub fn draw_discharge(
+    painter: &Painter,
+    layout: &BoardLayout,
+    frame: &DischargeFrame,
+    pixels_per_point: f32,
+) {
+    if frame.is_empty() {
+        return;
+    }
+    let cell = layout.cell;
+    let pixel = 1.0 / pixels_per_point.max(0.1);
+    let on_screen = |p: fx::Point| {
+        let (x, y) = layout.cell_to_point(p);
+        pos2(x, y)
+    };
+    let mut shapes: Vec<Shape> = Vec::new();
+
+    for flash in &frame.flashes {
+        shapes.push(glow_disc(
+            on_screen(flash.center),
+            flash.radius * cell,
+            flash.intensity,
+        ));
+    }
+
+    // Молния: тёмная подложка (чтобы её было видно и на светлых полях), два слоя
+    // свечения и яркая сердцевина.
+    const SHADE: [f32; 3] = [0.10, 0.13, 0.0];
+    for bolt in &frame.bolts {
+        let points: Vec<Pos2> = bolt.points.iter().map(|&p| on_screen(p)).collect();
+        let (width, level) = (bolt.width, bolt.intensity);
+        shapes.push(Shape::line(
+            points.clone(),
+            Stroke::new(cell * 0.15 * width, blended(SHADE, 0.34 * level)),
+        ));
+        shapes.push(Shape::line(
+            points.clone(),
+            Stroke::new(cell * 0.26 * width, glow(fx::GLOW, 0.22 * level)),
+        ));
+        shapes.push(Shape::line(
+            points.clone(),
+            Stroke::new(cell * 0.11 * width, glow(fx::GLOW, 0.60 * level)),
+        ));
+        let core = (cell * 0.036 * width).max(1.2 * pixel);
+        shapes.push(Shape::line(
+            points,
+            Stroke::new(core, blended(fx::BOLT_CORE, level)),
+        ));
+    }
+
+    // Искры: короткий светящийся штрих с яркой головкой.
+    for spark in &frame.sparks {
+        let (head, tail) = (on_screen(spark.head), on_screen(spark.tail));
+        let color = fx::spark_color(spark.heat);
+        let level = spark.intensity;
+        shapes.push(Shape::line_segment(
+            [tail, head],
+            Stroke::new(cell * 0.085 * spark.size, glow(fx::GLOW, 0.30 * level)),
+        ));
+        let core = (cell * 0.032 * spark.size).max(1.2 * pixel);
+        shapes.push(Shape::line_segment(
+            [tail, head],
+            Stroke::new(core, blended(color, 0.95 * level)),
+        ));
+        shapes.push(Shape::circle_filled(
+            head,
+            (core * 0.75).max(0.8 * pixel),
+            blended(color, level),
+        ));
+    }
+    painter.extend(shapes);
 }
 
 /// Кольцо вокруг шашки, обязанной бить.

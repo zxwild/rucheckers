@@ -428,6 +428,216 @@ fn moves_can_be_made_by_dragging() {
 }
 
 #[test]
+fn final_square_of_a_multi_capture_can_be_chosen_at_once() {
+    // Единственный маршрут: вместо двух щелчков (e5, затем g7) достаточно одного по g7.
+    let mut input = input_for("W:Wc3:Bd4,f6");
+    input.click(sq("c3"));
+    assert_eq!(names(&input.targets()), ["e5"], "следующий шаг");
+    assert_eq!(names(&input.final_targets()), ["g7"], "конечное поле");
+    assert_eq!(completed(input.click(sq("g7"))), "c3:e5:g7");
+    assert_eq!(input.origin(), None);
+
+    // Маршруты расходятся после первого прыжка: конечное поле выбирает маршрут.
+    for (target, expected) in [("c7", "c3:e5:c7"), ("g7", "c3:e5:g7")] {
+        let mut input = input_for("W:Wc3:Bd4,d6,f6");
+        input.click(sq("c3"));
+        assert_eq!(names(&input.final_targets()), ["c7", "g7"]);
+        assert_eq!(completed(input.click(sq(target))), expected);
+    }
+
+    // Три прыжка одним щелчком и то же самое после первого шага, сделанного вручную.
+    let mut input = input_for("W:Wa1:Bb2,d4,f6");
+    input.click(sq("a1"));
+    assert_eq!(names(&input.final_targets()), ["g7"]);
+    assert_eq!(completed(input.click(sq("g7"))), "a1:c3:e5:g7");
+    let mut input = input_for("W:Wa1:Bb2,d4,f6");
+    input.click(sq("a1"));
+    assert_eq!(
+        input.click(sq("c3")),
+        InputEvent::Step {
+            from: sq("a1"),
+            to: sq("c3")
+        }
+    );
+    assert_eq!(names(&input.targets()), ["e5"]);
+    assert_eq!(names(&input.final_targets()), ["g7"]);
+    assert_eq!(completed(input.click(sq("g7"))), "a1:c3:e5:g7");
+
+    // Перетаскиванием: шашку можно бросить сразу на конечное поле.
+    let mut input = input_for("W:Wa1:Bb2,d4,f6");
+    assert!(input.grab(sq("a1")));
+    assert_eq!(completed(input.drop_on(sq("g7"))), "a1:c3:e5:g7");
+
+    // Дамка с обязательным промежуточным полем.
+    let mut input = input_for("W:WKa1:Bc3,e7");
+    input.click(sq("a1"));
+    assert_eq!(names(&input.final_targets()), ["d8"]);
+    assert_eq!(completed(input.click(sq("d8"))), "a1:f6:d8");
+
+    // У одиночного взятия и тихого хода отдельных «конечных» полей нет.
+    let mut input = input_for("W:Wc3,a1:Bd4");
+    input.click(sq("c3"));
+    assert!(input.final_targets().is_empty());
+    let mut input = input_for("W:Wc3:Bh8");
+    input.click(sq("c3"));
+    assert!(input.final_targets().is_empty());
+}
+
+#[test]
+fn final_square_reached_by_equivalent_routes_is_not_ambiguous() {
+    // Дамка бьёт c3 и f6; на g7 можно прийти через d4 или через e5 — побитые шашки
+    // и результат одни и те же, поэтому конечное поле указать можно.
+    let mut input = input_for("W:WKa1:Bc3,f6");
+    input.click(sq("a1"));
+    assert_eq!(names(&input.targets()), ["d4", "e5"]);
+    assert_eq!(names(&input.final_targets()), ["g7", "h8"]);
+    match input.click(sq("h8")) {
+        InputEvent::Move(m) => {
+            assert_eq!(m.to(), sq("h8"));
+            assert_eq!(m.captured(), sq("c3").bit() | sq("f6").bit());
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn ambiguous_final_square_must_be_resolved_step_by_step() {
+    // На h4 ведут два взятия с разным результатом: c3:f6:h4 бьёт e5 и g5,
+    // а c3:a5:d8:h4 — b4, c7 и g5. Указать h4 сразу нельзя.
+    let fen = "W:WKc3:BKa1,b4,e5,g5,c7";
+    let mut input = input_for(fen);
+    assert_eq!(input.moves().len(), 2);
+    input.click(sq("c3"));
+    assert_eq!(names(&input.targets()), ["a5", "f6"]);
+    assert!(
+        input.final_targets().is_empty(),
+        "поле h4 неоднозначно и не предлагается"
+    );
+    assert_eq!(input.drop_on(sq("h4")), InputEvent::None);
+    assert_eq!(input.origin(), Some(sq("c3")), "выбор сохранён");
+    // После первого шага маршрут определён, и конечное поле снова доступно.
+    assert_eq!(
+        input.click(sq("a5")),
+        InputEvent::Step {
+            from: sq("c3"),
+            to: sq("a5")
+        }
+    );
+    assert_eq!(names(&input.targets()), ["d8"]);
+    assert_eq!(names(&input.final_targets()), ["h4"]);
+    assert_eq!(completed(input.click(sq("h4"))), "c3:a5:d8:h4");
+
+    let mut input = input_for(fen);
+    input.click(sq("c3"));
+    input.click(sq("f6"));
+    assert_eq!(completed(input.click(sq("h4"))), "c3:f6:h4");
+}
+
+#[test]
+fn next_step_has_priority_over_a_final_square() {
+    // Поле h6 — первый прыжок маршрута d2:h6:f8:d6:g3:e1 и одновременно конец
+    // маршрута d2:f4:d6:f8:h6. Щелчок по нему означает прыжок.
+    let fen = "W:WKd2:Bf2,a3,e3,e5,e7,g7";
+    let mut input = input_for(fen);
+    assert_eq!(input.moves().len(), 3);
+    input.click(sq("d2"));
+    assert_eq!(names(&input.targets()), ["f4", "g5", "h6"]);
+    assert_eq!(
+        names(&input.final_targets()),
+        ["d8", "e1"],
+        "h6 в этот список не входит"
+    );
+    assert_eq!(
+        input.click(sq("h6")),
+        InputEvent::Step {
+            from: sq("d2"),
+            to: sq("h6")
+        }
+    );
+    assert_eq!(names(&input.final_targets()), ["e1"]);
+    assert_eq!(completed(input.click(sq("e1"))), "d2:h6:f8:d6:g3:e1");
+    // К h6 как к конечному полю можно прийти, начав другой маршрут.
+    let mut input = input_for(fen);
+    input.click(sq("d2"));
+    input.click(sq("f4"));
+    assert_eq!(names(&input.final_targets()), ["h6"]);
+    assert_eq!(completed(input.click(sq("h6"))), "d2:f4:d6:f8:h6");
+    // А конечные поля других маршрутов доступны сразу.
+    let mut input = input_for(fen);
+    input.click(sq("d2"));
+    assert_eq!(completed(input.click(sq("d8"))), "d2:g5:d8");
+}
+
+#[test]
+fn clicking_the_selected_piece_never_completes_a_round_trip() {
+    // Обход ромба заканчивается на исходном поле d2, но щелчок по самой шашке
+    // по-прежнему снимает выбор.
+    let mut input = input_for("W:WKd2:Bc3,c5,e5,e3");
+    input.click(sq("d2"));
+    assert_eq!(names(&input.final_targets()), ["c1", "e1"], "d2 не предлагается");
+    assert_eq!(input.click(sq("d2")), InputEvent::Cleared);
+    input.click(sq("d2"));
+    assert!(input.grab(sq("d2")));
+    assert_eq!(input.drop_on(sq("d2")), InputEvent::None);
+    assert_eq!(completed(input.click(sq("e1"))), "d2:f4:d6:b4:e1");
+}
+
+#[test]
+fn final_targets_always_give_one_definite_result() {
+    // Во всех позициях случайных партий: щелчок по предложенному конечному полю даёт
+    // допустимый ход, и все взятия этой шашкой, кончающиеся на этом поле, приводят
+    // к той же позиции. Поля с разным результатом не предлагаются.
+    let mut rng = rucheckers::rng::Rng::new(77);
+    let (mut offered, mut withheld) = (0, 0);
+    for _ in 0..400 {
+        let mut state = rucheckers::rules::GameState::initial();
+        for _ in 0..250 {
+            let moves = legal_moves(&state.pos);
+            if moves.is_empty() {
+                break;
+            }
+            let mut origins: Vec<Square> = moves.iter().map(|m| m.from()).collect();
+            origins.dedup();
+            for origin in origins {
+                let mut input = MoveInput::new();
+                input.set_moves(moves.clone());
+                input.click(origin);
+                let next = input.targets();
+                let finals = input.final_targets();
+                for m in moves.iter().filter(|m| m.from() == origin && m.path().len() > 1) {
+                    let same_end: Vec<_> = moves
+                        .iter()
+                        .filter(|o| o.from() == origin && o.to() == m.to())
+                        .collect();
+                    let definite = same_end.iter().all(|o| state.pos.after(o) == state.pos.after(m));
+                    let direct = finals.contains(&m.to());
+                    if direct {
+                        assert!(definite, "{}: поле {} неоднозначно", state.pos.to_fen(), m.to());
+                        let mut probe = input.clone();
+                        match probe.click(m.to()) {
+                            InputEvent::Move(chosen) => {
+                                assert!(moves.contains(&chosen));
+                                assert_eq!(state.pos.after(&chosen), state.pos.after(m));
+                            }
+                            other => panic!("{}: {other:?}", state.pos.to_fen()),
+                        }
+                        offered += 1;
+                    } else {
+                        // Не предложено: это поле следующего шага, само поле шашки
+                        // или взятия на него дают разный результат.
+                        assert!(next.contains(&m.to()) || m.to() == origin || !definite);
+                        withheld += 1;
+                    }
+                }
+            }
+            state = state.play(rng.pick(&moves).unwrap());
+        }
+    }
+    assert!(offered > 1_000, "конечные поля предлагались {offered} раз");
+    assert!(withheld < offered, "{withheld}");
+}
+
+#[test]
 fn disabled_input_ignores_everything() {
     let mut input = MoveInput::new();
     assert!(!input.is_enabled());
