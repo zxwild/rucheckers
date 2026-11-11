@@ -1,0 +1,40 @@
+[package]
+name = "rucheckers"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.85"
+resolver = "3"
+description = "Русские шашки: игра против компьютера"
+publish = false
+
+[lib]
+name = "rucheckers"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rucheckers"
+path = "src/main.rs"
+
+[dependencies]
+# Окно, ввод и векторная отрисовка (OpenGL через glow). Встроенные шрифты содержат кириллицу.
+eframe = { version = "=0.31.1", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+# Оконная библиотека, на которой работает eframe. Указана явно ради её стандартного набора
+# возможностей: в Wayland под GNOME заголовок и рамку окна рисует само приложение.
+winit = "=0.30.13"
+# Вывод звука. Декодеры отключены: все звуки синтезируются программой.
+rodio = { version = "=0.20.1", default-features = false }
+# Системный диалог выбора файла (macOS: AppKit; Linux: XDG Desktop Portal, запасной вариант — zenity).
+rfd = { version = "=0.15.4", default-features = false, features = ["xdg-portal", "async-std"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+# Тесты движка (эталон генератора, партии компьютера) заметно быстрее с оптимизацией.
+# Зависимости в тестах не исполняются, поэтому собираются без неё.
+[profile.test]
+opt-level = 2
+
+[profile.test.package."*"]
+opt-level = 0
