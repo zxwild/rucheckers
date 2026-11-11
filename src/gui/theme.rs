@@ -30,21 +30,10 @@ pub const COORDINATES: Color32 = Color32::from_rgb(0xE6, 0xD2, 0xA8);
 pub const SQUARE_LIGHT: Color32 = Color32::from_rgb(0xE9, 0xD5, 0xAC);
 pub const SQUARE_DARK: Color32 = Color32::from_rgb(0xA0, 0x6F, 0x40);
 
-/// Белая шашка: верх, тень на краю верха, боковая грань, контур и проточки.
+/// Отметка очереди хода в углу рамки: цвета белых и чёрных и их контур.
 pub const WHITE_FACE: Color32 = Color32::from_rgb(0xF6, 0xEE, 0xDB);
-pub const WHITE_FACE_SHADE: Color32 = Color32::from_rgb(0xE2, 0xD6, 0xB9);
-pub const WHITE_SIDE: Color32 = Color32::from_rgb(0xBF, 0xAE, 0x88);
 pub const WHITE_OUTLINE: Color32 = Color32::from_rgb(0x8E, 0x7D, 0x5C);
-pub const WHITE_GROOVE: Color32 = Color32::from_rgb(0xC6, 0xB6, 0x92);
-/// Чёрная шашка.
 pub const BLACK_FACE: Color32 = Color32::from_rgb(0x4A, 0x38, 0x2D);
-pub const BLACK_FACE_SHADE: Color32 = Color32::from_rgb(0x30, 0x23, 0x1B);
-pub const BLACK_SIDE: Color32 = Color32::from_rgb(0x1E, 0x15, 0x10);
-pub const BLACK_OUTLINE: Color32 = Color32::from_rgb(0x14, 0x0D, 0x09);
-pub const BLACK_GROOVE: Color32 = Color32::from_rgb(0x66, 0x51, 0x42);
-/// Корона дамки на белой и на чёрной шашке.
-pub const CROWN_ON_WHITE: Color32 = Color32::from_rgb(0xA8, 0x79, 0x2A);
-pub const CROWN_ON_BLACK: Color32 = Color32::from_rgb(0xDD, 0xB8, 0x62);
 
 /// Подсветка последнего хода, выбранной шашки, доступных полей и шашек, обязанных бить.
 pub const LAST_MOVE: Color32 = Color32::from_rgba_premultiplied(0x66, 0x5A, 0x34, 0x6E);

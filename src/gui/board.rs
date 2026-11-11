@@ -1,17 +1,15 @@
-//! Отрисовка доски и шашек векторными фигурами: изображение остаётся чётким при
-//! любом размере окна и плотности экрана.
+//! Отрисовка доски и шашек. Доска рисуется векторными фигурами, шашки — изображениями,
+//! рассчитанными под точный размер клетки, поэтому картинка остаётся чёткой при любом
+//! размере окна и плотности экрана.
 
 use super::theme;
 use eframe::egui::{
-    self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Mesh, Painter, Pos2, Rect, Shape, Stroke,
-    StrokeKind,
+    self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind,
 };
-use rucheckers::board::{Color, Piece, Square};
+use rucheckers::board::{Color, Kind, Piece, Square};
 use rucheckers::ui::geometry::BoardLayout;
+use rucheckers::ui::sprite::{self, PIECE_RADIUS};
 use std::f32::consts::TAU;
-
-/// Радиус шашки в долях клетки.
-const PIECE_RADIUS: f32 = 0.40;
 
 /// Цвет с изменённой непрозрачностью (0…1).
 fn faded(color: Color32, alpha: f32) -> Color32 {
@@ -20,13 +18,6 @@ fn faded(color: Color32, alpha: f32) -> Color32 {
     } else {
         color.gamma_multiply(alpha.clamp(0.0, 1.0))
     }
-}
-
-/// Смешение двух цветов: `t = 0` — первый, `t = 1` — второй.
-fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
-    let t = t.clamp(0.0, 1.0);
-    let lerp = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
-    Color32::from_rgb(lerp(a.r(), b.r()), lerp(a.g(), b.g()), lerp(a.b(), b.b()))
 }
 
 /// Детерминированное псевдослучайное число 0…1 по целому ключу (для рисунка древесины).
@@ -205,178 +196,82 @@ pub fn draw_obligation_ring(painter: &Painter, layout: &BoardLayout, sq: Square)
     );
 }
 
-/// Круг с плавным переходом освещённости: светлее слева сверху, темнее справа снизу.
-fn shaded_disc(painter: &Painter, center: Pos2, radius: f32, light: Color32, shade: Color32, alpha: f32) {
-    const SEGMENTS: u32 = 48;
-    let mut mesh = Mesh::default();
-    mesh.colored_vertex(center, faded(mix(light, shade, 0.25), alpha));
-    for i in 0..SEGMENTS {
-        let angle = TAU * i as f32 / SEGMENTS as f32;
-        let (sin, cos) = angle.sin_cos();
-        // Источник света — слева сверху (ось Y направлена вниз).
-        let lit = 0.5 - 0.5 * (cos * 0.707 + sin * 0.707);
-        let color = mix(shade, light, lit);
-        mesh.colored_vertex(center + vec2(cos, sin) * radius, faded(color, alpha));
-    }
-    for i in 0..SEGMENTS {
-        mesh.add_triangle(0, 1 + i, 1 + (i + 1) % SEGMENTS);
-    }
-    painter.add(Shape::mesh(mesh));
+/// Изображения шашек для текущего размера клетки.
+///
+/// Шашки рассчитываются попиксельно (`rucheckers::ui::sprite`) ровно под размер клетки
+/// в физических пикселях и хранятся как текстуры: края и рельеф сглажены, а на месте
+/// шашка выводится пиксель в пиксель, без растяжения.
+pub struct PieceSprites {
+    size_px: usize,
+    pieces: [egui::TextureHandle; 4],
+    lift_shadow: egui::TextureHandle,
 }
 
-/// Одна шайба шашки: боковая грань, верх с объёмом и контур.
-#[allow(clippy::too_many_arguments)]
-fn draw_disc(
-    painter: &Painter,
-    center: Pos2,
-    radius: f32,
-    thickness: f32,
-    color: Color,
-    alpha: f32,
-    grooves: bool,
-    pixel: f32,
-) {
-    let (face, shade, side, outline, groove) = match color {
-        Color::White => (
-            theme::WHITE_FACE,
-            theme::WHITE_FACE_SHADE,
-            theme::WHITE_SIDE,
-            theme::WHITE_OUTLINE,
-            theme::WHITE_GROOVE,
-        ),
-        Color::Black => (
-            theme::BLACK_FACE,
-            theme::BLACK_FACE_SHADE,
-            theme::BLACK_SIDE,
-            theme::BLACK_OUTLINE,
-            theme::BLACK_GROOVE,
-        ),
-    };
-    let line = (radius * 0.045).max(pixel);
-    // Боковая грань выглядывает из-под верха.
-    let below = center + vec2(0.0, thickness);
-    painter.circle_filled(below, radius, faded(side, alpha));
-    painter.circle_stroke(below, radius, Stroke::new(line, faded(outline, alpha)));
-    // Верх.
-    shaded_disc(painter, center, radius - line * 0.5, face, shade, alpha);
-    painter.circle_stroke(center, radius, Stroke::new(line, faded(outline, alpha)));
-    if grooves {
-        painter.circle_stroke(center, radius * 0.76, Stroke::new(line, faded(groove, alpha)));
-        painter.circle_stroke(center, radius * 0.46, Stroke::new(line, faded(groove, alpha)));
+impl PieceSprites {
+    /// Рассчитывает изображения для клетки со стороной `size_px` физических пикселей.
+    pub fn new(ctx: &egui::Context, size_px: usize) -> PieceSprites {
+        let size_px = size_px.max(2);
+        let upload = |name: &str, image: sprite::PieceImage| {
+            let pixels = egui::ColorImage::from_rgba_premultiplied([image.size, image.size], &image.rgba);
+            ctx.load_texture(name, pixels, egui::TextureOptions::LINEAR)
+        };
+        let piece = |color: Color, kind: Kind| {
+            let name = format!("piece-{color:?}-{kind:?}");
+            upload(
+                &name,
+                sprite::render_piece(Piece::new(color, kind), size_px, true),
+            )
+        };
+        PieceSprites {
+            size_px,
+            pieces: [
+                piece(Color::White, Kind::Man),
+                piece(Color::White, Kind::King),
+                piece(Color::Black, Kind::Man),
+                piece(Color::Black, Kind::King),
+            ],
+            lift_shadow: upload("piece-lift-shadow", sprite::render_lift_shadow(size_px)),
+        }
+    }
+
+    /// Сторона клетки в физических пикселях, под которую рассчитаны изображения.
+    pub fn size_px(&self) -> usize {
+        self.size_px
+    }
+
+    fn texture(&self, piece: Piece) -> &egui::TextureHandle {
+        let index = match (piece.color, piece.kind) {
+            (Color::White, Kind::Man) => 0,
+            (Color::White, Kind::King) => 1,
+            (Color::Black, Kind::Man) => 2,
+            (Color::Black, Kind::King) => 3,
+        };
+        &self.pieces[index]
     }
 }
 
-/// Корона — знак дамки.
-fn draw_crown(
-    painter: &Painter,
-    center: Pos2,
-    size: f32,
-    color: Color32,
-    outline: Color32,
-    alpha: f32,
-    pixel: f32,
-) {
-    let at = |x: f32, y: f32| center + vec2(x * size, y * size);
-    let fill = faded(color, alpha);
-    let edge = Stroke::new((size * 0.035).max(pixel * 0.75), faded(outline, alpha * 0.8));
-    let parts: [&[(f32, f32)]; 4] = [
-        &[(-0.50, 0.10), (-0.50, -0.34), (-0.10, 0.10)],
-        &[(-0.28, 0.10), (0.0, -0.44), (0.28, 0.10)],
-        &[(0.10, 0.10), (0.50, -0.34), (0.50, 0.10)],
-        &[(-0.50, 0.08), (0.50, 0.08), (0.50, 0.26), (-0.50, 0.26)],
-    ];
-    // Контур рисуется первым, заливка поверх него закрывает внутренние стыки частей.
-    for part in parts {
-        let points: Vec<Pos2> = part.iter().map(|&(x, y)| at(x, y)).collect();
-        painter.add(Shape::convex_polygon(points, Color32::TRANSPARENT, edge));
-    }
-    for part in parts {
-        let points: Vec<Pos2> = part.iter().map(|&(x, y)| at(x, y)).collect();
-        painter.add(Shape::convex_polygon(points, fill, Stroke::NONE));
-    }
-    for (x, y) in [(-0.50, -0.34), (0.0, -0.44), (0.50, -0.34)] {
-        painter.circle_filled(at(x, y), size * 0.075, fill);
-    }
-    let base = Rect::from_min_max(at(-0.50, 0.33), at(0.50, 0.42));
-    painter.rect_filled(base, size * 0.03, fill);
-}
-
-/// Шашка с центром в точке `center`.
+/// Шашка с центром в точке `center` (центр изображения совпадает с центром шашки).
 ///
 /// `alpha` — непрозрачность (побитые шашки бледнеют), `lifted` — шашку держат мышью:
-/// она чуть крупнее и отбрасывает более длинную тень.
+/// она чуть крупнее и отбрасывает более длинную мягкую тень.
 pub fn draw_piece(
     painter: &Painter,
+    sprites: &PieceSprites,
     center: Pos2,
     cell: f32,
     piece: Piece,
     alpha: f32,
     lifted: bool,
-    pixels_per_point: f32,
 ) {
-    let pixel = 1.0 / pixels_per_point.max(0.1);
+    let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    let tint = Color32::from_white_alpha((alpha.clamp(0.0, 1.0) * 255.0).round() as u8);
     let scale = if lifted { 1.06 } else { 1.0 };
-    let radius = cell * PIECE_RADIUS * scale;
-    let thickness = cell * 0.045 * scale;
-    let king = piece.is_king();
-
-    // Тень.
-    let (shadow_shift, shadow_alpha) = if lifted {
-        (cell * 0.11, 50.0)
-    } else {
-        (cell * 0.055, 70.0)
-    };
-    let shadow_center = center
-        + vec2(
-            shadow_shift * 0.45,
-            thickness + shadow_shift + if king { thickness } else { 0.0 },
-        );
-    painter.circle_filled(
-        shadow_center,
-        radius * 1.02,
-        Color32::from_black_alpha((shadow_alpha * alpha) as u8),
-    );
-
-    if king {
-        // Дамка — две шашки, поставленные одна на другую, с короной наверху.
-        draw_disc(
-            painter,
-            center + vec2(0.0, thickness * 1.1),
-            radius,
-            thickness,
-            piece.color,
-            alpha,
-            false,
-            pixel,
-        );
-        let top = center - vec2(0.0, thickness * 1.1);
-        draw_disc(painter, top, radius, thickness, piece.color, alpha, false, pixel);
-        let (crown, outline) = match piece.color {
-            Color::White => (theme::CROWN_ON_WHITE, theme::WHITE_OUTLINE),
-            Color::Black => (theme::CROWN_ON_BLACK, theme::BLACK_OUTLINE),
-        };
-        let groove = match piece.color {
-            Color::White => theme::WHITE_GROOVE,
-            Color::Black => theme::BLACK_GROOVE,
-        };
-        painter.circle_stroke(
-            top,
-            radius * 0.80,
-            Stroke::new((radius * 0.045).max(pixel), faded(groove, alpha)),
-        );
-        draw_crown(painter, top, radius * 0.98, crown, outline, alpha, pixel);
-    } else {
-        draw_disc(
-            painter,
-            center,
-            radius,
-            thickness,
-            piece.color,
-            alpha,
-            true,
-            pixel,
-        );
+    if lifted {
+        let shadow = Rect::from_center_size(center + vec2(cell * 0.03, cell * 0.07), vec2(cell, cell) * 1.16);
+        painter.image(sprites.lift_shadow.id(), shadow, whole, tint);
     }
+    let rect = Rect::from_center_size(center, vec2(cell, cell) * scale);
+    painter.image(sprites.texture(piece).id(), rect, whole, tint);
 }
 
 /// Отметка стороны, чья очередь хода, в углу рамки; пока компьютер думает,

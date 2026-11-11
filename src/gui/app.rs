@@ -93,6 +93,8 @@ pub struct CheckersApp {
     file_job: Option<FileJob>,
     dismissed_result: Option<NodeId>,
     scroll_to_current: bool,
+    /// Изображения шашек для текущего размера клетки.
+    sprites: Option<board::PieceSprites>,
 }
 
 impl CheckersApp {
@@ -125,6 +127,7 @@ impl CheckersApp {
             file_job: None,
             dismissed_result: None,
             scroll_to_current: false,
+            sprites: None,
         };
         if let Some(path) = initial_file {
             app.open_file(&path, 0.0);
@@ -542,6 +545,12 @@ impl CheckersApp {
         let ppp = ctx.pixels_per_point();
         board::draw_board(painter, layout, ppp);
 
+        // Изображения шашек пересчитываются, когда меняется размер клетки в пикселях.
+        let cell_px = (layout.cell * ppp).round().max(2.0) as usize;
+        if self.sprites.as_ref().map(board::PieceSprites::size_px) != Some(cell_px) {
+            self.sprites = Some(board::PieceSprites::new(ctx, cell_px));
+        }
+
         // Законченные анимации убираются из очереди.
         while self.anims.front().is_some_and(|p| p.anim.frame(now).finished) {
             self.anims.pop_front();
@@ -554,6 +563,9 @@ impl CheckersApp {
             self.glide = None;
         }
 
+        let Some(sprites) = self.sprites.as_ref() else {
+            return;
+        };
         let tree = self.session.tree();
         let node = tree.current_node();
         let input = self.session.input();
@@ -639,12 +651,12 @@ impl CheckersApp {
                 if alpha > 0.01 {
                     board::draw_piece(
                         painter,
+                        sprites,
                         board::square_center(layout, sq),
                         layout.cell,
                         piece,
                         alpha,
                         false,
-                        ppp,
                     );
                 }
             }
@@ -704,7 +716,7 @@ impl CheckersApp {
 
         // Движущаяся шашка — поверх всего.
         if let Some((at, piece, lifted)) = mover {
-            board::draw_piece(painter, at, layout.cell, piece, 1.0, lifted, ppp);
+            board::draw_piece(painter, sprites, at, layout.cell, piece, 1.0, lifted);
         }
 
         if interactive {
