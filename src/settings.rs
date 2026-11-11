@@ -1,5 +1,5 @@
-//! Настройки, сохраняемые между запусками: язык, уровень, цвет игрока, звук
-//! и видимость панели ходов.
+//! Настройки, сохраняемые между запусками: язык, уровень, цвет игрока, звук,
+//! видимость панели ходов и спецэффекты.
 //!
 //! Файл — простой текст вида `ключ=значение`. Неизвестные ключи и испорченные
 //! значения игнорируются: вместо них берутся значения по умолчанию.
@@ -7,6 +7,7 @@
 use crate::ai::{clamp_level, MAX_LEVEL, MIN_LEVEL};
 use crate::board::Color;
 use crate::i18n::Lang;
+use crate::ui::fx::EffectSet;
 use std::env;
 use std::fs;
 use std::io;
@@ -27,6 +28,10 @@ pub struct Settings {
     pub human: Color,
     pub sound: bool,
     pub panel: bool,
+    /// Общий выключатель спецэффектов: при `false` не показывается ни один.
+    pub effects_enabled: bool,
+    /// Какие спецэффекты выбраны по отдельности.
+    pub effects: EffectSet,
 }
 
 impl Default for Settings {
@@ -37,6 +42,8 @@ impl Default for Settings {
             human: Color::White,
             sound: true,
             panel: true,
+            effects_enabled: true,
+            effects: EffectSet::ALL,
         }
     }
 }
@@ -66,10 +73,21 @@ impl Settings {
         }
     }
 
+    /// Спецэффекты, которые нужно показывать: выбранные по отдельности, если включён
+    /// общий выключатель, иначе никакие.
+    pub fn active_effects(&self) -> EffectSet {
+        if self.effects_enabled {
+            self.effects
+        } else {
+            EffectSet::NONE
+        }
+    }
+
     /// Текст файла настроек.
     pub fn to_text(&self) -> String {
         format!(
-            "# Русские шашки / Russian Draughts\nlanguage={}\nlevel={}\ncolor={}\nsound={}\npanel={}\n",
+            "# Русские шашки / Russian Draughts\nlanguage={}\nlevel={}\ncolor={}\nsound={}\npanel={}\n\
+             effects={}\neffect_lightning={}\neffect_sparks={}\neffect_flashes={}\n",
             self.lang.code(),
             clamp_level(self.level),
             match self.human {
@@ -78,6 +96,10 @@ impl Settings {
             },
             switch(self.sound),
             switch(self.panel),
+            switch(self.effects_enabled),
+            switch(self.effects.lightning),
+            switch(self.effects.sparks),
+            switch(self.effects.flashes),
         )
     }
 
@@ -119,6 +141,26 @@ impl Settings {
                 "panel" => {
                     if let Some(on) = parse_switch(value) {
                         settings.panel = on;
+                    }
+                }
+                "effects" => {
+                    if let Some(on) = parse_switch(value) {
+                        settings.effects_enabled = on;
+                    }
+                }
+                "effect_lightning" => {
+                    if let Some(on) = parse_switch(value) {
+                        settings.effects.lightning = on;
+                    }
+                }
+                "effect_sparks" => {
+                    if let Some(on) = parse_switch(value) {
+                        settings.effects.sparks = on;
+                    }
+                }
+                "effect_flashes" => {
+                    if let Some(on) = parse_switch(value) {
+                        settings.effects.flashes = on;
                     }
                 }
                 _ => {}
@@ -191,6 +233,12 @@ mod tests {
                 human: Color::Black,
                 sound: false,
                 panel: false,
+                effects_enabled: false,
+                effects: EffectSet {
+                    lightning: true,
+                    sparks: false,
+                    flashes: true,
+                },
             },
             Settings {
                 lang: Lang::Ru,
@@ -198,6 +246,16 @@ mod tests {
                 human: Color::Black,
                 sound: true,
                 panel: false,
+                effects_enabled: true,
+                effects: EffectSet::NONE,
+            },
+            Settings {
+                effects: EffectSet {
+                    lightning: false,
+                    sparks: true,
+                    flashes: false,
+                },
+                ..Settings::default()
             },
         ];
         for settings in all {
@@ -215,6 +273,7 @@ mod tests {
             "",
             "\0\0\0",
             "level=abc\nlanguage=xx\ncolor=green\nsound=maybe\npanel=",
+            "effects=sometimes\neffect_lightning=\neffect_sparks=2\neffect_flashes=да",
             "level=0\nlevel=11\nlevel=-3\nlevel=999999999999",
             "====\n=\nlevel\n# comment",
             "уровень=5",
@@ -233,6 +292,69 @@ mod tests {
     }
 
     #[test]
+    fn effects_are_on_by_default_and_switch_separately_or_all_at_once() {
+        let defaults = Settings::default();
+        assert!(defaults.effects_enabled);
+        assert_eq!(defaults.active_effects(), EffectSet::ALL);
+        // Файл настроек прежней версии (без раздела спецэффектов) читается: всё включено.
+        let old = Settings::from_text(
+            "language=en\nlevel=3\ncolor=black\nsound=off\npanel=on\n",
+            defaults,
+        );
+        assert_eq!(old.active_effects(), EffectSet::ALL);
+
+        // Каждый эффект отключается отдельно.
+        let no_sparks = Settings::from_text("effect_sparks=off", defaults);
+        assert_eq!(
+            no_sparks.active_effects(),
+            EffectSet {
+                sparks: false,
+                ..EffectSet::ALL
+            }
+        );
+        let only_lightning = Settings::from_text("effect_sparks=off\neffect_flashes=off", defaults);
+        assert_eq!(
+            only_lightning.active_effects(),
+            EffectSet {
+                lightning: true,
+                ..EffectSet::NONE
+            }
+        );
+
+        // Общий выключатель гасит всё сразу, но выбор по отдельности сохраняется.
+        let all_off = Settings::from_text("effects=off\neffect_sparks=off", defaults);
+        assert_eq!(all_off.active_effects(), EffectSet::NONE);
+        assert!(!all_off.active_effects().any());
+        assert_eq!(
+            all_off.effects,
+            EffectSet {
+                sparks: false,
+                ..EffectSet::ALL
+            }
+        );
+        let back_on = Settings {
+            effects_enabled: true,
+            ..all_off
+        };
+        assert_eq!(
+            back_on.active_effects(),
+            EffectSet {
+                sparks: false,
+                ..EffectSet::ALL
+            }
+        );
+        assert_eq!(Settings::from_text(&all_off.to_text(), defaults), all_off);
+        for key in [
+            "effects=off",
+            "effect_lightning=on",
+            "effect_sparks=off",
+            "effect_flashes=on",
+        ] {
+            assert!(all_off.to_text().contains(key), "{key}");
+        }
+    }
+
+    #[test]
     fn save_and_load() {
         let dir = env::temp_dir().join(format!("rucheckers-test-{}", std::process::id()));
         let path = dir.join("nested").join("settings.conf");
@@ -242,6 +364,12 @@ mod tests {
             human: Color::Black,
             sound: false,
             panel: true,
+            effects_enabled: true,
+            effects: EffectSet {
+                lightning: true,
+                sparks: true,
+                flashes: false,
+            },
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path, Settings::default()), settings);

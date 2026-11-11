@@ -101,6 +101,14 @@ texts! {
     SoundOn => ("Звук включён", "Sound on"),
     SoundOff => ("Звук выключен", "Sound off"),
     MovesPanel => ("Панель ходов", "Move panel"),
+    Effects => ("Спецэффекты", "Special effects"),
+    EffectsEnabled => ("Показывать спецэффекты", "Show special effects"),
+    EffectLightning => (
+        "Молния за шашкой при взятии нескольких шашек",
+        "Lightning behind the piece in multi-captures"
+    ),
+    EffectSparks => ("Искры от побитых шашек", "Sparks from captured pieces"),
+    EffectFlashes => ("Вспышки и свечение", "Flashes and glow"),
     ShowPanel => ("Показать панель", "Show panel"),
     HidePanel => ("Скрыть панель", "Hide panel"),
     YourMove => ("Ваш ход", "Your move"),

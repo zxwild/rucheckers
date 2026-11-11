@@ -1,11 +1,13 @@
 //! Расчёт анимации хода: положение шашки во времени, момент превращения,
 //! исчезновение побитых шашек. Модуль не рисует — он только считает кадр.
 //!
-//! Одна побитая шашка просто бледнеет после завершения хода. Если за ход побито
-//! несколько шашек, по ним проходит электрический разряд ([`super::fx`]): шашки
-//! исчезают по очереди, начиная с взятой последней.
+//! Обычное взятие: шашка, через которую перепрыгнули, бледнеет и исчезает после
+//! завершения хода. Если за ход побито несколько шашек и включены спецэффекты, ход
+//! сопровождается электрическим разрядом ([`super::fx`]): молния тянется за летящей
+//! шашкой, а побитые шашки исчезают в тот момент, когда она над ними пролетает.
 
-use super::fx;
+use super::fx::{self, Discharge, Strike};
+use super::geometry::screen_cell;
 use crate::board::{Piece, Square};
 use crate::moves::Move;
 
@@ -13,8 +15,10 @@ use crate::moves::Move;
 pub const STEP_SECONDS: f64 = 0.17;
 /// Добавка за каждое следующее поле длинного хода дамки, с.
 pub const EXTRA_SQUARE_SECONDS: f64 = 0.04;
-/// Время исчезновения единственной побитой шашки после завершения хода, с.
+/// Время исчезновения побитой шашки после завершения хода (без разряда), с.
 pub const FADE_SECONDS: f64 = 0.20;
+/// Непрозрачность побитой шашки, пока ход не закончен и она ещё стоит на доске.
+pub const CAPTURED_ALPHA: f32 = 0.42;
 
 /// Длительность одного отрезка пути между полями `a` и `b`.
 pub fn segment_seconds(a: Square, b: Square) -> f64 {
@@ -30,7 +34,7 @@ pub struct AnimFrame {
     pub rank: f32,
     /// Рисовать ли шашку дамкой.
     pub is_king: bool,
-    /// Маска побитых шашек, через которые шашка уже перепрыгнула.
+    /// Маска побитых шашек, над которыми шашка уже пролетела.
     pub jumped: u32,
     /// Шашка достигла конечного поля.
     pub arrived: bool,
@@ -47,13 +51,16 @@ pub struct MoveAnimation {
     start: f64,
     /// Моменты окончания каждого анимируемого отрезка относительно начала.
     ends: Vec<f64>,
+    /// Сопровождается ли ход электрическим разрядом.
+    discharge: bool,
 }
 
 impl MoveAnimation {
     /// Анимация хода `mv` шашкой `piece` (какой она была до хода).
     ///
     /// `first_step` — сколько прыжков уже показано (игрок сделал их по шагам);
-    /// анимируются остальные. `start` — время начала.
+    /// анимируются остальные. `start` — время начала. Взятие нескольких шашек
+    /// сопровождается разрядом; отключить его можно через [`Self::with_discharge`].
     pub fn new(mv: Move, piece: Piece, first_step: usize, start: f64) -> MoveAnimation {
         let first_step = first_step.min(mv.path().len());
         let points: Vec<Square> = mv.squares().collect();
@@ -63,13 +70,21 @@ impl MoveAnimation {
             elapsed += segment_seconds(pair[0], pair[1]);
             ends.push(elapsed);
         }
+        let discharge = mv.captured_count() >= fx::MIN_CAPTURES;
         MoveAnimation {
             mv,
             piece,
             first_step,
             start,
             ends,
+            discharge,
         }
+    }
+
+    /// Включает или отключает разряд (он возможен только при взятии нескольких шашек).
+    pub fn with_discharge(mut self, enabled: bool) -> MoveAnimation {
+        self.discharge = enabled && self.mv.captured_count() >= fx::MIN_CAPTURES;
+        self
     }
 
     /// Анимируемый ход.
@@ -92,66 +107,121 @@ impl MoveAnimation {
         self.ends.last().copied().unwrap_or(0.0)
     }
 
-    /// Сопровождается ли ход электрическим разрядом: побито несколько шашек.
+    /// Сопровождается ли ход электрическим разрядом.
     pub fn has_discharge(&self) -> bool {
-        self.mv.captured_count() >= fx::MIN_CAPTURES
+        self.discharge
     }
 
-    /// Момент начала разряда (в абсолютном времени), если он есть.
-    pub fn discharge_start(&self) -> Option<f64> {
-        self.has_discharge()
-            .then(|| self.start + self.travel_seconds() + fx::STRIKE_DELAY)
-    }
-
-    /// Побитые шашки в порядке ударов разряда: от взятой последней (она ближе всех
-    /// к бьющей шашке) к взятой первой.
-    pub fn strike_order(&self) -> Vec<Square> {
-        let mut order = self.mv.captured_in_order();
-        order.reverse();
-        order
-    }
-
-    /// Когда побитая шашка `sq` начинает исчезать (от начала анимации) и сколько это длится.
-    fn removal(&self, sq: Square) -> (f64, f64) {
-        let travel = self.travel_seconds();
-        if !self.has_discharge() {
-            return (travel, FADE_SECONDS);
+    /// Когда (от начала анимации) шашка находится на поле маршрута с номером `index`
+    /// (0 — исходное поле). Поля уже показанных прыжков пройдены к началу.
+    fn knot_seconds(&self, index: usize) -> f64 {
+        if index <= self.first_step {
+            0.0
+        } else {
+            self.ends
+                .get(index - self.first_step - 1)
+                .copied()
+                .unwrap_or_else(|| self.travel_seconds())
         }
-        let index = self.strike_order().iter().position(|&s| s == sq).unwrap_or(0);
-        (
-            travel + fx::STRIKE_DELAY + fx::strike_offset(index),
-            fx::VANISH_SECONDS,
-        )
     }
 
-    /// Непрозрачность побитой шашки `sq` в момент `now`: 1, пока ход не закончен,
-    /// затем убывает до 0. Для остальных полей — всегда 1.
+    /// Когда (от начала анимации) шашка пролетает над шашкой, побитой прыжком `step`.
+    /// Для уже показанных прыжков — в самом начале.
+    fn pass_seconds(&self, step: usize) -> f64 {
+        let (begin, end) = (self.knot_seconds(step), self.knot_seconds(step + 1));
+        if end <= begin {
+            return begin;
+        }
+        let points: Vec<Square> = self.mv.squares().collect();
+        let (Some(&a), Some(&b)) = (points.get(step), points.get(step + 1)) else {
+            return end;
+        };
+        // Побитая шашка не обязательно посередине прыжка: дамка бьёт издалека.
+        let length = (i32::from(b.file()) - i32::from(a.file())).abs().max(1);
+        let along = match self.mv.captured_at(step) {
+            Some(victim) => {
+                f64::from((i32::from(victim.file()) - i32::from(a.file())).abs()) / f64::from(length)
+            }
+            None => 0.5,
+        };
+        begin + (end - begin) * fx::ease_inverse(along)
+    }
+
+    /// Момент первого удара разряда (в абсолютном времени), если разряд есть.
+    pub fn first_strike_time(&self) -> Option<f64> {
+        self.discharge.then(|| self.start + self.pass_seconds(0))
+    }
+
+    /// Непрозрачность шашки на поле `sq` в момент `now`.
+    ///
+    /// Для шашек, которые этим ходом не бьются, — всегда 1. Побитая шашка без разряда
+    /// бледнеет, когда через неё перепрыгнули, и исчезает после завершения хода.
+    /// При разряде она исчезает сразу, как только над ней пролетела бьющая шашка.
     pub fn captured_alpha(&self, sq: Square, now: f64) -> f32 {
-        if self.mv.captured() & sq.bit() == 0 {
+        let Some(step) = (0..self.mv.path().len()).find(|&i| self.mv.captured_at(i) == Some(sq)) else {
             return 1.0;
+        };
+        let t = now - self.start;
+        let passed = self.pass_seconds(step);
+        // Шашки уже показанных прыжков стояли на доске побледневшими.
+        let shown_before = step < self.first_step;
+        let fade = |since: f64, duration: f64| (1.0 - (t - since) / duration).clamp(0.0, 1.0) as f32;
+        if self.discharge {
+            let base = if shown_before { CAPTURED_ALPHA } else { 1.0 };
+            base * fade(passed, fx::VANISH_SECONDS)
+        } else if t < passed && !shown_before {
+            1.0
+        } else {
+            CAPTURED_ALPHA * fade(self.travel_seconds(), FADE_SECONDS)
         }
-        let (begin, duration) = self.removal(sq);
-        (1.0 - (now - self.start - begin) / duration).clamp(0.0, 1.0) as f32
     }
 
-    /// Полная длительность: движение и исчезновение побитых шашек. Ход с разрядом
-    /// считается законченным, когда погасла молния (искры ещё летят, но следующему
-    /// ходу не мешают).
+    /// Полная длительность. Ход с разрядом считается законченным, когда погасла
+    /// молния (искры ещё летят, но следующему ходу не мешают); обычное взятие —
+    /// когда исчезли побитые шашки.
     pub fn total_seconds(&self) -> f64 {
-        let removal = if self.has_discharge() {
-            let count = self.mv.captured_count() as usize;
-            fx::STRIKE_DELAY + fx::chain_seconds(count).max(fx::bolt_seconds(count))
+        let tail = if self.discharge {
+            fx::TRAIL_SECONDS
         } else if self.mv.is_capture() {
             FADE_SECONDS
         } else {
             0.0
         };
-        self.travel_seconds() + removal
+        self.travel_seconds() + tail
     }
 
     /// Моменты (в абсолютном времени), когда шашка встаёт на очередное поле.
     pub fn landing_times(&self) -> Vec<f64> {
         self.ends.iter().map(|end| self.start + end).collect()
+    }
+
+    /// Разряд, сопровождающий ход: путь шашки с моментами времени и удары по побитым
+    /// шашкам в экранных клетках. `flipped` — доска перевёрнута (внизу чёрные).
+    pub fn discharge(&self, flipped: bool, seed: u64) -> Option<Discharge> {
+        if !self.discharge {
+            return None;
+        }
+        let cell = |sq: Square| screen_cell(f32::from(sq.file()), f32::from(sq.rank()), flipped);
+        let points: Vec<Square> = self.mv.squares().collect();
+        let knots = points
+            .iter()
+            .enumerate()
+            .map(|(index, &sq)| (cell(sq), self.start + self.knot_seconds(index)))
+            .collect();
+        let mut strikes = Vec::new();
+        for step in 0..self.mv.path().len() {
+            let Some(victim) = self.mv.captured_at(step) else {
+                continue;
+            };
+            let (from, to) = (cell(points[step]), cell(points[step + 1]));
+            let length = (to.0 - from.0).hypot(to.1 - from.1).max(1e-6);
+            strikes.push(Strike {
+                center: cell(victim),
+                time: self.start + self.pass_seconds(step),
+                direction: ((to.0 - from.0) / length, (to.1 - from.1) / length),
+            });
+        }
+        Some(Discharge::new(knots, strikes, seed))
     }
 
     /// Кадр в момент `now`.
@@ -160,9 +230,11 @@ impl MoveAnimation {
         let points: Vec<Square> = self.mv.squares().collect();
         let promotion = self.mv.promotion_step();
         let mut jumped = 0u32;
-        for step in 0..self.first_step {
-            if let Some(sq) = self.mv.captured_at(step) {
-                jumped |= sq.bit();
+        for step in 0..self.mv.path().len() {
+            if t >= self.pass_seconds(step) {
+                if let Some(sq) = self.mv.captured_at(step) {
+                    jumped |= sq.bit();
+                }
             }
         }
 
@@ -171,38 +243,28 @@ impl MoveAnimation {
             let step = self.first_step + i;
             if t < end {
                 let duration = (end - segment_start).max(1e-6);
-                let local = ((t - segment_start) / duration).clamp(0.0, 1.0);
-                let eased = local * local * (3.0 - 2.0 * local);
+                let eased = fx::ease((t - segment_start) / duration) as f32;
                 let (a, b) = (points[step], points[step + 1]);
-                if local > 0.5 {
-                    if let Some(sq) = self.mv.captured_at(step) {
-                        jumped |= sq.bit();
-                    }
-                }
                 return AnimFrame {
-                    file: lerp(f32::from(a.file()), f32::from(b.file()), eased as f32),
-                    rank: lerp(f32::from(a.rank()), f32::from(b.rank()), eased as f32),
+                    file: lerp(f32::from(a.file()), f32::from(b.file()), eased),
+                    rank: lerp(f32::from(a.rank()), f32::from(b.rank()), eased),
                     is_king: self.piece.is_king() || promotion.is_some_and(|p| p < step),
                     jumped,
                     arrived: false,
                     finished: false,
                 };
             }
-            if let Some(sq) = self.mv.captured_at(step) {
-                jumped |= sq.bit();
-            }
             segment_start = end;
         }
 
         let to = self.mv.to();
-        let total = self.total_seconds();
         AnimFrame {
             file: f32::from(to.file()),
             rank: f32::from(to.rank()),
             is_king: self.piece.is_king() || promotion.is_some(),
             jumped: self.mv.captured(),
             arrived: true,
-            finished: t >= total,
+            finished: t >= self.total_seconds(),
         }
     }
 }
@@ -216,6 +278,8 @@ mod tests {
     use super::*;
     use crate::board::{Color, Kind, Position};
     use crate::moves::legal_moves;
+    use crate::notation::format_move;
+    use crate::ui::fx::EffectSet;
 
     fn only_move(fen: &str) -> (Move, Piece) {
         let pos = Position::from_fen(fen).unwrap();
@@ -224,12 +288,28 @@ mod tests {
         (moves[0], pos.piece_at(moves[0].from()).unwrap())
     }
 
+    fn named_move(fen: &str, name: &str) -> (Move, Piece) {
+        let pos = Position::from_fen(fen).unwrap();
+        let mv = legal_moves(&pos)
+            .into_iter()
+            .find(|m| format_move(m) == name)
+            .expect(name);
+        (mv, pos.piece_at(mv.from()).unwrap())
+    }
+
+    fn square(name: &str) -> Square {
+        Square::parse(name).unwrap()
+    }
+
+    const HOP: f64 = STEP_SECONDS + EXTRA_SQUARE_SECONDS;
+
     #[test]
     fn quiet_move_goes_from_start_to_end() {
         let (mv, piece) = only_move("W:Wa1:Bh8,g7,f6");
         let anim = MoveAnimation::new(mv, piece, 0, 10.0);
         assert!((anim.travel_seconds() - STEP_SECONDS).abs() < 1e-9);
         assert!((anim.total_seconds() - STEP_SECONDS).abs() < 1e-9);
+        assert!(!anim.has_discharge() && anim.discharge(false, 1).is_none());
         let start = anim.frame(10.0);
         assert_eq!((start.file, start.rank), (0.0, 0.0));
         assert!(!start.arrived && !start.finished);
@@ -248,77 +328,217 @@ mod tests {
     }
 
     #[test]
-    fn single_capture_fades_the_captured_piece_after_landing() {
+    fn single_capture_dims_the_piece_and_removes_it_after_landing() {
         let (mv, piece) = only_move("W:Wc3,a1:Bd4");
         let anim = MoveAnimation::new(mv, piece, 0, 0.0);
-        let d4 = Square::parse("d4").unwrap();
-        assert!(!anim.has_discharge());
-        assert_eq!(anim.discharge_start(), None);
-        assert_eq!(anim.frame(0.01).jumped, 0);
-        assert_eq!(anim.frame(anim.travel_seconds() * 0.9).jumped, d4.bit());
+        let d4 = square("d4");
+        assert!(!anim.has_discharge(), "одна побитая шашка — без разряда");
+        assert_eq!(anim.first_strike_time(), None);
         let travel = anim.travel_seconds();
-        assert!((travel - (STEP_SECONDS + EXTRA_SQUARE_SECONDS)).abs() < 1e-9);
+        assert!((travel - HOP).abs() < 1e-9);
         assert!((anim.total_seconds() - (travel + FADE_SECONDS)).abs() < 1e-9);
-        // Пока шашка движется, побитая остаётся на доске.
-        assert_eq!(anim.captured_alpha(d4, travel * 0.5), 1.0);
+        // До прыжка шашка цела, после — бледнеет и стоит до конца хода.
+        assert_eq!(anim.frame(travel * 0.4).jumped, 0);
+        assert_eq!(anim.captured_alpha(d4, travel * 0.4), 1.0);
+        assert_eq!(anim.frame(travel * 0.6).jumped, d4.bit());
+        assert_eq!(anim.captured_alpha(d4, travel * 0.6), CAPTURED_ALPHA);
         let landed = anim.frame(travel + 1e-6);
         assert!(landed.arrived && !landed.finished);
-        assert!(anim.captured_alpha(d4, travel + 1e-6) > 0.99);
-        assert!((anim.captured_alpha(d4, travel + FADE_SECONDS / 2.0) - 0.5).abs() < 0.01);
+        assert!((anim.captured_alpha(d4, travel + 1e-6) - CAPTURED_ALPHA).abs() < 1e-3);
+        let half = anim.captured_alpha(d4, travel + FADE_SECONDS / 2.0);
+        assert!((half - CAPTURED_ALPHA / 2.0).abs() < 0.01);
         assert_eq!(anim.captured_alpha(d4, travel + FADE_SECONDS + 1e-6), 0.0);
         assert!(anim.frame(travel + FADE_SECONDS + 1e-6).finished);
         // Остальные поля от анимации не зависят.
-        assert_eq!(anim.captured_alpha(Square::parse("a1").unwrap(), 100.0), 1.0);
+        assert_eq!(anim.captured_alpha(square("a1"), 100.0), 1.0);
     }
 
     #[test]
-    fn multi_capture_removes_pieces_one_by_one_from_the_last_captured() {
+    fn multi_capture_strikes_each_piece_as_the_piece_flies_over_it() {
         let (mv, piece) = only_move("W:Wa1:Bb2,d4,f6");
         let anim = MoveAnimation::new(mv, piece, 0, 5.0);
-        let [b2, d4, f6] = ["b2", "d4", "f6"].map(|name| Square::parse(name).unwrap());
-        // Шашки помечаются побитыми по мере прыжков.
-        let hop = STEP_SECONDS + EXTRA_SQUARE_SECONDS;
-        assert_eq!(anim.frame(5.0 + 0.01).jumped, 0);
-        assert_eq!(anim.frame(5.0 + hop * 0.9).jumped, b2.bit());
-        assert_eq!(anim.frame(5.0 + hop * 1.9).jumped, b2.bit() | d4.bit());
-        assert_eq!(anim.frame(5.0 + hop * 2.9).jumped, b2.bit() | d4.bit() | f6.bit());
-
-        // Разряд начинается после прихода шашки и идёт от последней побитой к первой.
+        let victims = [square("b2"), square("d4"), square("f6")];
         assert!(anim.has_discharge());
         let travel = anim.travel_seconds();
-        assert!((travel - 3.0 * hop).abs() < 1e-9);
-        let start = anim.discharge_start().unwrap();
-        assert!((start - (5.0 + travel + fx::STRIKE_DELAY)).abs() < 1e-9);
-        assert_eq!(anim.strike_order(), [f6, d4, b2]);
-        for (index, sq) in [f6, d4, b2].into_iter().enumerate() {
-            let strike = start + fx::strike_offset(index);
+        assert!((travel - 3.0 * HOP).abs() < 1e-9);
+        // Простая перепрыгивает шашку посередине прыжка.
+        assert!((anim.first_strike_time().unwrap() - (5.0 + 0.5 * HOP)).abs() < 1e-9);
+        for (index, sq) in victims.into_iter().enumerate() {
+            let strike = 5.0 + (index as f64 + 0.5) * HOP;
             assert_eq!(
                 anim.captured_alpha(sq, strike - 1e-6),
                 1.0,
-                "{sq}: до удара шашка на месте"
+                "{sq}: до пролёта шашка цела"
             );
-            assert!(
-                (anim.captured_alpha(sq, strike + fx::VANISH_SECONDS / 2.0) - 0.5).abs() < 0.01,
-                "{sq}"
-            );
+            assert_eq!(anim.frame(strike - 1e-6).jumped & sq.bit(), 0);
+            assert_ne!(anim.frame(strike + 1e-6).jumped & sq.bit(), 0);
+            let half = anim.captured_alpha(sq, strike + fx::VANISH_SECONDS / 2.0);
+            assert!((half - 0.5).abs() < 0.01, "{sq}: {half}");
             assert_eq!(
                 anim.captured_alpha(sq, strike + fx::VANISH_SECONDS + 1e-6),
                 0.0,
                 "{sq}"
             );
+            // В этот момент бьющая шашка находится точно над побитой.
+            let over = anim.frame(strike);
+            assert!((over.file - f32::from(sq.file())).abs() < 1e-3);
+            assert!((over.rank - f32::from(sq.rank())).abs() < 1e-3);
         }
-        // Анимация закончена, когда исчезли все шашки и погасла молния.
+        // Первая шашка исчезла задолго до конца хода.
+        assert_eq!(anim.captured_alpha(victims[0], 5.0 + 1.5 * HOP), 0.0);
+        // Ход закончен, когда погасла молния.
         let total = anim.total_seconds();
-        assert!((total - (travel + fx::STRIKE_DELAY + fx::bolt_seconds(3))).abs() < 1e-9);
-        assert!(fx::bolt_seconds(3) >= fx::chain_seconds(3));
+        assert!((total - (travel + fx::TRAIL_SECONDS)).abs() < 1e-9);
         assert!(!anim.frame(5.0 + total - 0.01).finished);
         assert!(anim.frame(5.0 + total + 1e-6).finished);
-        assert_eq!(anim.captured_alpha(b2, 5.0 + total), 0.0);
-        let discharge = fx::Discharge::new((0.5, 0.5), vec![(1.5, 1.5); 3], start, 1);
+    }
+
+    #[test]
+    fn discharge_follows_the_piece_exactly() {
+        for flipped in [false, true] {
+            let (mv, piece) = only_move("W:Wa1:Bb2,d4,f6");
+            let anim = MoveAnimation::new(mv, piece, 0, 5.0);
+            let fx = anim.discharge(flipped, 7).unwrap();
+            assert_eq!(fx.start(), 5.0);
+            assert!((fx.arrival() - (5.0 + anim.travel_seconds())).abs() < 1e-9);
+            assert!(
+                (fx.bolt_end() - (5.0 + anim.total_seconds())).abs() < 1e-9,
+                "ход кончается вместе с молнией"
+            );
+            // Голова молнии совпадает с положением шашки в каждый момент.
+            for step in 0..=120 {
+                let now = 4.9 + f64::from(step) * 0.007;
+                let frame = anim.frame(now);
+                let expected = screen_cell(frame.file, frame.rank, flipped);
+                let head = fx.head(now);
+                assert!(
+                    (head.0 - expected.0).abs() < 1e-4 && (head.1 - expected.1).abs() < 1e-4,
+                    "t = {now}"
+                );
+            }
+            // Удары — по побитым шашкам, в порядке взятия, в моменты пролёта.
+            let strikes = fx.strikes();
+            assert_eq!(strikes.len(), 3);
+            for (index, name) in ["b2", "d4", "f6"].into_iter().enumerate() {
+                let sq = square(name);
+                assert_eq!(
+                    strikes[index].center,
+                    screen_cell(f32::from(sq.file()), f32::from(sq.rank()), flipped)
+                );
+                assert!((strikes[index].time - (5.0 + (index as f64 + 0.5) * HOP)).abs() < 1e-9);
+                let head = fx.head(strikes[index].time);
+                assert!((head.0 - strikes[index].center.0).abs() < 1e-3);
+                let direction = strikes[index].direction;
+                assert!((direction.0.hypot(direction.1) - 1.0).abs() < 1e-4);
+            }
+            // Шашка летит вправо-вверх; на перевёрнутой доске — влево-вниз.
+            let direction = strikes[0].direction;
+            assert_eq!((direction.0 > 0.0, direction.1 < 0.0), (!flipped, !flipped));
+            // Молния видна уже во время движения.
+            assert!(!fx.frame(5.0 + 0.3 * HOP, EffectSet::ALL).bolts.is_empty());
+        }
+    }
+
+    #[test]
+    fn king_strikes_a_distant_piece_when_it_is_over_it() {
+        // Дамка a1 бьёт c3 (встаёт на e5) и затем g7... маршрут a1:e5:h8 — оба прыжка длинные,
+        // побитые шашки стоят не посередине прыжка.
+        let (mv, piece) = named_move("W:WKa1:Bc3,g7", "a1:e5:h8");
+        let anim = MoveAnimation::new(mv, piece, 0, 0.0);
+        let fx = anim.discharge(false, 1).unwrap();
+        for (strike, name) in fx.strikes().iter().zip(["c3", "g7"]) {
+            let sq = square(name);
+            let over = anim.frame(strike.time);
+            assert!(
+                (over.file - f32::from(sq.file())).abs() < 2e-3,
+                "{name}: {}",
+                over.file
+            );
+            assert!((over.rank - f32::from(sq.rank())).abs() < 2e-3, "{name}");
+            assert_eq!(anim.captured_alpha(sq, strike.time - 1e-6), 1.0);
+            assert!(anim.captured_alpha(sq, strike.time + 0.02) < 1.0);
+        }
+        // Первый прыжок: шашка c3 на половине пути (a1 → e5), второй: g7 на двух третях (e5 → h8).
+        let first_hop = segment_seconds(square("a1"), square("e5"));
+        assert!((fx.strikes()[0].time - first_hop * 0.5).abs() < 1e-6);
+        let second_hop = segment_seconds(square("e5"), square("h8"));
+        let expected = first_hop + second_hop * fx::ease_inverse(2.0 / 3.0);
+        assert!((fx.strikes()[1].time - expected).abs() < 1e-6);
+        assert!(fx.strikes()[1].time > first_hop + second_hop * 0.5);
+    }
+
+    #[test]
+    fn hops_made_by_hand_are_struck_at_once() {
+        // Игрок сделал первый прыжок сам: шашка d4 уже стоит побледневшей.
+        let (mv, piece) = only_move("W:Wc3:Bd4,f6");
+        let anim = MoveAnimation::new(mv, piece, 1, 0.0);
+        let (d4, f6) = (square("d4"), square("f6"));
         assert!(
-            (discharge.bolt_end() - (5.0 + total)).abs() < 1e-9,
-            "ход кончается вместе с молнией"
+            anim.has_discharge(),
+            "разряд не зависит от того, сколько шагов уже показано"
         );
+        let start = anim.frame(0.0);
+        assert_eq!((start.file, start.rank), (4.0, 4.0), "анимация начинается с e5");
+        assert_eq!(start.jumped, d4.bit(), "первая шашка уже побита");
+        assert_eq!(anim.landing_times().len(), 1);
+        assert_eq!(anim.first_strike_time(), Some(0.0));
+        assert_eq!(anim.captured_alpha(d4, -0.1), CAPTURED_ALPHA);
+        assert!(anim.captured_alpha(d4, fx::VANISH_SECONDS / 2.0) < CAPTURED_ALPHA);
+        assert_eq!(anim.captured_alpha(d4, fx::VANISH_SECONDS + 1e-6), 0.0);
+        assert_eq!(anim.captured_alpha(f6, 0.4 * HOP), 1.0);
+        assert_eq!(
+            anim.captured_alpha(f6, 0.5 * HOP + fx::VANISH_SECONDS + 1e-6),
+            0.0
+        );
+        // Молния сразу вспыхивает на пройденном отрезке c3–e5.
+        let fx = anim.discharge(false, 3).unwrap();
+        assert_eq!(fx.head(0.0), screen_cell(4.0, 4.0, false));
+        let frame = fx.frame(0.01, EffectSet::ALL);
+        let c3 = screen_cell(2.0, 2.0, false);
+        assert!(
+            frame.bolts.iter().any(|b| b.points[0] == c3),
+            "молния начинается от исходного поля"
+        );
+
+        // Все прыжки показаны (шашку перетащили): движения нет, всё вспыхивает разом.
+        let dropped = MoveAnimation::new(mv, piece, 2, 0.0);
+        assert_eq!(dropped.travel_seconds(), 0.0);
+        assert!(dropped.frame(0.0).arrived);
+        assert!((dropped.total_seconds() - fx::TRAIL_SECONDS).abs() < 1e-9);
+        assert_eq!(dropped.captured_alpha(f6, -0.01), CAPTURED_ALPHA);
+        assert_eq!(dropped.captured_alpha(f6, fx::VANISH_SECONDS + 1e-6), 0.0);
+        let clamped = MoveAnimation::new(mv, piece, 99, 0.0);
+        assert!(clamped.frame(0.0).arrived);
+        assert!(clamped.discharge(true, 1).is_some());
+    }
+
+    #[test]
+    fn discharge_can_be_switched_off() {
+        // Без спецэффектов взятие нескольких шашек идёт как обычное: шашки бледнеют
+        // и исчезают после завершения хода.
+        let (mv, piece) = only_move("W:Wa1:Bb2,d4,f6");
+        let anim = MoveAnimation::new(mv, piece, 0, 0.0).with_discharge(false);
+        assert!(!anim.has_discharge());
+        assert!(anim.discharge(false, 1).is_none());
+        assert_eq!(anim.first_strike_time(), None);
+        let travel = anim.travel_seconds();
+        assert!((anim.total_seconds() - (travel + FADE_SECONDS)).abs() < 1e-9);
+        let b2 = square("b2");
+        assert_eq!(anim.captured_alpha(b2, 0.4 * HOP), 1.0);
+        assert_eq!(
+            anim.captured_alpha(b2, 1.5 * HOP),
+            CAPTURED_ALPHA,
+            "стоит до конца хода"
+        );
+        assert_eq!(anim.captured_alpha(b2, travel + FADE_SECONDS + 1e-6), 0.0);
+        // Включить разряд у одиночного взятия нельзя.
+        let (single, man) = only_move("W:Wc3,a1:Bd4");
+        assert!(!MoveAnimation::new(single, man, 0, 0.0)
+            .with_discharge(true)
+            .has_discharge());
+        assert!(MoveAnimation::new(mv, piece, 0, 0.0)
+            .with_discharge(true)
+            .has_discharge());
     }
 
     #[test]
@@ -333,25 +553,5 @@ mod tests {
         assert!(!anim.frame(first * 0.5).is_king, "до дамочного поля — простая");
         assert!(anim.frame(first + 0.01).is_king, "после приземления — дамка");
         assert!(anim.frame(anim.total_seconds() + 1.0).is_king);
-    }
-
-    #[test]
-    fn already_shown_steps_are_skipped() {
-        let (mv, piece) = only_move("W:Wc3:Bd4,f6");
-        let anim = MoveAnimation::new(mv, piece, 1, 0.0);
-        let d4 = Square::parse("d4").unwrap().bit();
-        assert!(
-            anim.has_discharge(),
-            "разряд не зависит от того, сколько шагов уже показано"
-        );
-        let start = anim.frame(0.0);
-        assert_eq!((start.file, start.rank), (4.0, 4.0), "анимация начинается с e5");
-        assert_eq!(start.jumped, d4, "первая шашка уже побита");
-        assert_eq!(anim.landing_times().len(), 1);
-        let skipped = MoveAnimation::new(mv, piece, 2, 0.0);
-        assert_eq!(skipped.travel_seconds(), 0.0);
-        assert!(skipped.frame(0.0).arrived);
-        let clamped = MoveAnimation::new(mv, piece, 99, 0.0);
-        assert!(clamped.frame(0.0).arrived);
     }
 }

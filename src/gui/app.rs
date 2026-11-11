@@ -19,9 +19,9 @@ use rucheckers::rng::entropy_seed;
 use rucheckers::settings::Settings;
 use rucheckers::sound::Sound;
 use rucheckers::tree::{GameTree, NodeId};
-use rucheckers::ui::anim::{segment_seconds, MoveAnimation};
+use rucheckers::ui::anim::{segment_seconds, MoveAnimation, CAPTURED_ALPHA};
 use rucheckers::ui::fx::Discharge;
-use rucheckers::ui::geometry::{screen_cell, BoardLayout};
+use rucheckers::ui::geometry::BoardLayout;
 use rucheckers::ui::input::InputEvent;
 use rucheckers::ui::session::{Nav, Session, SessionEvent};
 use std::collections::VecDeque;
@@ -31,8 +31,6 @@ use std::time::Duration;
 /// Наибольшая и наименьшая ширина панели ходов.
 const PANEL_WIDTH: f32 = 352.0;
 const PANEL_MIN_WIDTH: f32 = 250.0;
-/// Непрозрачность побитой шашки, пока ход не закончен.
-const CAPTURED_ALPHA: f32 = 0.42;
 /// Пауза между последним ходом партии и звуком её окончания, с.
 const END_SOUND_DELAY: f64 = 0.45;
 
@@ -55,6 +53,14 @@ struct NewGameDraft {
     level: u8,
 }
 
+/// Спецэффект, который можно включить или выключить отдельно.
+#[derive(Clone, Copy)]
+enum EffectKind {
+    Lightning,
+    Sparks,
+    Flashes,
+}
+
 /// Действие, выбранное в интерфейсе; выполняется после отрисовки кадра.
 enum Action {
     AskNewGame,
@@ -67,6 +73,10 @@ enum Action {
     OpenSettings,
     CloseSettings,
     SetLang(Lang),
+    /// Общий выключатель спецэффектов.
+    ToggleEffects,
+    /// Отдельный спецэффект.
+    ToggleEffect(EffectKind),
     SetLevel(u8),
     Navigate(Nav),
     Continue,
@@ -212,7 +222,8 @@ impl CheckersApp {
         };
         let queued_end = self.anims.back().map(|p| p.anim.start() + p.anim.total_seconds());
         let start = queued_end.map_or(now, |end| end.max(now));
-        let anim = MoveAnimation::new(mv, piece, first_step, start);
+        let effects = self.settings.active_effects();
+        let anim = MoveAnimation::new(mv, piece, first_step, start).with_discharge(effects.any());
 
         let landings = anim.landing_times();
         let mut last_landing = start;
@@ -223,18 +234,12 @@ impl CheckersApp {
             self.sounds.push((time, step_sound(&mv, first_step + i)));
             last_landing = time;
         }
-        // Несколько побитых шашек: из бьющей шашки по ним проходит электрический разряд.
-        if let Some(discharge_start) = anim.discharge_start() {
-            let flipped = human == Color::Black;
-            let cell = |sq: Square| screen_cell(f32::from(sq.file()), f32::from(sq.rank()), flipped);
-            let targets = anim.strike_order().into_iter().map(cell).collect();
-            self.effects.push(Discharge::new(
-                cell(mv.to()),
-                targets,
-                discharge_start,
-                entropy_seed(),
-            ));
-            self.sounds.push((discharge_start, Sound::Discharge));
+        // Несколько побитых шашек: за летящей шашкой тянется молния и бьёт по ним.
+        if let Some(effect) = anim.discharge(human == Color::Black, entropy_seed()) {
+            if let (true, Some(time)) = (effects.lightning, anim.first_strike_time()) {
+                self.sounds.push((time, Sound::Discharge));
+            }
+            self.effects.push(effect);
         }
         if let Some(outcome) = outcome {
             let sound = match outcome.winner() {
@@ -320,6 +325,19 @@ impl CheckersApp {
             Action::TogglePanel => {
                 self.settings.panel = !self.settings.panel;
                 self.scroll_to_current = true;
+                self.save_settings();
+            }
+            Action::ToggleEffects => {
+                self.settings.effects_enabled = !self.settings.effects_enabled;
+                self.save_settings();
+            }
+            Action::ToggleEffect(kind) => {
+                let chosen = &mut self.settings.effects;
+                match kind {
+                    EffectKind::Lightning => chosen.lightning = !chosen.lightning,
+                    EffectKind::Sparks => chosen.sparks = !chosen.sparks,
+                    EffectKind::Flashes => chosen.flashes = !chosen.flashes,
+                }
                 self.save_settings();
             }
             Action::OpenSettings => self.settings_open = true,
@@ -616,7 +634,6 @@ impl CheckersApp {
             let mv = playing.anim.mv();
             position = playing.before;
             hidden = Some(mv.from());
-            dimmed = frame.jumped;
             let mut piece = playing.anim.piece();
             if frame.is_king {
                 piece.kind = Kind::King;
@@ -676,12 +693,12 @@ impl CheckersApp {
                 let Some(piece) = position.piece_at(sq) else {
                     continue;
                 };
-                // Побитая шашка бледнеет, а в конце хода исчезает (каждая — в свой момент).
-                let alpha = if dimmed & sq.bit() != 0 {
-                    let fade = self.anims.front().map_or(1.0, |p| p.anim.captured_alpha(sq, now));
-                    CAPTURED_ALPHA * fade
-                } else {
-                    1.0
+                // Побитая шашка: во время анимации хода её непрозрачность задаёт анимация,
+                // а пока взятие выполняется по шагам, она стоит побледневшей.
+                let alpha = match self.anims.front() {
+                    Some(playing) => playing.anim.captured_alpha(sq, now),
+                    None if dimmed & sq.bit() != 0 => CAPTURED_ALPHA,
+                    None => 1.0,
                 };
                 if alpha > 0.01 {
                     board::draw_piece(
@@ -754,14 +771,21 @@ impl CheckersApp {
             );
         }
 
-        // Движущаяся шашка — поверх остальных.
+        // Вспышки, молния и ореол — под летящей шашкой; искры — поверх всего.
+        let parts = self.settings.active_effects();
+        let frames: Vec<_> = self
+            .effects
+            .iter()
+            .map(|effect| effect.frame(now, parts))
+            .collect();
+        for frame in &frames {
+            board::draw_lightning(painter, layout, frame, ppp);
+        }
         if let Some((at, piece, lifted)) = mover {
             board::draw_piece(painter, sprites, at, layout.cell, piece, 1.0, lifted);
         }
-
-        // Разряды и искры — поверх шашек.
-        for effect in &self.effects {
-            board::draw_discharge(painter, layout, &effect.frame(now), ppp);
+        for frame in &frames {
+            board::draw_sparks(painter, layout, frame, ppp);
         }
 
         if interactive {
@@ -1182,6 +1206,29 @@ impl CheckersApp {
                 if ui.checkbox(&mut panel, tr(lang, Text::MovesPanel)).changed() {
                     actions.push(Action::TogglePanel);
                 }
+
+                // Спецэффекты: общий выключатель и каждый эффект отдельно.
+                ui.add_space(8.0);
+                ui.label(RichText::new(tr(lang, Text::Effects)).strong());
+                let mut all = self.settings.effects_enabled;
+                if ui.checkbox(&mut all, tr(lang, Text::EffectsEnabled)).changed() {
+                    actions.push(Action::ToggleEffects);
+                }
+                let chosen = self.settings.effects;
+                ui.indent("effects_list", |ui| {
+                    ui.add_enabled_ui(self.settings.effects_enabled, |ui| {
+                        for (kind, text, on) in [
+                            (EffectKind::Lightning, Text::EffectLightning, chosen.lightning),
+                            (EffectKind::Sparks, Text::EffectSparks, chosen.sparks),
+                            (EffectKind::Flashes, Text::EffectFlashes, chosen.flashes),
+                        ] {
+                            let mut value = on;
+                            if ui.checkbox(&mut value, tr(lang, text)).changed() {
+                                actions.push(Action::ToggleEffect(kind));
+                            }
+                        }
+                    });
+                });
                 ui.add_space(8.0);
                 ui.label(RichText::new(tr(lang, Text::Keys)).strong());
                 ui.label(

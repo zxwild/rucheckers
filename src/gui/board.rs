@@ -251,20 +251,45 @@ fn glow_disc(center: Pos2, radius: f32, intensity: f32) -> Shape {
     Shape::mesh(mesh)
 }
 
-/// Электрический разряд: вспышки, молнии и искры поверх шашек.
+/// Свечение кольцом: ярче всего на радиусе `peak`, сходит на нет к `inner` и `outer`.
+fn glow_ring(center: Pos2, inner: f32, peak: f32, outer: f32, intensity: f32) -> Shape {
+    const SEGMENTS: u32 = 40;
+    let mut mesh = egui::Mesh::default();
+    for (radius, color) in [
+        (inner, Color32::TRANSPARENT),
+        (peak, glow(fx::GLOW, 0.80 * intensity)),
+        ((peak + outer) / 2.0, glow(fx::GLOW, 0.26 * intensity)),
+        (outer, Color32::TRANSPARENT),
+    ] {
+        for i in 0..SEGMENTS {
+            let angle = TAU * i as f32 / SEGMENTS as f32;
+            mesh.colored_vertex(center + vec2(angle.cos(), angle.sin()) * radius, color);
+        }
+    }
+    for ring in 0..3 {
+        for i in 0..SEGMENTS {
+            let next = (i + 1) % SEGMENTS;
+            let (a, a_next) = (ring * SEGMENTS + i, ring * SEGMENTS + next);
+            let (b, b_next) = (a + SEGMENTS, a_next + SEGMENTS);
+            mesh.add_triangle(a, b, b_next);
+            mesh.add_triangle(a, b_next, a_next);
+        }
+    }
+    Shape::mesh(mesh)
+}
+
+/// Нижний слой разряда: вспышки на побитых шашках, молния за летящей шашкой и ореол
+/// вокруг неё. Рисуется поверх стоящих шашек, но под летящей.
 ///
 /// Всё рисуется обычными треугольниками через ту же аппаратно ускоренную отрисовку
 /// (OpenGL), что и остальной интерфейс, поэтому эффект одинаково работает на macOS
 /// и Linux и не требует собственных шейдеров.
-pub fn draw_discharge(
+pub fn draw_lightning(
     painter: &Painter,
     layout: &BoardLayout,
     frame: &DischargeFrame,
     pixels_per_point: f32,
 ) {
-    if frame.is_empty() {
-        return;
-    }
     let cell = layout.cell;
     let pixel = 1.0 / pixels_per_point.max(0.1);
     let on_screen = |p: fx::Point| {
@@ -272,7 +297,6 @@ pub fn draw_discharge(
         pos2(x, y)
     };
     let mut shapes: Vec<Shape> = Vec::new();
-
     for flash in &frame.flashes {
         shapes.push(glow_disc(
             on_screen(flash.center),
@@ -280,33 +304,48 @@ pub fn draw_discharge(
             flash.intensity,
         ));
     }
-
     // Молния: тёмная подложка (чтобы её было видно и на светлых полях), два слоя
     // свечения и яркая сердцевина.
     const SHADE: [f32; 3] = [0.10, 0.13, 0.0];
     for bolt in &frame.bolts {
         let points: Vec<Pos2> = bolt.points.iter().map(|&p| on_screen(p)).collect();
         let (width, level) = (bolt.width, bolt.intensity);
-        shapes.push(Shape::line(
-            points.clone(),
-            Stroke::new(cell * 0.15 * width, blended(SHADE, 0.34 * level)),
-        ));
-        shapes.push(Shape::line(
-            points.clone(),
-            Stroke::new(cell * 0.26 * width, glow(fx::GLOW, 0.22 * level)),
-        ));
-        shapes.push(Shape::line(
-            points.clone(),
-            Stroke::new(cell * 0.11 * width, glow(fx::GLOW, 0.60 * level)),
-        ));
-        let core = (cell * 0.036 * width).max(1.2 * pixel);
-        shapes.push(Shape::line(
-            points,
-            Stroke::new(core, blended(fx::BOLT_CORE, level)),
+        for (thickness, color) in [
+            (cell * 0.15 * width, blended(SHADE, 0.34 * level)),
+            (cell * 0.26 * width, glow(fx::GLOW, 0.22 * level)),
+            (cell * 0.11 * width, glow(fx::GLOW, 0.60 * level)),
+            (
+                (cell * 0.036 * width).max(1.2 * pixel),
+                blended(fx::BOLT_CORE, level),
+            ),
+        ] {
+            shapes.push(Shape::line(points.clone(), Stroke::new(thickness, color)));
+        }
+    }
+    // Ореол: начинается под краем шашки и выступает из-под неё.
+    if let Some(halo) = &frame.halo {
+        let edge = PIECE_RADIUS * cell;
+        shapes.push(glow_ring(
+            on_screen(halo.center),
+            edge * 0.8,
+            edge,
+            halo.radius * cell,
+            halo.intensity,
         ));
     }
+    painter.extend(shapes);
+}
 
-    // Искры: короткий светящийся штрих с яркой головкой.
+/// Верхний слой разряда: искры. Рисуются поверх всех шашек.
+pub fn draw_sparks(painter: &Painter, layout: &BoardLayout, frame: &DischargeFrame, pixels_per_point: f32) {
+    let cell = layout.cell;
+    let pixel = 1.0 / pixels_per_point.max(0.1);
+    let on_screen = |p: fx::Point| {
+        let (x, y) = layout.cell_to_point(p);
+        pos2(x, y)
+    };
+    let mut shapes: Vec<Shape> = Vec::new();
+    // Искра — короткий светящийся штрих с яркой головкой.
     for spark in &frame.sparks {
         let (head, tail) = (on_screen(spark.head), on_screen(spark.tail));
         let color = fx::spark_color(spark.heat);

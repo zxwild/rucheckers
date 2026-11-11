@@ -1,8 +1,8 @@
 //! Электрический разряд при взятии нескольких шашек: молния, вспышки и искры.
 //!
-//! Разряд выходит из бьющей шашки, когда она встала на конечное поле, и по цепи
-//! проходит через побитые шашки, начиная с ближайшей — взятой последней. Каждая шашка
-//! при ударе вспыхивает, рассыпается искрами и исчезает.
+//! Молния тянется за бьющей шашкой по её пути и появляется одновременно с движением:
+//! шашка летит, разряд следует за ней и постепенно гаснет позади. Пролетая над побитой
+//! шашкой, разряд поражает её: шашка вспыхивает, рассыпается искрами и исчезает.
 //!
 //! Модуль только считает кадр: ломаные молнии, вспышки и положения искр. Он не знает
 //! об окне и не хранит состояния между кадрами — кадр полностью определяется временем
@@ -17,34 +17,36 @@ use std::f32::consts::TAU;
 
 /// Наименьшее число побитых за ход шашек, при котором показывается разряд.
 pub const MIN_CAPTURES: u32 = 2;
-/// Пауза между приходом бьющей шашки на конечное поле и началом разряда, с.
-pub const STRIKE_DELAY: f64 = 0.04;
-/// Задержка между ударами по соседним шашкам цепи, с.
-pub const STRIKE_INTERVAL: f64 = 0.065;
+/// Через сколько секунд после пролёта шашки молния на этом участке пути гаснет.
+pub const TRAIL_SECONDS: f64 = 0.45;
+/// Сколько секунд после пролёта шашки участок молнии светится в полную силу.
+pub const TRAIL_FULL_SECONDS: f64 = 0.10;
 /// Время исчезновения шашки после удара, с.
 pub const VANISH_SECONDS: f64 = 0.12;
-/// Время, которое молния держится после последнего удара, с.
-pub const BOLT_HOLD_SECONDS: f64 = 0.24;
-/// Время затухания молнии в конце, с.
-pub const BOLT_FADE_SECONDS: f64 = 0.10;
 /// Длина самого мелкого звена ломаной молнии, клеток (приблизительно).
 pub const BOLT_FINE_SEGMENT: f32 = 0.16;
 /// Размах самых мелких зубцов в долях длины мелкого звена.
 pub const BOLT_FINE_BEND: f32 = 0.34;
 /// Во сколько раз размах зубцов меньше размаха изгибов предыдущего, более крупного уровня.
 pub const BOLT_ROUGHNESS: f32 = 0.62;
-/// Предел размаха крупных изгибов, клеток: молния не уходит далеко от прямой.
+/// Предел размаха крупных изгибов, клеток: молния не уходит далеко от пути шашки.
 pub const BOLT_MAX_BEND: f32 = 0.16;
 /// Период, с которым молния меняет форму (мерцание), с.
 pub const FLICKER_SECONDS: f64 = 0.045;
 /// Длительность вспышки на месте удара, с.
 pub const FLASH_SECONDS: f64 = 0.18;
+/// Время, за которое гаснет свечение вокруг шашки после её остановки, с.
+pub const HEAD_GLOW_FADE_SECONDS: f64 = 0.12;
+/// Внешний радиус свечения вокруг летящей шашки, клеток (сама шашка — 0,40).
+pub const HALO_RADIUS: f32 = 0.66;
 /// Число искр от одной побитой шашки.
 pub const SPARKS_PER_PIECE: usize = 28;
 /// Время жизни искры, с: от и до.
 pub const SPARK_LIFE: (f32, f32) = (0.35, 0.90);
 /// Начальная скорость искры, клеток в секунду: от и до.
 pub const SPARK_SPEED: (f32, f32) = (1.4, 5.6);
+/// Добавка к скорости искр в направлении полёта шашки, клеток в секунду.
+pub const SPARK_CARRY: f32 = 1.3;
 /// Сопротивление воздуха: скорость искры убывает в e раз за `1 / SPARK_DRAG` секунд.
 pub const SPARK_DRAG: f32 = 3.2;
 /// Ускорение, с которым искры падают вниз по экрану, клеток/с².
@@ -60,20 +62,59 @@ pub const GLOW: [f32; 3] = [0.66, 0.95, 0.08];
 /// Точка в экранных координатах доски (в клетках).
 pub type Point = (f32, f32);
 
-/// Момент удара по шашке с номером `index` в цепи (0 — ближайшая к источнику)
-/// относительно начала разряда, с.
-pub fn strike_offset(index: usize) -> f64 {
-    index as f64 * STRIKE_INTERVAL
+/// Какие части эффекта показывать.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct EffectSet {
+    /// Молния за шашкой.
+    pub lightning: bool,
+    /// Искры от побитых шашек.
+    pub sparks: bool,
+    /// Вспышки на месте удара и свечение вокруг летящей шашки.
+    pub flashes: bool,
 }
 
-/// Время от начала разряда до исчезновения последней из `count` шашек, с.
-pub fn chain_seconds(count: usize) -> f64 {
-    strike_offset(count.saturating_sub(1)) + VANISH_SECONDS
+impl EffectSet {
+    /// Все части включены.
+    pub const ALL: EffectSet = EffectSet {
+        lightning: true,
+        sparks: true,
+        flashes: true,
+    };
+    /// Все части выключены.
+    pub const NONE: EffectSet = EffectSet {
+        lightning: false,
+        sparks: false,
+        flashes: false,
+    };
+
+    /// Включена ли хотя бы одна часть.
+    pub fn any(self) -> bool {
+        self.lightning || self.sparks || self.flashes
+    }
 }
 
-/// Время от начала разряда до угасания молнии, с. Искры летят ещё некоторое время.
-pub fn bolt_seconds(count: usize) -> f64 {
-    strike_offset(count.saturating_sub(1)) + BOLT_HOLD_SECONDS
+/// Плавный разгон и торможение шашки на отрезке пути: доля пройденного расстояния
+/// по доле прошедшего времени.
+pub fn ease(x: f64) -> f64 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// Обратная функция к [`ease`]: доля времени, за которую пройдена доля пути `u`.
+pub fn ease_inverse(u: f64) -> f64 {
+    let u = u.clamp(0.0, 1.0);
+    0.5 - ((1.0 - 2.0 * u).asin() / 3.0).sin()
+}
+
+/// Яркость участка молнии через `age` секунд после того, как над ним пролетела шашка.
+pub fn trail_intensity(age: f64) -> f32 {
+    if !(0.0..TRAIL_SECONDS).contains(&age) {
+        0.0
+    } else if age <= TRAIL_FULL_SECONDS {
+        1.0
+    } else {
+        (1.0 - ease((age - TRAIL_FULL_SECONDS) / (TRAIL_SECONDS - TRAIL_FULL_SECONDS))) as f32
+    }
 }
 
 /// Цвет искры по её «температуре»: 1 — только что вылетела (почти белая),
@@ -136,7 +177,8 @@ fn bolt_amplitudes(length: f32) -> Vec<f32> {
 ///
 /// Каждый проход делит все звенья пополам и сдвигает середины поперёк общего
 /// направления; размах сдвига от прохода к проходу уменьшается. Концы остаются
-/// на месте. Одинаковое зерно даёт одинаковую ломаную.
+/// на месте, вершины идут вдоль отрезка равномерно. Одинаковое зерно даёт одинаковую
+/// ломаную.
 pub fn bolt_path(a: Point, b: Point, seed: u64) -> Vec<Point> {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let length = dx.hypot(dy);
@@ -173,7 +215,7 @@ pub fn max_bolt_deviation(length: f32) -> f32 {
     bolt_amplitudes(length).iter().sum()
 }
 
-/// Ветвь молнии на кадре.
+/// Участок молнии на кадре.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Bolt {
     /// Вершины ломаной.
@@ -184,7 +226,7 @@ pub struct Bolt {
     pub width: f32,
 }
 
-/// Вспышка на месте удара.
+/// Вспышка или свечение.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Flash {
     pub center: Point,
@@ -210,7 +252,11 @@ pub struct Spark {
 /// Кадр разряда.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct DischargeFrame {
+    /// Молния за шашкой.
     pub bolts: Vec<Bolt>,
+    /// Свечение вокруг летящей шашки: ореол, выступающий из-под неё.
+    pub halo: Option<Flash>,
+    /// Вспышки на побитых шашках.
     pub flashes: Vec<Flash>,
     pub sparks: Vec<Spark>,
 }
@@ -218,8 +264,19 @@ pub struct DischargeFrame {
 impl DischargeFrame {
     /// Нечего рисовать.
     pub fn is_empty(&self) -> bool {
-        self.bolts.is_empty() && self.flashes.is_empty() && self.sparks.is_empty()
+        self.bolts.is_empty() && self.halo.is_none() && self.flashes.is_empty() && self.sparks.is_empty()
     }
+}
+
+/// Удар разряда по побитой шашке.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Strike {
+    /// Где стоит побитая шашка.
+    pub center: Point,
+    /// Момент удара: бьющая шашка пролетает над побитой.
+    pub time: f64,
+    /// Единичный вектор направления полёта бьющей шашки в этот момент.
+    pub direction: Point,
 }
 
 /// Параметры одной искры, вычисленные из зерна.
@@ -231,61 +288,78 @@ struct SparkSeed {
     size: f32,
 }
 
-/// Разряд: источник (бьющая шашка), цепь побитых шашек и время начала.
+/// Число звеньев ломаной в одном участке молнии с общей яркостью.
+const CHUNK: usize = 4;
+
+/// Разряд, сопровождающий один ход.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Discharge {
-    source: Point,
-    targets: Vec<Point>,
-    start: f64,
+    /// Поля пути бьющей шашки и моменты, когда она на них находится.
+    knots: Vec<(Point, f64)>,
+    strikes: Vec<Strike>,
     seed: u64,
 }
 
 impl Discharge {
-    /// Разряд из точки `source` по цепи `targets` (в порядке ударов), начинающийся
-    /// в момент `start`. `seed` определяет форму молний и разлёт искр.
-    pub fn new(source: Point, targets: Vec<Point>, start: f64, seed: u64) -> Discharge {
-        Discharge {
-            source,
-            targets,
-            start,
-            seed,
-        }
+    /// Разряд по пути `knots` (точки и моменты времени, по порядку) с ударами `strikes`.
+    /// `seed` определяет форму молний и разлёт искр.
+    pub fn new(knots: Vec<(Point, f64)>, strikes: Vec<Strike>, seed: u64) -> Discharge {
+        Discharge { knots, strikes, seed }
     }
 
-    /// Момент начала разряда.
+    /// Момент начала: шашка трогается с места.
     pub fn start(&self) -> f64 {
-        self.start
+        self.knots.first().map_or(0.0, |k| k.1)
     }
 
-    /// Число шашек в цепи.
-    pub fn len(&self) -> usize {
-        self.targets.len()
+    /// Момент, когда шашка встаёт на конечное поле.
+    pub fn arrival(&self) -> f64 {
+        self.knots.last().map_or(0.0, |k| k.1)
     }
 
-    /// Цепь пуста: разряду некуда бить.
-    pub fn is_empty(&self) -> bool {
-        self.targets.is_empty()
-    }
-
-    /// Момент удара по шашке с номером `index` в цепи.
-    pub fn strike_time(&self, index: usize) -> f64 {
-        self.start + strike_offset(index)
+    /// Удары по побитым шашкам.
+    pub fn strikes(&self) -> &[Strike] {
+        &self.strikes
     }
 
     /// Момент, когда гаснет молния.
     pub fn bolt_end(&self) -> f64 {
-        self.start + bolt_seconds(self.targets.len())
+        self.arrival() + TRAIL_SECONDS
     }
 
     /// Момент, когда гаснет последняя искра и эффект заканчивается.
     pub fn end(&self) -> f64 {
-        let sparks = self.strike_time(self.targets.len().saturating_sub(1)) + f64::from(SPARK_LIFE.1) + 0.05;
-        sparks.max(self.bolt_end())
+        let last_strike = self.strikes.iter().map(|s| s.time).fold(self.start(), f64::max);
+        (last_strike + f64::from(SPARK_LIFE.1) + 0.05).max(self.bolt_end())
     }
 
     /// Закончился ли эффект к моменту `now`.
     pub fn is_finished(&self, now: f64) -> bool {
-        self.targets.is_empty() || now >= self.end()
+        self.knots.len() < 2 || now >= self.end()
+    }
+
+    /// Положение бьющей шашки в момент `now`.
+    pub fn head(&self, now: f64) -> Point {
+        let Some(&(first, start)) = self.knots.first() else {
+            return (0.0, 0.0);
+        };
+        if now <= start {
+            // Отрезки, пройденные мгновенно (уже показанные прыжки), пропускаются.
+            return self
+                .knots
+                .iter()
+                .rev()
+                .find(|k| k.1 <= start)
+                .map_or(first, |k| k.0);
+        }
+        for pair in self.knots.windows(2) {
+            let ((a, ta), (b, tb)) = (pair[0], pair[1]);
+            if now < tb && tb > ta {
+                let u = ease((now - ta) / (tb - ta)) as f32;
+                return (a.0 + (b.0 - a.0) * u, a.1 + (b.1 - a.1) * u);
+            }
+        }
+        self.knots[self.knots.len() - 1].0
     }
 
     /// Зерно для части эффекта: не зависит от порядка вычислений.
@@ -299,120 +373,167 @@ impl Discharge {
         rng.next_u64()
     }
 
-    /// Начало и конец звена цепи с номером `index`.
-    fn link(&self, index: usize) -> (Point, Point) {
-        let from = if index == 0 {
-            self.source
-        } else {
-            self.targets[index - 1]
-        };
-        (from, self.targets[index])
-    }
-
-    fn spark_seed(&self, target: usize, number: usize) -> SparkSeed {
-        let mut rng = Rng::new(self.sub_seed(1, target as u64, number as u64));
+    fn spark_seed(&self, strike: usize, number: usize) -> SparkSeed {
+        let mut rng = Rng::new(self.sub_seed(1, strike as u64, number as u64));
         let angle = rng.unit() as f32 * TAU;
         let quick = rng.unit() as f32;
         let speed = SPARK_SPEED.0 + (SPARK_SPEED.1 - SPARK_SPEED.0) * quick * quick;
         let (sin, cos) = angle.sin_cos();
-        let center = self.targets[target];
+        let hit = &self.strikes[strike];
         SparkSeed {
             // Искры вылетают не из одной точки, а с небольшого круга внутри шашки.
-            origin: (center.0 + cos * 0.10, center.1 + sin * 0.10),
-            velocity: (cos * speed, sin * speed - 0.9),
+            origin: (hit.center.0 + cos * 0.10, hit.center.1 + sin * 0.10),
+            // Разлёт во все стороны, с лёгким сносом по ходу шашки и вверх.
+            velocity: (
+                cos * speed + hit.direction.0 * SPARK_CARRY,
+                sin * speed + hit.direction.1 * SPARK_CARRY - 0.9,
+            ),
             delay: rng.unit() as f32 * 0.035,
             life: SPARK_LIFE.0 + (SPARK_LIFE.1 - SPARK_LIFE.0) * rng.unit() as f32,
             size: 0.55 + 0.45 * rng.unit() as f32,
         }
     }
 
-    /// Кадр эффекта в момент `now`.
-    pub fn frame(&self, now: f64) -> DischargeFrame {
-        let mut frame = DischargeFrame::default();
-        if self.targets.is_empty() || now < self.start || now >= self.end() {
-            return frame;
+    /// Молния на отрезке пути с номером `hop`: от его начала до шашки (или до конца
+    /// отрезка, если шашка уже улетела дальше), разбитая на участки по давности.
+    fn hop_bolts(&self, hop: usize, now: f64, phase: u64, flicker: f32, bolts: &mut Vec<Bolt>) {
+        let ((a, ta), (b, tb)) = (self.knots[hop], self.knots[hop + 1]);
+        if now < ta || now - tb >= TRAIL_SECONDS {
+            return;
         }
+        let instant = tb <= ta;
+        let reached = if instant || now >= tb {
+            1.0
+        } else {
+            ease((now - ta) / (tb - ta))
+        };
+        let full = bolt_path(a, b, self.sub_seed(2, hop as u64, phase));
+        let links = full.len() - 1;
+        let whole = ((reached * links as f64).floor() as usize).min(links);
+        let mut visible: Vec<Point> = full[..=whole].to_vec();
+        if reached < 1.0 {
+            // Молния кончается точно у шашки.
+            let u = reached as f32;
+            visible.push((a.0 + (b.0 - a.0) * u, a.1 + (b.1 - a.1) * u));
+        }
+        if visible.len() < 2 {
+            return;
+        }
+        // Когда шашка пролетела точку, лежащую на доле `along` отрезка.
+        let passed = |along: f64| {
+            if instant {
+                ta
+            } else {
+                ta + (tb - ta) * ease_inverse(along.min(reached))
+            }
+        };
 
-        // Молния: звенья цепи появляются по очереди и мерцают, пока разряд не погаснет.
-        let bolt_end = self.bolt_end();
-        if now < bolt_end {
-            let fade = ((bolt_end - now) / BOLT_FADE_SECONDS).clamp(0.0, 1.0) as f32;
-            for index in 0..self.targets.len() {
-                let struck = self.strike_time(index);
-                if now < struck {
-                    break;
-                }
-                let phase = ((now - struck) / FLICKER_SECONDS).floor() as u64;
-                let mut rng = Rng::new(self.sub_seed(2, index as u64, phase));
-                let flicker = 0.62 + 0.38 * rng.unit() as f32;
-                // В момент удара молния ярче всего.
-                let fresh = (1.0 - (now - struck) / 0.09).clamp(0.0, 1.0) as f32;
-                let intensity = (fade * (flicker + 0.4 * fresh)).min(1.0);
-                let (from, to) = self.link(index);
-                let main = bolt_path(from, to, rng.next_u64());
-
-                // Боковые ответвления от случайных вершин основного канала.
-                let forks = 1 + rng.below(2);
-                for _ in 0..forks {
-                    let vertex = main[1 + rng.below(main.len() - 2)];
-                    let along = (to.1 - from.1).atan2(to.0 - from.0);
-                    let turn = (0.45 + 0.55 * rng.unit() as f32) * if rng.chance(0.5) { 1.0 } else { -1.0 };
-                    let length = 0.22 + 0.38 * rng.unit() as f32;
-                    let tip = (
-                        vertex.0 + (along + turn).cos() * length,
-                        vertex.1 + (along + turn).sin() * length,
-                    );
-                    frame.bolts.push(Bolt {
-                        points: bolt_path(vertex, tip, rng.next_u64()),
-                        intensity: intensity * 0.55,
-                        width: 0.5,
-                    });
-                }
-                frame.bolts.push(Bolt {
-                    points: main,
+        let mut newest = 0.0f32;
+        let mut index = 0;
+        while index + 1 < visible.len() {
+            let last = (index + CHUNK).min(visible.len() - 1);
+            let middle = (index + last) as f64 / 2.0 / links as f64;
+            let intensity = trail_intensity(now - passed(middle)) * flicker;
+            if intensity > 0.02 {
+                bolts.push(Bolt {
+                    points: visible[index..=last].to_vec(),
                     intensity,
                     width: 1.0,
                 });
             }
+            newest = intensity;
+            index = last;
         }
 
-        // Вспышки: у источника в начале разряда и на каждой шашке в момент удара.
-        let mut flash = |center: Point, at: f64, scale: f32| {
-            let age = now - at;
-            if (0.0..FLASH_SECONDS).contains(&age) {
-                let u = (age / FLASH_SECONDS) as f32;
-                frame.flashes.push(Flash {
-                    center,
-                    radius: scale * (0.28 + 0.44 * u),
-                    intensity: (1.0 - u) * (1.0 - u),
+        // Боковое ответвление у самого свежего участка.
+        if newest > 0.25 && visible.len() > 3 {
+            let mut rng = Rng::new(self.sub_seed(3, hop as u64, phase));
+            let vertex = visible[visible.len() - 2 - rng.below((visible.len() - 2).min(4))];
+            let along = (b.1 - a.1).atan2(b.0 - a.0);
+            // Ответвление отходит назад и вбок от направления полёта.
+            let turn = (2.2 + 0.6 * rng.unit() as f32) * if rng.chance(0.5) { 1.0 } else { -1.0 };
+            let length = 0.20 + 0.34 * rng.unit() as f32;
+            let tip = (
+                vertex.0 + (along + turn).cos() * length,
+                vertex.1 + (along + turn).sin() * length,
+            );
+            bolts.push(Bolt {
+                points: bolt_path(vertex, tip, rng.next_u64()),
+                intensity: newest * 0.55,
+                width: 0.5,
+            });
+        }
+    }
+
+    /// Кадр эффекта в момент `now`; показываются только части из `parts`.
+    pub fn frame(&self, now: f64, parts: EffectSet) -> DischargeFrame {
+        let mut frame = DischargeFrame::default();
+        if self.knots.len() < 2 || now < self.start() || now >= self.end() {
+            return frame;
+        }
+
+        // Молния: тянется за шашкой, мерцает и гаснет позади неё.
+        let phase = ((now - self.start()) / FLICKER_SECONDS).floor() as u64;
+        let flicker = 0.72 + 0.28 * Rng::new(self.sub_seed(4, 0, phase)).unit() as f32;
+        if parts.lightning && now < self.bolt_end() {
+            for hop in 0..self.knots.len() - 1 {
+                self.hop_bolts(hop, now, phase, flicker, &mut frame.bolts);
+            }
+        }
+
+        if parts.flashes {
+            // Свечение вокруг летящей шашки.
+            let arrival = self.arrival();
+            let glow = if now < arrival {
+                1.0
+            } else {
+                1.0 - (now - arrival) / HEAD_GLOW_FADE_SECONDS
+            };
+            if glow > 0.0 {
+                frame.halo = Some(Flash {
+                    center: self.head(now),
+                    radius: HALO_RADIUS,
+                    intensity: glow as f32 * flicker,
                 });
             }
-        };
-        flash(self.source, self.start, 0.8);
-        for (index, &target) in self.targets.iter().enumerate() {
-            flash(target, self.strike_time(index), 1.0);
+            // Вспышки на побитых шашках в момент удара.
+            for strike in &self.strikes {
+                let age = now - strike.time;
+                if (0.0..FLASH_SECONDS).contains(&age) {
+                    let u = (age / FLASH_SECONDS) as f32;
+                    frame.flashes.push(Flash {
+                        center: strike.center,
+                        radius: 0.28 + 0.20 * u,
+                        intensity: (1.0 - u) * (1.0 - u),
+                    });
+                }
+            }
         }
 
-        // Искры.
-        for target in 0..self.targets.len() {
-            let struck = self.strike_time(target);
-            if now < struck {
-                break;
-            }
-            for number in 0..SPARKS_PER_PIECE {
-                let spark = self.spark_seed(target, number);
-                let age = (now - struck) as f32 - spark.delay;
-                if age < 0.0 || age >= spark.life {
+        if parts.sparks {
+            for (index, strike) in self.strikes.iter().enumerate() {
+                if now < strike.time {
                     continue;
                 }
-                let left = 1.0 - age / spark.life;
-                frame.sparks.push(Spark {
-                    head: spark_position(spark.origin, spark.velocity, age),
-                    tail: spark_position(spark.origin, spark.velocity, (age - SPARK_TRAIL_SECONDS).max(0.0)),
-                    intensity: left.powf(0.8),
-                    heat: left,
-                    size: spark.size,
-                });
+                for number in 0..SPARKS_PER_PIECE {
+                    let spark = self.spark_seed(index, number);
+                    let age = (now - strike.time) as f32 - spark.delay;
+                    if age < 0.0 || age >= spark.life {
+                        continue;
+                    }
+                    let left = 1.0 - age / spark.life;
+                    frame.sparks.push(Spark {
+                        head: spark_position(spark.origin, spark.velocity, age),
+                        tail: spark_position(
+                            spark.origin,
+                            spark.velocity,
+                            (age - SPARK_TRAIL_SECONDS).max(0.0),
+                        ),
+                        intensity: left.powf(0.8),
+                        heat: left,
+                        size: spark.size,
+                    });
+                }
             }
         }
         frame
@@ -433,9 +554,47 @@ mod tests {
         ((p.0 - a.0) * dy - (p.1 - a.1) * dx).abs() / dx.hypot(dy)
     }
 
+    /// Положение точки вдоль отрезка `a`–`b`: 0 в начале, 1 в конце.
+    fn along(p: Point, a: Point, b: Point) -> f32 {
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        ((p.0 - a.0) * dx + (p.1 - a.1) * dy) / (dx * dx + dy * dy)
+    }
+
+    const HOP: f64 = 0.21;
+    const FIRST: Point = (0.5, 7.5);
+    const LAST: Point = (6.5, 1.5);
+
+    /// Шашка летит по диагонали через три побитые шашки: a1 → c3 → e5 → g7.
     fn sample() -> Discharge {
-        // Источник и три побитые шашки по диагонали.
-        Discharge::new((6.5, 1.5), vec![(5.5, 2.5), (3.5, 4.5), (1.5, 6.5)], 10.0, 42)
+        let knots = vec![
+            (FIRST, 10.0),
+            ((2.5, 5.5), 10.0 + HOP),
+            ((4.5, 3.5), 10.0 + 2.0 * HOP),
+            (LAST, 10.0 + 3.0 * HOP),
+        ];
+        let direction = (0.707, -0.707);
+        let strikes = vec![
+            Strike {
+                center: (1.5, 6.5),
+                time: 10.0 + 0.5 * HOP,
+                direction,
+            },
+            Strike {
+                center: (3.5, 4.5),
+                time: 10.0 + 1.5 * HOP,
+                direction,
+            },
+            Strike {
+                center: (5.5, 2.5),
+                time: 10.0 + 2.5 * HOP,
+                direction,
+            },
+        ];
+        Discharge::new(knots, strikes, 42)
+    }
+
+    fn mains(frame: &DischargeFrame) -> Vec<&Bolt> {
+        frame.bolts.iter().filter(|b| b.width == 1.0).collect()
     }
 
     #[test]
@@ -456,16 +615,22 @@ mod tests {
                 assert_eq!(path[0], a);
                 assert_eq!(path[path.len() - 1], b);
                 assert!((path.len() - 1).is_power_of_two());
-                for &p in &path {
+                for (i, &p) in path.iter().enumerate() {
                     assert!(p.0.is_finite() && p.1.is_finite());
                     assert!(
                         deviation(p, a, b) <= limit,
                         "зерно {seed}: точка {p:?} ушла далеко"
                     );
+                    // Вершины идут вдоль отрезка равномерно.
+                    let expected = i as f32 / (path.len() - 1) as f32;
+                    assert!(
+                        (along(p, a, b) - expected).abs() < 1e-3,
+                        "зерно {seed}: вершина {i}"
+                    );
                 }
                 // Звенья мелкие, а сама молния изломана, а не прямая. Короткое боковое
                 // ответвление из двух-четырёх звеньев может случайно выйти почти прямым,
-                // поэтому излом проверяется у молний между шашками (не короче клетки).
+                // поэтому излом проверяется у молний не короче клетки.
                 let length: f32 = path.windows(2).map(|w| distance(w[0], w[1])).sum();
                 assert!(length >= straight);
                 if straight >= 1.0 {
@@ -499,113 +664,345 @@ mod tests {
     }
 
     #[test]
-    fn strikes_run_down_the_chain_in_order() {
-        let fx = sample();
-        assert_eq!(fx.len(), 3);
-        assert!(!fx.is_empty());
-        assert_eq!(fx.strike_time(0), 10.0);
-        assert!((fx.strike_time(1) - (10.0 + STRIKE_INTERVAL)).abs() < 1e-12);
-        assert!((fx.strike_time(2) - (10.0 + 2.0 * STRIKE_INTERVAL)).abs() < 1e-12);
-        assert!((chain_seconds(3) - (2.0 * STRIKE_INTERVAL + VANISH_SECONDS)).abs() < 1e-12);
-        assert_eq!(chain_seconds(0), VANISH_SECONDS);
+    fn easing_and_its_inverse_agree() {
+        assert_eq!(ease(0.0), 0.0);
+        assert_eq!(ease(1.0), 1.0);
+        assert!((ease(0.5) - 0.5).abs() < 1e-12);
+        for step in 0..=100 {
+            let x = f64::from(step) / 100.0;
+            assert!((ease_inverse(ease(x)) - x).abs() < 1e-6, "x = {x}");
+            assert!((ease(ease_inverse(x)) - x).abs() < 1e-9, "u = {x}");
+        }
+        assert_eq!(ease(-3.0), 0.0);
+        assert_eq!(ease(7.0), 1.0);
+        assert!(ease_inverse(-1.0).abs() < 1e-9 && (ease_inverse(2.0) - 1.0).abs() < 1e-9);
+    }
 
-        // До начала — ничего.
-        assert!(fx.frame(9.999).is_empty());
-        assert!(!fx.is_finished(9.0));
-        // Сразу после начала: одно звено молнии (и его ответвления), вспышки у источника
-        // и у первой шашки, искры только от первой шашки.
-        let main_bolts = |f: &DischargeFrame| f.bolts.iter().filter(|b| b.width == 1.0).count();
-        let first = fx.frame(10.0 + 0.5 * STRIKE_INTERVAL);
-        assert_eq!(main_bolts(&first), 1);
-        assert_eq!(first.flashes.len(), 2);
-        assert!(!first.sparks.is_empty());
-        assert!(first.sparks.iter().all(|s| distance(s.head, (5.5, 2.5)) < 1.0));
-        // После второго удара — два звена, после третьего — три.
-        assert_eq!(main_bolts(&fx.frame(10.0 + 1.5 * STRIKE_INTERVAL)), 2);
-        assert_eq!(main_bolts(&fx.frame(10.0 + 2.5 * STRIKE_INTERVAL)), 3);
-        // Основные каналы соединяют соседние точки цепи.
-        let full = fx.frame(10.0 + 2.5 * STRIKE_INTERVAL);
-        let mains: Vec<&Bolt> = full.bolts.iter().filter(|b| b.width == 1.0).collect();
-        let chain = [(6.5, 1.5), (5.5, 2.5), (3.5, 4.5), (1.5, 6.5)];
-        for (i, bolt) in mains.iter().enumerate() {
-            assert_eq!(bolt.points[0], chain[i]);
-            assert_eq!(bolt.points[bolt.points.len() - 1], chain[i + 1]);
+    #[test]
+    fn trail_is_bright_right_behind_the_piece_and_fades_out() {
+        assert_eq!(trail_intensity(-0.01), 0.0);
+        assert_eq!(trail_intensity(0.0), 1.0);
+        assert_eq!(trail_intensity(TRAIL_FULL_SECONDS), 1.0);
+        assert_eq!(trail_intensity(TRAIL_SECONDS), 0.0);
+        let mut previous = 1.0;
+        for step in 0..=100 {
+            let value = trail_intensity(TRAIL_SECONDS * f64::from(step) / 100.0);
+            assert!((0.0..=1.0).contains(&value) && value <= previous + 1e-6);
+            previous = value;
         }
     }
 
     #[test]
-    fn bolt_flickers_then_goes_out_and_sparks_outlive_it() {
+    fn lightning_follows_the_path_of_the_piece_while_it_moves() {
         let fx = sample();
-        let at = |t: f64| fx.frame(t);
-        // Форма молнии меняется от такта к такту, но внутри такта постоянна.
-        let shapes = |t: f64| at(t).bolts.into_iter().map(|b| b.points).collect::<Vec<_>>();
-        let t = fx.strike_time(2) + 0.01;
-        assert_eq!(shapes(t), shapes(t + 0.2 * FLICKER_SECONDS));
-        assert_ne!(shapes(t), shapes(t + 1.5 * FLICKER_SECONDS));
-        // Яркость в допустимых пределах.
-        for step in 0..200 {
-            let frame = at(10.0 + f64::from(step) * 0.007);
+        let (start, a, b) = (10.0, FIRST, (2.5, 5.5));
+        // До начала движения ничего нет.
+        assert!(fx.frame(start - 0.01, EffectSet::ALL).is_empty());
+        assert_eq!(fx.head(start - 1.0), a);
+        assert_eq!(fx.start(), start);
+        assert!((fx.arrival() - (start + 3.0 * HOP)).abs() < 1e-12);
+
+        // Шашка летит по первому отрезку: молния идёт от начала пути до самой шашки.
+        for step in 1..20 {
+            let now = start + HOP * f64::from(step) / 20.0;
+            let head = fx.head(now);
+            assert!(
+                deviation(head, a, b) < 1e-4,
+                "шашка движется по прямой между полями"
+            );
+            let frame = fx.frame(now, EffectSet::ALL);
+            let main = mains(&frame);
+            assert!(
+                !main.is_empty(),
+                "шаг {step}: молния есть с самого начала движения"
+            );
+            let limit = max_bolt_deviation(distance(a, b)) + 1e-3;
+            for bolt in &main {
+                for &p in &bolt.points {
+                    assert!(deviation(p, a, b) <= limit, "молния лежит на пути шашки");
+                    assert!(
+                        along(p, a, b) <= along(head, a, b) + 1e-3,
+                        "молния не обгоняет шашку"
+                    );
+                }
+            }
+            // Участки идут подряд: от начала пути до шашки без разрывов.
+            assert_eq!(main[0].points[0], a);
+            for pair in main.windows(2) {
+                assert_eq!(pair[0].points[pair[0].points.len() - 1], pair[1].points[0]);
+            }
+            let tail_end = *main[main.len() - 1].points.last().unwrap();
+            assert!(
+                distance(tail_end, head) < 1e-4,
+                "шаг {step}: молния кончается у шашки"
+            );
+        }
+
+        // На втором отрезке молния тянется уже через оба и по-прежнему кончается у шашки.
+        let now = start + 1.5 * HOP;
+        let frame = fx.frame(now, EffectSet::ALL);
+        let reach = mains(&frame)
+            .iter()
+            .flat_map(|b| b.points.iter())
+            .map(|&p| along(p, FIRST, LAST))
+            .fold(0.0, f32::max);
+        assert!((reach - along(fx.head(now), FIRST, LAST)).abs() < 1e-3);
+        assert!(reach > 0.4 && reach < 0.6, "{reach}");
+    }
+
+    #[test]
+    fn lightning_fades_behind_the_piece_and_goes_out_after_arrival() {
+        let fx = sample();
+        // В конце третьего отрезка начало пути уже погасло, а у шашки молния яркая.
+        let now = fx.arrival() - 0.005;
+        let frame = fx.frame(now, EffectSet::ALL);
+        let main = mains(&frame);
+        let tail = main
+            .iter()
+            .map(|b| along(b.points[0], FIRST, LAST))
+            .fold(1.0, f32::min);
+        assert!(tail > 0.15, "хвост молнии погас: она начинается с {tail}");
+        let brightest = main.iter().map(|b| b.intensity).fold(0.0, f32::max);
+        let dimmest = main.iter().map(|b| b.intensity).fold(1.0, f32::min);
+        assert!(brightest > 0.7 && dimmest < 0.5, "{brightest} и {dimmest}");
+        // Яркость растёт от хвоста к шашке.
+        for pair in main.windows(2) {
+            assert!(pair[0].intensity <= pair[1].intensity + 1e-4);
+        }
+        // Форма молнии меняется от такта к такту (мерцание), но внутри такта постоянна.
+        let shapes = |t: f64| -> Vec<Vec<Point>> {
+            let frame = fx.frame(t, EffectSet::ALL);
+            frame
+                .bolts
+                .into_iter()
+                .filter(|b| b.width == 1.0)
+                .map(|b| b.points)
+                .collect()
+        };
+        // Начало шестнадцатого такта: шашка уже стоит (она приходит через 0,63 с).
+        let tick = 10.0 + 16.0 * FLICKER_SECONDS;
+        assert!(tick > fx.arrival());
+        assert_eq!(
+            shapes(tick + 0.1 * FLICKER_SECONDS),
+            shapes(tick + 0.4 * FLICKER_SECONDS)
+        );
+        assert_ne!(
+            shapes(tick + 0.1 * FLICKER_SECONDS),
+            shapes(tick + 1.1 * FLICKER_SECONDS)
+        );
+        // После остановки шашки молния гаснет, искры ещё летят, потом эффект заканчивается.
+        assert!((fx.bolt_end() - (fx.arrival() + TRAIL_SECONDS)).abs() < 1e-12);
+        assert!(!fx.frame(fx.bolt_end() - 0.1, EffectSet::ALL).bolts.is_empty());
+        let after = fx.frame(fx.bolt_end() + 0.001, EffectSet::ALL);
+        assert!(after.bolts.is_empty() && !after.sparks.is_empty());
+        assert!(fx.bolt_end() < fx.end());
+        assert!(!fx.is_finished(fx.end() - 0.01));
+        assert!(fx.is_finished(fx.end()));
+        assert!(fx.frame(fx.end(), EffectSet::ALL).is_empty());
+    }
+
+    #[test]
+    fn pieces_are_struck_when_the_piece_flies_over_them() {
+        let fx = sample();
+        assert_eq!(fx.strikes().len(), 3);
+        let near = |frame: &DischargeFrame, center: Point| {
+            frame
+                .sparks
+                .iter()
+                .filter(|s| distance(s.head, center) < 0.9)
+                .count()
+        };
+        let flashes_at = |frame: &DischargeFrame, center: Point| {
+            frame.flashes.iter().filter(|f| f.center == center).count()
+        };
+        for (index, strike) in fx.strikes().iter().enumerate() {
+            // До пролёта — ни вспышки, ни искр у этой шашки.
+            let before = fx.frame(strike.time - 0.005, EffectSet::ALL);
+            assert_eq!(flashes_at(&before, strike.center), 0, "удар {index}");
+            assert_eq!(near(&before, strike.center), 0, "удар {index}");
+            // В момент пролёта шашка находится над побитой.
+            assert!(
+                distance(fx.head(strike.time), strike.center) < 1e-3,
+                "удар {index}"
+            );
+            // Сразу после — вспышка и искры.
+            let after = fx.frame(strike.time + 0.05, EffectSet::ALL);
+            assert_eq!(flashes_at(&after, strike.center), 1, "удар {index}");
+            assert!(
+                near(&after, strike.center) >= SPARKS_PER_PIECE / 2,
+                "удар {index}"
+            );
+        }
+        // Искры разлетаются во все стороны, а не в одну.
+        let last = fx.strikes()[2];
+        let frame = fx.frame(last.time + 0.06, EffectSet::ALL);
+        let (mut left, mut right, mut up, mut down) = (0, 0, 0, 0);
+        for spark in frame
+            .sparks
+            .iter()
+            .filter(|s| distance(s.head, last.center) < 0.9)
+        {
+            left += usize::from(spark.head.0 < last.center.0);
+            right += usize::from(spark.head.0 > last.center.0);
+            up += usize::from(spark.head.1 < last.center.1);
+            down += usize::from(spark.head.1 > last.center.1);
+        }
+        assert!(
+            left >= 4 && right >= 4 && up >= 4 && down >= 4,
+            "{left} {right} {up} {down}"
+        );
+        // Яркости в допустимых пределах, искры не улетают далеко, след короткий.
+        for step in 0..220 {
+            let frame = fx.frame(10.0 + f64::from(step) * 0.008, EffectSet::ALL);
             for bolt in &frame.bolts {
-                assert!((0.0..=1.0).contains(&bolt.intensity));
-                assert!(bolt.points.len() >= 2);
+                assert!((0.0..=1.0).contains(&bolt.intensity) && bolt.points.len() >= 2);
             }
             for flash in &frame.flashes {
                 assert!((0.0..=1.0).contains(&flash.intensity) && flash.radius > 0.0 && flash.radius < 1.0);
             }
             for spark in &frame.sparks {
                 assert!((0.0..=1.0).contains(&spark.intensity) && (0.0..=1.0).contains(&spark.heat));
+                let nearest = fx
+                    .strikes()
+                    .iter()
+                    .map(|s| distance(spark.head, s.center))
+                    .fold(f32::MAX, f32::min);
+                assert!(nearest < 3.5, "искра улетела на {nearest} клеток");
+                assert!(distance(spark.head, spark.tail) < 0.45, "след искры короткий");
             }
         }
-        // Молния гаснет, искры ещё летят, потом эффект заканчивается.
-        let after_bolt = at(fx.bolt_end() + 0.01);
-        assert!(after_bolt.bolts.is_empty());
-        assert!(!after_bolt.sparks.is_empty());
-        assert!(fx.bolt_end() < fx.end());
-        assert!(!fx.is_finished(fx.end() - 0.01));
-        assert!(fx.is_finished(fx.end()));
-        assert!(at(fx.end()).is_empty());
-        assert!(at(fx.end() + 5.0).is_empty());
     }
 
     #[test]
-    fn every_struck_piece_throws_sparks() {
+    fn piece_glows_while_it_flies() {
         let fx = sample();
-        // Через мгновение после последнего удара летят искры от всех трёх шашек.
-        let frame = fx.frame(fx.strike_time(2) + 0.06);
-        let targets = [(5.5, 2.5), (3.5, 4.5), (1.5, 6.5)];
-        for target in targets {
-            let near = frame
-                .sparks
-                .iter()
-                .filter(|s| distance(s.head, target) < 0.9)
-                .count();
-            assert!(near >= SPARKS_PER_PIECE / 2, "у шашки {target:?} искр: {near}");
+        let glow = |now: f64| fx.frame(now, EffectSet::ALL).halo;
+        // Ореол держится на шашке всё время полёта и выступает из-под неё.
+        for step in 0..=30 {
+            let now = 10.0 + 3.0 * HOP * f64::from(step) / 30.0 - 1e-6;
+            let halo = glow(now.max(10.0)).expect("ореол есть во время полёта");
+            assert_eq!(halo.center, fx.head(now.max(10.0)));
+            assert!(halo.radius > 0.40 && halo.radius < 1.0);
+            assert!(halo.intensity > 0.5 && halo.intensity <= 1.0);
         }
-        assert!(frame.sparks.len() <= 3 * SPARKS_PER_PIECE);
-        // Искры разлетаются во все стороны, а не в одну.
-        let (mut left, mut right, mut up, mut down) = (0, 0, 0, 0);
-        for spark in frame.sparks.iter().filter(|s| distance(s.head, targets[2]) < 0.9) {
-            left += usize::from(spark.head.0 < targets[2].0);
-            right += usize::from(spark.head.0 > targets[2].0);
-            up += usize::from(spark.head.1 < targets[2].1);
-            down += usize::from(spark.head.1 > targets[2].1);
-        }
-        assert!(
-            left >= 4 && right >= 4 && up >= 4 && down >= 4,
-            "{left} {right} {up} {down}"
+        // После остановки он быстро гаснет.
+        let fading = glow(fx.arrival() + HEAD_GLOW_FADE_SECONDS * 0.75).unwrap();
+        assert!(fading.intensity < 0.3, "{}", fading.intensity);
+        assert!(glow(fx.arrival() + HEAD_GLOW_FADE_SECONDS + 0.01).is_none());
+        // Без вспышек и свечения ореола нет.
+        let plain = EffectSet {
+            flashes: false,
+            ..EffectSet::ALL
+        };
+        assert!(fx.frame(10.1, plain).halo.is_none());
+    }
+
+    #[test]
+    fn parts_of_the_effect_can_be_switched_independently() {
+        let fx = sample();
+        let now = 10.0 + 1.6 * HOP;
+        let all = fx.frame(now, EffectSet::ALL);
+        // Момент сразу после удара по второй шашке: на кадре есть всё.
+        assert!(!all.bolts.is_empty() && !all.flashes.is_empty() && !all.sparks.is_empty());
+        assert!(fx.frame(now, EffectSet::NONE).is_empty());
+        assert!(EffectSet::ALL.any() && !EffectSet::NONE.any());
+
+        let only_lightning = fx.frame(
+            now,
+            EffectSet {
+                lightning: true,
+                ..EffectSet::NONE
+            },
         );
-        // Никакая искра не улетает далеко за пределы своего удара.
-        for step in 0..150 {
-            let frame = fx.frame(10.0 + f64::from(step) * 0.01);
-            for spark in &frame.sparks {
-                let nearest = targets
-                    .iter()
-                    .map(|&t| distance(spark.head, t))
-                    .fold(f32::MAX, f32::min);
-                assert!(nearest < 3.0, "искра улетела на {nearest} клеток");
-                assert!(distance(spark.head, spark.tail) < 0.4, "след искры короткий");
-            }
+        assert_eq!(only_lightning.bolts, all.bolts);
+        assert!(only_lightning.flashes.is_empty() && only_lightning.sparks.is_empty());
+        assert!(only_lightning.halo.is_none());
+
+        let only_sparks = fx.frame(
+            now,
+            EffectSet {
+                sparks: true,
+                ..EffectSet::NONE
+            },
+        );
+        assert_eq!(only_sparks.sparks, all.sparks);
+        assert!(only_sparks.bolts.is_empty() && only_sparks.flashes.is_empty());
+        assert!(only_sparks.halo.is_none());
+
+        let only_flashes = fx.frame(
+            now,
+            EffectSet {
+                flashes: true,
+                ..EffectSet::NONE
+            },
+        );
+        assert_eq!(only_flashes.flashes, all.flashes);
+        assert_eq!(only_flashes.halo, all.halo);
+        assert!(all.halo.is_some());
+        assert!(only_flashes.bolts.is_empty() && only_flashes.sparks.is_empty());
+
+        let without_sparks = fx.frame(
+            now,
+            EffectSet {
+                sparks: false,
+                ..EffectSet::ALL
+            },
+        );
+        assert!(without_sparks.sparks.is_empty());
+        assert_eq!(without_sparks.bolts, all.bolts);
+        assert!(EffectSet {
+            sparks: true,
+            ..EffectSet::NONE
         }
+        .any());
+    }
+
+    #[test]
+    fn hops_already_shown_flash_at_once() {
+        // Первые два отрезка игрок прошёл по шагам: их моменты совпадают с началом.
+        // Молния вспыхивает на них сразу, а дальше тянется за шашкой.
+        let knots = vec![
+            (FIRST, 5.0),
+            ((2.5, 5.5), 5.0),
+            ((4.5, 3.5), 5.0),
+            (LAST, 5.0 + HOP),
+        ];
+        let direction = (0.707, -0.707);
+        let strikes = vec![
+            Strike {
+                center: (1.5, 6.5),
+                time: 5.0,
+                direction,
+            },
+            Strike {
+                center: (3.5, 4.5),
+                time: 5.0,
+                direction,
+            },
+            Strike {
+                center: (5.5, 2.5),
+                time: 5.0 + 0.5 * HOP,
+                direction,
+            },
+        ];
+        let fx = Discharge::new(knots, strikes, 9);
+        assert_eq!(fx.head(5.0), (4.5, 3.5), "шашка уже стоит на третьем поле");
+        assert_eq!(fx.head(4.0), (4.5, 3.5));
+        let frame = fx.frame(5.0 + 0.01, EffectSet::ALL);
+        let reach: Vec<f32> = mains(&frame)
+            .iter()
+            .flat_map(|b| b.points.iter())
+            .map(|&p| along(p, FIRST, LAST))
+            .collect();
+        let low = reach.iter().copied().fold(1.0, f32::min);
+        let high = reach.iter().copied().fold(0.0, f32::max);
+        assert!(low < 0.01, "молния начинается от исходного поля: {low}");
+        assert!(high > 0.66 && high < 0.75, "и доходит до шашки: {high}");
+        // Две первые шашки поражены сразу, третья — при пролёте.
+        let struck = |frame: &DischargeFrame, center: Point| frame.flashes.iter().any(|f| f.center == center);
+        assert!(struck(&frame, (1.5, 6.5)) && struck(&frame, (3.5, 4.5)));
+        assert!(!struck(&frame, (5.5, 2.5)));
+        assert!(struck(&fx.frame(5.0 + 0.6 * HOP, EffectSet::ALL), (5.5, 2.5)));
     }
 
     #[test]
@@ -690,21 +1087,37 @@ mod tests {
     fn effect_is_reproducible_and_seed_dependent() {
         let a = sample();
         let b = sample();
-        let c = Discharge::new((6.5, 1.5), vec![(5.5, 2.5), (3.5, 4.5), (1.5, 6.5)], 10.0, 43);
-        for step in 0..40 {
-            let t = 10.0 + f64::from(step) * 0.03;
-            assert_eq!(a.frame(t), b.frame(t));
-        }
-        assert_ne!(a.frame(10.1), c.frame(10.1));
-        // Пустая цепь и вырожденные точки не вызывают сбоя.
-        let empty = Discharge::new((1.0, 1.0), Vec::new(), 0.0, 1);
-        assert!(empty.is_empty() && empty.is_finished(0.0) && empty.frame(0.1).is_empty());
-        let same = Discharge::new((1.0, 1.0), vec![(1.0, 1.0), (1.0, 1.0)], 0.0, 1);
+        let mut c = sample();
+        c.seed = 43;
         for step in 0..60 {
-            let frame = same.frame(f64::from(step) * 0.02);
+            let t = 10.0 + f64::from(step) * 0.03;
+            assert_eq!(a.frame(t, EffectSet::ALL), b.frame(t, EffectSet::ALL));
+        }
+        assert_ne!(a.frame(10.1, EffectSet::ALL), c.frame(10.1, EffectSet::ALL));
+        // Пустой и вырожденный пути не вызывают сбоя.
+        let empty = Discharge::new(Vec::new(), Vec::new(), 1);
+        assert!(empty.is_finished(0.0) && empty.frame(0.1, EffectSet::ALL).is_empty());
+        assert_eq!(empty.head(1.0), (0.0, 0.0));
+        let single = Discharge::new(vec![((1.0, 1.0), 0.0)], Vec::new(), 1);
+        assert!(single.is_finished(0.0) && single.frame(0.0, EffectSet::ALL).is_empty());
+        let still = Discharge::new(
+            vec![((1.0, 1.0), 0.0), ((1.0, 1.0), 0.0), ((1.0, 1.0), 0.1)],
+            vec![Strike {
+                center: (1.0, 1.0),
+                time: 0.0,
+                direction: (0.0, 0.0),
+            }],
+            1,
+        );
+        for step in 0..80 {
+            let frame = still.frame(f64::from(step) * 0.02, EffectSet::ALL);
             for bolt in &frame.bolts {
                 assert!(bolt.points.iter().all(|p| p.0.is_finite() && p.1.is_finite()));
             }
+            assert!(frame
+                .sparks
+                .iter()
+                .all(|s| s.head.0.is_finite() && s.head.1.is_finite()));
         }
     }
 }
