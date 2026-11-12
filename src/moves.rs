@@ -37,18 +37,21 @@ pub struct Move {
 impl Move {
     /// Исходное поле.
     #[inline]
-    pub fn from(&self) -> Square {
+    #[must_use]
+    pub const fn from(&self) -> Square {
         self.from
     }
 
     /// Конечное поле.
     #[inline]
-    pub fn to(&self) -> Square {
+    #[must_use]
+    pub const fn to(&self) -> Square {
         self.steps[self.len as usize - 1]
     }
 
     /// Поля приземления по порядку; последнее — конечное.
     #[inline]
+    #[must_use]
     pub fn path(&self) -> &[Square] {
         &self.steps[..self.len as usize]
     }
@@ -60,30 +63,35 @@ impl Move {
 
     /// Является ли ход взятием.
     #[inline]
-    pub fn is_capture(&self) -> bool {
+    #[must_use]
+    pub const fn is_capture(&self) -> bool {
         self.captured != 0
     }
 
     /// Маска побитых шашек.
     #[inline]
-    pub fn captured(&self) -> u32 {
+    #[must_use]
+    pub const fn captured(&self) -> u32 {
         self.captured
     }
 
     /// Число побитых шашек.
     #[inline]
-    pub fn captured_count(&self) -> u32 {
+    #[must_use]
+    pub const fn captured_count(&self) -> u32 {
         self.captured.count_ones()
     }
 
     /// Становится ли простая дамкой в результате хода.
     #[inline]
-    pub fn promotes(&self) -> bool {
+    #[must_use]
+    pub const fn promotes(&self) -> bool {
         self.promo != 0
     }
 
     /// Номер приземления (от нуля), на котором простая стала дамкой.
-    pub fn promotion_step(&self) -> Option<usize> {
+    #[must_use]
+    pub const fn promotion_step(&self) -> Option<usize> {
         if self.promo == 0 {
             None
         } else {
@@ -92,6 +100,7 @@ impl Move {
     }
 
     /// Шашка, побитая на шаге `step` (от нуля). Для тихого хода — `None`.
+    #[must_use]
     pub fn captured_at(&self, step: usize) -> Option<Square> {
         if !self.is_capture() || step >= self.len as usize {
             return None;
@@ -114,6 +123,7 @@ impl Move {
     }
 
     /// Побитые шашки в порядке взятия.
+    #[must_use]
     pub fn captured_in_order(&self) -> Vec<Square> {
         (0..self.len as usize)
             .filter_map(|i| self.captured_at(i))
@@ -134,8 +144,8 @@ impl fmt::Debug for Move {
 
 /// Направление диагонали от `a` к `b`, если поля лежат на одной диагонали.
 fn direction(a: Square, b: Square) -> Option<usize> {
-    let df = b.file() as i32 - a.file() as i32;
-    let dr = b.rank() as i32 - a.rank() as i32;
+    let df = i32::from(b.file()) - i32::from(a.file());
+    let dr = i32::from(b.rank()) - i32::from(a.rank());
     if df == 0 || df.abs() != dr.abs() {
         return None;
     }
@@ -148,13 +158,13 @@ fn direction(a: Square, b: Square) -> Option<usize> {
 }
 
 #[inline]
-fn bit(index: u8) -> u32 {
+const fn bit(index: u8) -> u32 {
     1u32 << index
 }
 
 /// Направления тихого хода простой.
 #[inline]
-fn forward_dirs(color: Color) -> [usize; 2] {
+const fn forward_dirs(color: Color) -> [usize; 2] {
     match color {
         Color::White => [NE, NW],
         Color::Black => [SE, SW],
@@ -373,6 +383,7 @@ pub fn generate_moves(pos: &Position, out: &mut Vec<Move>) {
 }
 
 /// Все допустимые ходы в позиции.
+#[must_use]
 pub fn legal_moves(pos: &Position) -> Vec<Move> {
     let mut out = Vec::with_capacity(16);
     generate_moves(pos, &mut out);
@@ -380,6 +391,7 @@ pub fn legal_moves(pos: &Position) -> Vec<Move> {
 }
 
 /// Может ли сторона `color` что-нибудь побить, если ход её.
+#[must_use]
 pub fn has_capture(pos: &Position, color: Color) -> bool {
     let own = pos.pieces(color);
     let enemy = pos.pieces(color.opponent());
@@ -416,7 +428,7 @@ pub struct Undo {
 
 impl Position {
     /// Выполняет ход на месте. Ход должен быть получен генератором для этой позиции.
-    pub fn make(&mut self, mv: &Move) -> Undo {
+    pub const fn make(&mut self, mv: &Move) -> Undo {
         let undo = Undo { kings: self.kings };
         let from_bit = mv.from().bit();
         let to_bit = mv.to().bit();
@@ -440,7 +452,7 @@ impl Position {
     }
 
     /// Отменяет ход, выполненный [`Position::make`].
-    pub fn unmake(&mut self, mv: &Move, undo: Undo) {
+    pub const fn unmake(&mut self, mv: &Move, undo: Undo) {
         let from_bit = mv.from().bit();
         let to_bit = mv.to().bit();
         self.side = self.side.opponent();
@@ -459,7 +471,8 @@ impl Position {
 
     /// Позиция после хода.
     #[inline]
-    pub fn after(&self, mv: &Move) -> Position {
+    #[must_use]
+    pub fn after(&self, mv: &Move) -> Self {
         let mut next = *self;
         next.make(mv);
         next
@@ -467,11 +480,11 @@ impl Position {
 }
 
 /// Число последовательностей ходов длиной `depth` полуходов из позиции.
+#[must_use]
 pub fn perft(pos: &Position, depth: u32) -> u64 {
     fn go(pos: &Position, depth: u32, buffers: &mut [Vec<Move>]) -> u64 {
-        let (head, tail) = match buffers.split_first_mut() {
-            Some(parts) => parts,
-            None => return 1,
+        let Some((head, tail)) = buffers.split_first_mut() else {
+            return 1;
         };
         generate_moves(pos, head);
         if depth <= 1 {

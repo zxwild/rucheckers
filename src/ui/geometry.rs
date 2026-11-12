@@ -12,6 +12,7 @@ pub const FRAME_FRACTION: f32 = 0.05;
 /// Точка доски в экранных клетках: единица — сторона клетки, ось Y направлена вниз,
 /// начало — левый верхний угол игрового поля. Целым `file` и `rank` соответствует
 /// центр клетки. `flipped` — доска перевёрнута (внизу чёрные).
+#[must_use]
 pub fn screen_cell(file: f32, rank: f32, flipped: bool) -> (f32, f32) {
     let (column, row) = if flipped {
         (7.0 - file, rank)
@@ -41,7 +42,8 @@ pub struct BoardLayout {
 impl BoardLayout {
     /// Вписывает квадратную доску в область `width × height` с левым верхним углом
     /// `(x, y)` и центрирует её. `pixels_per_point` — плотность экрана.
-    pub fn fit(x: f32, y: f32, width: f32, height: f32, flipped: bool, pixels_per_point: f32) -> BoardLayout {
+    #[must_use]
+    pub fn fit(x: f32, y: f32, width: f32, height: f32, flipped: bool, pixels_per_point: f32) -> Self {
         let ppp = if pixels_per_point.is_finite() && pixels_per_point > 0.01 {
             pixels_per_point
         } else {
@@ -56,7 +58,7 @@ impl BoardLayout {
         let outer_px = 8.0 * cell_px + 2.0 * frame_px;
         let outer_x_px = ((x + (width - outer_px / ppp) / 2.0) * ppp).round();
         let outer_y_px = ((y + (height - outer_px / ppp) / 2.0) * ppp).round();
-        BoardLayout {
+        Self {
             outer_x: outer_x_px / ppp,
             outer_y: outer_y_px / ppp,
             outer_size: outer_px / ppp,
@@ -68,16 +70,19 @@ impl BoardLayout {
     }
 
     /// Сторона игрового поля.
+    #[must_use]
     pub fn field_size(&self) -> f32 {
         8.0 * self.cell
     }
 
     /// Ширина рамки.
+    #[must_use]
     pub fn frame(&self) -> f32 {
         (self.outer_size - self.field_size()) / 2.0
     }
 
     /// Вертикаль, изображённая в столбце `column` (считая слева от нуля).
+    #[must_use]
     pub fn file_of_column(&self, column: u8) -> u8 {
         if self.flipped {
             7 - column.min(7)
@@ -87,6 +92,7 @@ impl BoardLayout {
     }
 
     /// Горизонталь, изображённая в строке `row` (считая сверху от нуля).
+    #[must_use]
     pub fn rank_of_row(&self, row: u8) -> u8 {
         if self.flipped {
             row.min(7)
@@ -96,6 +102,7 @@ impl BoardLayout {
     }
 
     /// Клетка (вертикаль, горизонталь) под точкой; `None` вне игрового поля.
+    #[must_use]
     pub fn cell_at(&self, px: f32, py: f32) -> Option<(u8, u8)> {
         if self.cell <= 0.0 || !px.is_finite() || !py.is_finite() {
             return None;
@@ -111,29 +118,34 @@ impl BoardLayout {
     }
 
     /// Игровое (тёмное) поле под точкой; `None` для светлых клеток и точек вне поля.
+    #[must_use]
     pub fn square_at(&self, px: f32, py: f32) -> Option<Square> {
         let (file, rank) = self.cell_at(px, py)?;
         Square::from_file_rank(file, rank)
     }
 
     /// Левый верхний угол клетки.
+    #[must_use]
     pub fn cell_origin(&self, file: u8, rank: u8) -> (f32, f32) {
         let (cx, cy) = self.point_at(f32::from(file.min(7)), f32::from(rank.min(7)));
         (cx - self.cell / 2.0, cy - self.cell / 2.0)
     }
 
     /// Центр поля.
+    #[must_use]
     pub fn square_center(&self, sq: Square) -> (f32, f32) {
         self.point_at(f32::from(sq.file()), f32::from(sq.rank()))
     }
 
     /// Точка, соответствующая дробным координатам доски (центр клетки `(file, rank)`
     /// при целых значениях). Используется для движущихся шашек.
+    #[must_use]
     pub fn point_at(&self, file: f32, rank: f32) -> (f32, f32) {
         self.cell_to_point(screen_cell(file, rank, self.flipped))
     }
 
     /// Точка окна, соответствующая точке в экранных клетках (см. [`screen_cell`]).
+    #[must_use]
     pub fn cell_to_point(&self, cell: (f32, f32)) -> (f32, f32) {
         (
             self.field_x + cell.0 * self.cell,

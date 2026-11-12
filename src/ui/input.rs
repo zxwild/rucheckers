@@ -33,8 +33,9 @@ pub struct MoveInput {
 
 impl MoveInput {
     /// Выбор хода без доступных ходов (ввод запрещён).
-    pub fn new() -> MoveInput {
-        MoveInput::default()
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Задаёт допустимые ходы текущей позиции и сбрасывает выбор.
@@ -50,31 +51,37 @@ impl MoveInput {
     }
 
     /// Можно ли сейчас делать ход.
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         !self.moves.is_empty()
     }
 
     /// Допустимые ходы.
+    #[must_use]
     pub fn moves(&self) -> &[Move] {
         &self.moves
     }
 
     /// Исходное поле выбранной шашки.
-    pub fn origin(&self) -> Option<Square> {
+    #[must_use]
+    pub const fn origin(&self) -> Option<Square> {
         self.origin
     }
 
     /// Уже сделанные прыжки незаконченного взятия.
+    #[must_use]
     pub fn steps(&self) -> &[Square] {
         &self.steps
     }
 
     /// Идёт ли незаконченное серийное взятие.
+    #[must_use]
     pub fn in_progress(&self) -> bool {
         !self.steps.is_empty()
     }
 
     /// Поле, на котором выбранная шашка стоит сейчас.
+    #[must_use]
     pub fn current_square(&self) -> Option<Square> {
         self.steps.last().copied().or(self.origin)
     }
@@ -85,6 +92,7 @@ impl MoveInput {
     }
 
     /// Шашки, которыми можно ходить. Если взятие обязательно, это шашки, обязанные бить.
+    #[must_use]
     pub fn movable(&self) -> Vec<Square> {
         let mut squares: Vec<Square> = Vec::new();
         for mv in &self.moves {
@@ -105,6 +113,7 @@ impl MoveInput {
     }
 
     /// Поля, на которые выбранная шашка может пойти следующим шагом.
+    #[must_use]
     pub fn targets(&self) -> Vec<Square> {
         let mut squares: Vec<Square> = Vec::new();
         let next = self.steps.len();
@@ -149,6 +158,7 @@ impl MoveInput {
 
     /// Конечные поля серийного взятия, которые можно указать сразу: щелчок по такому
     /// полю выполняет все оставшиеся прыжки. Поля следующего шага сюда не входят.
+    #[must_use]
     pub fn final_targets(&self) -> Vec<Square> {
         let next = self.targets();
         let mut squares: Vec<Square> = Vec::new();
@@ -175,6 +185,7 @@ impl MoveInput {
     }
 
     /// Маска шашек, уже побитых в незаконченном взятии (они остаются на доске до конца хода).
+    #[must_use]
     pub fn captured_so_far(&self) -> u32 {
         let done = self.steps.len();
         match self.candidates().next() {

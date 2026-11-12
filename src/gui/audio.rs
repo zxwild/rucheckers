@@ -22,7 +22,7 @@ pub struct Audio {
 
 impl Audio {
     /// Создаёт проигрыватель. Звуковое устройство при этом не открывается.
-    pub fn new() -> Audio {
+    pub fn new() -> Self {
         let (sender, receiver) = channel::<Sound>();
         let worker = move || {
             let bank: HashMap<Sound, Vec<f32>> = Sound::ALL.iter().map(|&s| (s, synthesize(s))).collect();
@@ -49,7 +49,7 @@ impl Audio {
         let spawned = thread::Builder::new()
             .name("rucheckers-audio".to_string())
             .spawn(worker);
-        Audio {
+        Self {
             sender: spawned.ok().map(|_| sender),
         }
     }

@@ -12,8 +12,9 @@ use crate::board::{Color, Position};
 use crate::moves::legal_moves;
 use crate::notation::{format_move, parse_move, NotationError};
 use crate::rules::Outcome;
-use crate::tree::{GameTree, NodeId, TreeError};
+use crate::tree::{GameTree, Node, NodeId, TreeError};
 use std::fmt;
+use std::ops::ControlFlow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Значение тега `GameType` для русских шашек.
@@ -72,21 +73,21 @@ pub enum PdnError {
 impl fmt::Display for PdnError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PdnError::TooLarge => write!(f, "file is too large"),
-            PdnError::Empty => write!(f, "file is empty"),
-            PdnError::NotPdn => write!(f, "not a PDN file"),
-            PdnError::WrongGameType(v) => write!(f, "unsupported game type '{v}'"),
-            PdnError::BadFen(v) => write!(f, "bad start position '{v}'"),
-            PdnError::BadTag { line } => write!(f, "line {line}: malformed tag"),
-            PdnError::BadMove { line, token, problem } => {
+            Self::TooLarge => write!(f, "file is too large"),
+            Self::Empty => write!(f, "file is empty"),
+            Self::NotPdn => write!(f, "not a PDN file"),
+            Self::WrongGameType(v) => write!(f, "unsupported game type '{v}'"),
+            Self::BadFen(v) => write!(f, "bad start position '{v}'"),
+            Self::BadTag { line } => write!(f, "line {line}: malformed tag"),
+            Self::BadMove { line, token, problem } => {
                 write!(f, "line {line}: bad move '{token}' ({problem:?})")
             }
-            PdnError::UnbalancedVariation { line } => write!(f, "line {line}: unbalanced parentheses"),
-            PdnError::VariationWithoutMove { line } => {
+            Self::UnbalancedVariation { line } => write!(f, "line {line}: unbalanced parentheses"),
+            Self::VariationWithoutMove { line } => {
                 write!(f, "line {line}: variation before any move")
             }
-            PdnError::UnterminatedComment { line } => write!(f, "line {line}: unterminated comment"),
-            PdnError::TooManyMoves => write!(f, "too many moves"),
+            Self::UnterminatedComment { line } => write!(f, "line {line}: unterminated comment"),
+            Self::TooManyMoves => write!(f, "too many moves"),
         }
     }
 }
@@ -102,6 +103,7 @@ pub struct PdnGame {
 
 impl PdnGame {
     /// Значение тега (имя сравнивается без учёта регистра).
+    #[must_use]
     pub fn tag(&self, name: &str) -> Option<&str> {
         find_tag(&self.tags, name)
     }
@@ -125,7 +127,8 @@ fn find_tag<'a>(tags: &'a [(String, String)], name: &str) -> Option<&'a str> {
 }
 
 /// Обозначение результата в теге `Result` и в конце записи ходов.
-pub fn result_token(outcome: Option<Outcome>) -> &'static str {
+#[must_use]
+pub const fn result_token(outcome: Option<Outcome>) -> &'static str {
     match outcome {
         Some(Outcome::Win {
             winner: Color::White, ..
@@ -139,6 +142,7 @@ pub fn result_token(outcome: Option<Outcome>) -> &'static str {
 }
 
 /// Теги заголовка для партии человека с компьютером.
+#[must_use]
 pub fn standard_tags(human: Color, human_name: &str, computer_name: &str) -> Vec<(String, String)> {
     let (white, black, white_type, black_type) = match human {
         Color::White => (human_name, computer_name, "human", "program"),
@@ -157,16 +161,17 @@ pub fn standard_tags(human: Color, human_name: &str, computer_name: &str) -> Vec
 }
 
 /// Сегодняшняя дата (UTC) в формате PDN: `ГГГГ.ММ.ДД`.
+#[must_use]
 pub fn today() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     let (year, month, day) = civil_from_days((seconds / 86_400) as i64);
     format!("{year:04}.{month:02}.{day:02}")
 }
 
 /// Григорианская дата по числу дней от 1 января 1970 года.
+#[must_use]
 pub fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -193,18 +198,34 @@ fn escape_tag_value(value: &str) -> String {
     out
 }
 
+/// A pending step of the tree walk in [`to_pdn`].
+enum Item {
+    /// Write the move of this node and continue along its line; the flag marks a move
+    /// that starts a variation.
+    Line(NodeId, bool),
+    /// Write an opening parenthesis.
+    Open,
+    /// Write a closing parenthesis.
+    Close,
+}
+
 /// Сериализует дерево партии в текст PDN.
 ///
 /// Теги `Result`, `GameType` и при нестандартной начальной позиции `FEN`
 /// добавляются автоматически; одноимённые теги из `tags` игнорируются.
+#[must_use]
 pub fn to_pdn(tree: &GameTree, tags: &[(String, String)]) -> String {
-    let result = result_token(tree.get(tree.main_line_end()).and_then(|n| n.outcome()));
+    let result = result_token(tree.get(tree.main_line_end()).and_then(Node::outcome));
     let root_pos = *tree.root().position();
     let mut out = String::new();
 
     let reserved = ["result", "gametype", "fen", "setup"];
     let mut write_tag = |name: &str, value: &str| {
-        out.push_str(&format!("[{} \"{}\"]\n", name, escape_tag_value(value)));
+        out.push('[');
+        out.push_str(name);
+        out.push_str(" \"");
+        out.push_str(&escape_tag_value(value));
+        out.push_str("\"]\n");
     };
     for (name, value) in tags {
         let valid_name = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
@@ -220,13 +241,9 @@ pub fn to_pdn(tree: &GameTree, tags: &[(String, String)]) -> String {
     }
     out.push('\n');
 
-    // Обход без рекурсии: глубина вложенности вариантов не ограничена стеком вызовов.
-    enum Item {
-        Line(NodeId, bool),
-        Open,
-        Close,
-    }
-    let first_index: u32 = if root_pos.side == Color::Black { 1 } else { 0 };
+    // The tree is walked without recursion, so the nesting depth of variations is not
+    // limited by the call stack.
+    let first_index = u32::from(root_pos.side == Color::Black);
     let mut tokens: Vec<String> = Vec::new();
     let mut need_number = true;
     let mut stack: Vec<Item> = Vec::new();
@@ -290,8 +307,13 @@ pub fn to_pdn(tree: &GameTree, tags: &[(String, String)]) -> String {
     out
 }
 
-/// Разбирает содержимое файла: проверяет размер и терпимо относится к кодировке
-/// (не-UTF-8 байты в комментариях и именах заменяются, ходы всегда записаны в ASCII).
+/// Parses the contents of a file: checks the size and is tolerant of the encoding
+/// (bytes that are not UTF-8 are replaced in comments and names; moves are always ASCII).
+///
+/// # Errors
+///
+/// Returns [`PdnError::TooLarge`] for a file over [`MAX_FILE_SIZE`] bytes and otherwise
+/// the same errors as [`from_pdn`].
 pub fn from_bytes(bytes: &[u8]) -> Result<PdnGame, PdnError> {
     if bytes.len() > MAX_FILE_SIZE {
         return Err(PdnError::TooLarge);
@@ -334,8 +356,8 @@ enum Token {
 }
 
 impl<'a> Scanner<'a> {
-    fn new(text: &'a str) -> Scanner<'a> {
-        Scanner {
+    const fn new(text: &'a str) -> Self {
+        Self {
             text,
             pos: 0,
             line: 1,
@@ -473,20 +495,9 @@ fn strip_move_number(word: &str) -> &str {
     }
 }
 
-/// Разбирает текст PDN. Из файла с несколькими партиями читается первая.
-pub fn from_pdn(text: &str) -> Result<PdnGame, PdnError> {
-    let mut scanner = Scanner::new(text);
-    let mut tags: Vec<(String, String)> = Vec::new();
-
-    // Заголовок.
-    let mut pending = loop {
-        match scanner.next()? {
-            Token::Tag { name, value } => tags.push((name, value)),
-            other => break other,
-        }
-    };
-
-    if let Some(value) = find_tag(&tags, "GameType") {
+/// The start position named by the header tags, after checking the game type.
+fn start_position(tags: &[(String, String)]) -> Result<Position, PdnError> {
+    if let Some(value) = find_tag(tags, "GameType") {
         let number = value
             .split(',')
             .next()
@@ -496,98 +507,161 @@ pub fn from_pdn(text: &str) -> Result<PdnGame, PdnError> {
             return Err(PdnError::WrongGameType(printable(value)));
         }
     }
-    let start = match find_tag(&tags, "FEN") {
-        Some(fen) => Position::from_fen(fen).map_err(|_| PdnError::BadFen(printable(fen)))?,
-        None => Position::initial(),
+    match find_tag(tags, "FEN") {
+        Some(fen) => Position::from_fen(fen).map_err(|_| PdnError::BadFen(printable(fen))),
+        None => Ok(Position::initial()),
+    }
+}
+
+/// Builds the game tree from the move text: moves, variations and the result.
+struct MoveText {
+    tree: GameTree,
+    /// The node the next move is added to.
+    cursor: NodeId,
+    /// For every open variation: the node to return to and whether the outer line
+    /// already had a move.
+    stack: Vec<(NodeId, bool)>,
+    line_has_move: bool,
+    /// Whether anything that belongs to the move text has been read.
+    seen_movetext: bool,
+    /// Whether the game has a header; without one, the first unreadable word means
+    /// that the file is not PDN at all.
+    has_tags: bool,
+}
+
+impl MoveText {
+    fn new(start: Position, has_tags: bool) -> Self {
+        Self {
+            tree: GameTree::from_position(start),
+            cursor: GameTree::ROOT,
+            stack: Vec::new(),
+            line_has_move: false,
+            seen_movetext: false,
+            has_tags,
+        }
+    }
+
+    /// `(`: the variation is an alternative to the last move of the current line.
+    fn open_variation(&mut self, line: usize) -> Result<(), PdnError> {
+        self.seen_movetext = true;
+        match self.tree.get(self.cursor).and_then(Node::parent) {
+            Some(parent) if self.line_has_move => {
+                self.stack.push((self.cursor, self.line_has_move));
+                self.cursor = parent;
+                self.line_has_move = false;
+                Ok(())
+            }
+            _ => Err(PdnError::VariationWithoutMove { line }),
+        }
+    }
+
+    /// `)`: back to the line the variation branched from.
+    fn close_variation(&mut self, line: usize) -> Result<(), PdnError> {
+        self.seen_movetext = true;
+        let (resume, had_move) = self.stack.pop().ok_or(PdnError::UnbalancedVariation { line })?;
+        self.cursor = resume;
+        self.line_has_move = had_move;
+        Ok(())
+    }
+
+    /// A word of the move text: a move (possibly with its number), an annotation or the
+    /// game result. A result outside any variation ends the game.
+    fn word(&mut self, word: &str, line: usize) -> Result<ControlFlow<()>, PdnError> {
+        if is_result_token(word) {
+            return Ok(if self.stack.is_empty() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            });
+        }
+        let is_annotation = word.starts_with('$') || word.chars().all(|c| matches!(c, '!' | '?' | '.'));
+        if is_annotation {
+            return Ok(ControlFlow::Continue(()));
+        }
+        let rest = strip_move_number(word);
+        if !rest.is_empty() {
+            self.add_move(rest, line)?;
+        }
+        self.seen_movetext = true;
+        Ok(ControlFlow::Continue(()))
+    }
+
+    fn add_move(&mut self, text: &str, line: usize) -> Result<(), PdnError> {
+        let bad = |problem| PdnError::BadMove {
+            line,
+            token: printable(text),
+            problem,
+        };
+        let node = self.tree.get(self.cursor).ok_or(PdnError::NotPdn)?;
+        let legal = legal_moves(node.position());
+        let mv = parse_move(text, &legal).map_err(|error| match error {
+            // Foreign content is recognised by its very first word.
+            NotationError::Syntax if !self.seen_movetext && !self.has_tags => PdnError::NotPdn,
+            NotationError::Syntax => bad(MoveProblem::Syntax),
+            NotationError::Illegal => bad(MoveProblem::Illegal),
+            NotationError::Ambiguous => bad(MoveProblem::Ambiguous),
+        })?;
+        if self.tree.len() >= MAX_NODES {
+            return Err(PdnError::TooManyMoves);
+        }
+        self.cursor = self
+            .tree
+            .add_move(self.cursor, &mv)
+            .map_err(|error| match error {
+                TreeError::GameOver => bad(MoveProblem::GameOver),
+                _ => bad(MoveProblem::Illegal),
+            })?;
+        self.line_has_move = true;
+        Ok(())
+    }
+
+    /// The finished tree; `line` is where the text ended.
+    fn finish(self, line: usize) -> Result<GameTree, PdnError> {
+        if self.stack.is_empty() {
+            Ok(self.tree)
+        } else {
+            Err(PdnError::UnbalancedVariation { line })
+        }
+    }
+}
+
+/// Parses PDN text. Only the first game of a file with several games is read.
+///
+/// # Errors
+///
+/// Returns a [`PdnError`] if the text is not a PDN record of a Russian draughts game:
+/// it is empty or foreign, the header or the variation parentheses are malformed, or a
+/// move cannot be read or played. The error carries the line number where it applies.
+pub fn from_pdn(text: &str) -> Result<PdnGame, PdnError> {
+    let mut scanner = Scanner::new(text);
+    let mut tags: Vec<(String, String)> = Vec::new();
+
+    // The header.
+    let mut pending = loop {
+        match scanner.next()? {
+            Token::Tag { name, value } => tags.push((name, value)),
+            other => break other,
+        }
     };
 
-    let mut tree = GameTree::from_position(start);
-    let mut cursor = GameTree::ROOT;
-    // Для каждого открытого варианта: узел, к которому нужно вернуться, и признак того,
-    // что во внешней линии уже был ход.
-    let mut stack: Vec<(NodeId, bool)> = Vec::new();
-    let mut line_has_move = false;
-    let mut seen_movetext = false;
-
+    let mut moves = MoveText::new(start_position(&tags)?, !tags.is_empty());
     loop {
         let line = scanner.line;
         match pending {
-            Token::End => break,
-            // Начало следующей партии: читаем только первую.
-            Token::Tag { .. } => break,
-            Token::Open => {
-                seen_movetext = true;
-                let parent = tree.get(cursor).and_then(|n| n.parent());
-                match parent {
-                    Some(parent) if line_has_move => {
-                        stack.push((cursor, line_has_move));
-                        cursor = parent;
-                        line_has_move = false;
-                    }
-                    _ => return Err(PdnError::VariationWithoutMove { line }),
-                }
-            }
-            Token::Close => {
-                seen_movetext = true;
-                match stack.pop() {
-                    Some((resume, had_move)) => {
-                        cursor = resume;
-                        line_has_move = had_move;
-                    }
-                    None => return Err(PdnError::UnbalancedVariation { line }),
-                }
-            }
+            // A tag starts the next game: only the first one is read.
+            Token::End | Token::Tag { .. } => break,
+            Token::Open => moves.open_variation(line)?,
+            Token::Close => moves.close_variation(line)?,
             Token::Word(word) => {
-                let is_annotation =
-                    word.starts_with('$') || word.chars().all(|c| matches!(c, '!' | '?' | '.'));
-                if is_result_token(&word) {
-                    if stack.is_empty() {
-                        break;
-                    }
-                } else if !is_annotation {
-                    let rest = strip_move_number(&word);
-                    if !rest.is_empty() {
-                        let bad = |problem| PdnError::BadMove {
-                            line,
-                            token: printable(rest),
-                            problem,
-                        };
-                        let Some(node) = tree.get(cursor) else {
-                            return Err(PdnError::NotPdn);
-                        };
-                        let legal = legal_moves(node.position());
-                        let mv = match parse_move(rest, &legal) {
-                            Ok(mv) => mv,
-                            Err(NotationError::Syntax) => {
-                                // Постороннее содержимое распознаётся по первому же слову.
-                                if !seen_movetext && tags.is_empty() {
-                                    return Err(PdnError::NotPdn);
-                                }
-                                return Err(bad(MoveProblem::Syntax));
-                            }
-                            Err(NotationError::Illegal) => return Err(bad(MoveProblem::Illegal)),
-                            Err(NotationError::Ambiguous) => return Err(bad(MoveProblem::Ambiguous)),
-                        };
-                        if tree.len() >= MAX_NODES {
-                            return Err(PdnError::TooManyMoves);
-                        }
-                        cursor = match tree.add_move(cursor, &mv) {
-                            Ok(id) => id,
-                            Err(TreeError::GameOver) => return Err(bad(MoveProblem::GameOver)),
-                            Err(_) => return Err(bad(MoveProblem::Illegal)),
-                        };
-                        line_has_move = true;
-                    }
-                    seen_movetext = true;
+                if moves.word(&word, line)?.is_break() {
+                    break;
                 }
             }
         }
         pending = scanner.next()?;
     }
+    let tree = moves.finish(scanner.line)?;
 
-    if !stack.is_empty() {
-        return Err(PdnError::UnbalancedVariation { line: scanner.line });
-    }
     if tags.is_empty() && tree.is_empty() {
         return Err(if text.trim().is_empty() {
             PdnError::Empty

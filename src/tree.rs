@@ -27,46 +27,55 @@ pub struct Node {
 
 impl Node {
     /// Родительский узел (у корня его нет).
-    pub fn parent(&self) -> Option<NodeId> {
+    #[must_use]
+    pub const fn parent(&self) -> Option<NodeId> {
         self.parent
     }
 
     /// Продолжения: первое — основное, остальные — варианты в порядке создания.
+    #[must_use]
     pub fn children(&self) -> &[NodeId] {
         &self.children
     }
 
     /// Ход, которым получена позиция (у корня его нет).
-    pub fn mv(&self) -> Option<&Move> {
+    #[must_use]
+    pub const fn mv(&self) -> Option<&Move> {
         self.mv.as_ref()
     }
 
     /// Позиция и счётчики ничьей.
-    pub fn state(&self) -> &GameState {
+    #[must_use]
+    pub const fn state(&self) -> &GameState {
         &self.state
     }
 
     /// Позиция после хода.
-    pub fn position(&self) -> &Position {
+    #[must_use]
+    pub const fn position(&self) -> &Position {
         &self.state.pos
     }
 
     /// Число полуходов от начала партии.
-    pub fn ply(&self) -> u32 {
+    #[must_use]
+    pub const fn ply(&self) -> u32 {
         self.ply
     }
 
     /// Сколько раз позиция встретилась на ветке, считая этот узел.
-    pub fn occurrences(&self) -> u32 {
+    #[must_use]
+    pub const fn occurrences(&self) -> u32 {
         self.occurrences
     }
 
     /// Результат, если партия в этом узле закончена.
-    pub fn outcome(&self) -> Option<Outcome> {
+    #[must_use]
+    pub const fn outcome(&self) -> Option<Outcome> {
         self.outcome
     }
 
     /// Продолжение, по которому пойдёт переход «вперёд».
+    #[must_use]
     pub fn preferred_child(&self) -> Option<NodeId> {
         self.children.get(self.preferred).copied()
     }
@@ -86,9 +95,9 @@ pub enum TreeError {
 impl fmt::Display for TreeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            TreeError::NoSuchNode => "no such node",
-            TreeError::GameOver => "the game is over",
-            TreeError::IllegalMove => "illegal move",
+            Self::NoSuchNode => "no such node",
+            Self::GameOver => "the game is over",
+            Self::IllegalMove => "illegal move",
         })
     }
 }
@@ -104,7 +113,7 @@ pub struct GameTree {
 
 impl Default for GameTree {
     fn default() -> Self {
-        GameTree::new()
+        Self::new()
     }
 }
 
@@ -113,12 +122,14 @@ impl GameTree {
     pub const ROOT: NodeId = 0;
 
     /// Партия из начальной расстановки.
-    pub fn new() -> GameTree {
-        GameTree::from_position(Position::initial())
+    #[must_use]
+    pub fn new() -> Self {
+        Self::from_position(Position::initial())
     }
 
     /// Партия из произвольной позиции.
-    pub fn from_position(pos: Position) -> GameTree {
+    #[must_use]
+    pub fn from_position(pos: Position) -> Self {
         let state = GameState::new(pos);
         let root = Node {
             parent: None,
@@ -130,46 +141,58 @@ impl GameTree {
             outcome: state.outcome(1),
             preferred: 0,
         };
-        GameTree {
+        Self {
             nodes: vec![root],
-            current: GameTree::ROOT,
+            current: Self::ROOT,
         }
     }
 
     /// Число узлов, включая корень.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// Дерево без единого хода.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.nodes.len() <= 1
     }
 
     /// Узел по идентификатору.
+    #[must_use]
     pub fn get(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id)
     }
 
     /// Корневой узел.
+    #[must_use]
     pub fn root(&self) -> &Node {
-        &self.nodes[GameTree::ROOT]
+        &self.nodes[Self::ROOT]
     }
 
     /// Идентификатор текущего узла.
-    pub fn current(&self) -> NodeId {
+    #[must_use]
+    pub const fn current(&self) -> NodeId {
         self.current
     }
 
     /// Текущий узел.
+    #[must_use]
     pub fn current_node(&self) -> &Node {
         &self.nodes[self.current]
     }
 
-    /// Добавляет ход к узлу `parent`, не меняя текущую позицию.
+    /// Adds a move to the node `parent` without changing the current position.
     ///
-    /// Если такой ход у узла уже записан, возвращается существующий узел;
-    /// иначе создаётся новый вариант, а прежние продолжения сохраняются.
+    /// If the node already has this move, the existing node is returned; otherwise a new
+    /// variation is created and the earlier continuations are kept.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TreeError::NoSuchNode`] if `parent` is not in the tree,
+    /// [`TreeError::GameOver`] if the game has ended at `parent`, and
+    /// [`TreeError::IllegalMove`] if the move is not legal in its position.
     pub fn add_move(&mut self, parent: NodeId, mv: &Move) -> Result<NodeId, TreeError> {
         let node = self.nodes.get(parent).ok_or(TreeError::NoSuchNode)?;
         if let Some(existing) = node
@@ -224,9 +247,14 @@ impl GameTree {
         count
     }
 
-    /// Делает ход из текущей позиции и переходит в новую.
+    /// Plays a move from the current position and goes to the new one.
     ///
-    /// Если ход отличается от уже записанных продолжений, создаётся новый вариант.
+    /// If the move differs from the continuations recorded so far, a new variation is
+    /// created.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`GameTree::add_move`].
     pub fn play(&mut self, mv: &Move) -> Result<NodeId, TreeError> {
         let id = self.add_move(self.current, mv)?;
         self.go_to(id);
@@ -272,9 +300,9 @@ impl GameTree {
     }
 
     /// К началу партии.
-    pub fn go_start(&mut self) -> bool {
-        let moved = self.current != GameTree::ROOT;
-        self.current = GameTree::ROOT;
+    pub const fn go_start(&mut self) -> bool {
+        let moved = self.current != Self::ROOT;
+        self.current = Self::ROOT;
         moved
     }
 
@@ -306,6 +334,7 @@ impl GameTree {
     }
 
     /// Все варианты хода, которым получен узел (включая его самого).
+    #[must_use]
     pub fn siblings(&self, id: NodeId) -> &[NodeId] {
         match self.nodes.get(id).and_then(|n| n.parent) {
             Some(parent) => &self.nodes[parent].children,
@@ -314,6 +343,7 @@ impl GameTree {
     }
 
     /// Путь от корня до узла включительно.
+    #[must_use]
     pub fn path_to(&self, id: NodeId) -> Vec<NodeId> {
         let mut path = Vec::new();
         let mut cursor = if id < self.nodes.len() { Some(id) } else { None };
@@ -326,6 +356,7 @@ impl GameTree {
     }
 
     /// Активная ветка: от корня через текущий узел до конца по предпочтительным продолжениям.
+    #[must_use]
     pub fn active_line(&self) -> Vec<NodeId> {
         let mut line = self.path_to(self.current);
         let mut cursor = self.current;
@@ -337,8 +368,9 @@ impl GameTree {
     }
 
     /// Последний узел основной линии (первые продолжения от корня).
+    #[must_use]
     pub fn main_line_end(&self) -> NodeId {
-        let mut cursor = GameTree::ROOT;
+        let mut cursor = Self::ROOT;
         while let Some(&child) = self.nodes[cursor].children.first() {
             cursor = child;
         }
@@ -347,6 +379,7 @@ impl GameTree {
 
     /// Позиции ветки, предшествующие узлу, которые ещё могут повториться
     /// (от более ранних к более поздним, без самого узла).
+    #[must_use]
     pub fn history_before(&self, id: NodeId) -> Vec<Position> {
         let mut history = Vec::new();
         let Some(node) = self.nodes.get(id) else {
@@ -366,11 +399,12 @@ impl GameTree {
 
     /// Совпадают ли деревья по структуре: начальная позиция, ходы и порядок вариантов.
     /// Положение указателя текущей позиции не сравнивается.
-    pub fn same_structure(&self, other: &GameTree) -> bool {
+    #[must_use]
+    pub fn same_structure(&self, other: &Self) -> bool {
         if self.nodes.len() != other.nodes.len() || self.root().state != other.root().state {
             return false;
         }
-        let mut stack = vec![(GameTree::ROOT, GameTree::ROOT)];
+        let mut stack = vec![(Self::ROOT, Self::ROOT)];
         while let Some((a, b)) = stack.pop() {
             let (na, nb) = (&self.nodes[a], &other.nodes[b]);
             if na.mv != nb.mv || na.children.len() != nb.children.len() || na.state != nb.state {

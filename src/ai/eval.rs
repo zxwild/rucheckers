@@ -53,6 +53,7 @@ fn king_mobility(sq: Square, occupied: u32) -> i32 {
 }
 
 /// Оценка с точки зрения белых.
+#[must_use]
 pub fn evaluate_white(pos: &Position) -> i32 {
     let white_men = pos.men(Color::White);
     let black_men = pos.men(Color::Black);
@@ -141,6 +142,7 @@ pub fn evaluate_white(pos: &Position) -> i32 {
 
 /// Оценка с точки зрения стороны, чья очередь хода.
 #[inline]
+#[must_use]
 pub fn evaluate(pos: &Position) -> i32 {
     let score = evaluate_white(pos);
     match pos.side {

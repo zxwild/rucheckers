@@ -16,10 +16,11 @@ pub enum Color {
 impl Color {
     /// Противоположная сторона.
     #[inline]
-    pub const fn opponent(self) -> Color {
+    #[must_use]
+    pub const fn opponent(self) -> Self {
         match self {
-            Color::White => Color::Black,
-            Color::Black => Color::White,
+            Self::White => Self::Black,
+            Self::Black => Self::White,
         }
     }
 }
@@ -41,10 +42,12 @@ pub struct Piece {
 }
 
 impl Piece {
-    pub const fn new(color: Color, kind: Kind) -> Piece {
-        Piece { color, kind }
+    #[must_use]
+    pub const fn new(color: Color, kind: Kind) -> Self {
+        Self { color, kind }
     }
 
+    #[must_use]
     pub const fn is_king(self) -> bool {
         matches!(self.kind, Kind::King)
     }
@@ -103,6 +106,7 @@ pub const RANK_1: u32 = 0x0000_000F;
 
 /// Дамочная горизонталь для простых указанного цвета.
 #[inline]
+#[must_use]
 pub const fn promotion_mask(color: Color) -> u32 {
     match color {
         Color::White => RANK_8,
@@ -119,9 +123,10 @@ impl Square {
     pub const COUNT: usize = 32;
 
     /// Поле по номеру 0..32.
-    pub fn from_index(index: usize) -> Option<Square> {
-        if index < Square::COUNT {
-            Some(Square(index as u8))
+    #[must_use]
+    pub const fn from_index(index: usize) -> Option<Self> {
+        if index < Self::COUNT {
+            Some(Self(index as u8))
         } else {
             None
         }
@@ -129,59 +134,67 @@ impl Square {
 
     /// Поле по вертикали и горизонтали (обе от нуля: `a` = 0, первая горизонталь = 0).
     /// Для светлых полей и координат вне доски возвращает `None`.
-    pub fn from_file_rank(file: u8, rank: u8) -> Option<Square> {
+    #[must_use]
+    pub const fn from_file_rank(file: u8, rank: u8) -> Option<Self> {
         if file < 8 && rank < 8 && (file + rank) % 2 == 0 {
-            Some(Square(rank * 4 + file / 2))
+            Some(Self(rank * 4 + file / 2))
         } else {
             None
         }
     }
 
     #[inline]
+    #[must_use]
     pub const fn index(self) -> usize {
         self.0 as usize
     }
 
     /// Вертикаль от нуля (`a` = 0).
     #[inline]
+    #[must_use]
     pub const fn file(self) -> u8 {
         2 * (self.0 % 4) + (self.0 / 4) % 2
     }
 
     /// Горизонталь от нуля (первая = 0).
     #[inline]
+    #[must_use]
     pub const fn rank(self) -> u8 {
         self.0 / 4
     }
 
     /// Битовая маска поля.
     #[inline]
+    #[must_use]
     pub const fn bit(self) -> u32 {
         1u32 << self.0
     }
 
     /// Соседнее поле по диагонали в направлении `dir` ([`NE`], [`NW`], [`SE`], [`SW`]).
-    pub fn step(self, dir: usize) -> Option<Square> {
+    #[must_use]
+    pub fn step(self, dir: usize) -> Option<Self> {
         let next = *NEIGHBOR[self.index()].get(dir)?;
         if next == NO_SQUARE {
             None
         } else {
-            Some(Square(next))
+            Some(Self(next))
         }
     }
 
     /// Лежит ли поле на большой дороге a1–h8.
     #[inline]
+    #[must_use]
     pub const fn on_main_road(self) -> bool {
         MAIN_ROAD & self.bit() != 0
     }
 
     /// Все 32 поля по возрастанию номера.
-    pub fn all() -> impl Iterator<Item = Square> {
-        (0..Square::COUNT as u8).map(Square)
+    pub fn all() -> impl Iterator<Item = Self> {
+        (0..Self::COUNT as u8).map(Square)
     }
 
     /// Имя поля в шашечной нотации: `c3`.
+    #[must_use]
     pub fn name(self) -> String {
         let mut s = String::with_capacity(2);
         s.push((b'a' + self.file()) as char);
@@ -190,7 +203,8 @@ impl Square {
     }
 
     /// Разбор имени поля (`c3`, `C3`). Светлые поля не принимаются.
-    pub fn parse(text: &str) -> Option<Square> {
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
         let bytes = text.as_bytes();
         if bytes.len() != 2 {
             return None;
@@ -200,7 +214,7 @@ impl Square {
         if !(b'a'..=b'h').contains(&file) || !(b'1'..=b'8').contains(&rank) {
             return None;
         }
-        Square::from_file_rank(file - b'a', rank - b'1')
+        Self::from_file_rank(file - b'a', rank - b'1')
     }
 }
 
@@ -250,12 +264,12 @@ pub enum FenError {
 impl fmt::Display for FenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FenError::BadSide => write!(f, "side to move is missing"),
-            FenError::BadSection(s) => write!(f, "bad section '{s}'"),
-            FenError::BadSquare(s) => write!(f, "bad square '{s}'"),
-            FenError::Duplicate(s) => write!(f, "square '{s}' is listed twice"),
-            FenError::ManOnPromotionRank(s) => write!(f, "man on the promotion rank: '{s}'"),
-            FenError::TooManyPieces => write!(f, "more than 12 pieces for one side"),
+            Self::BadSide => write!(f, "side to move is missing"),
+            Self::BadSection(s) => write!(f, "bad section '{s}'"),
+            Self::BadSquare(s) => write!(f, "bad square '{s}'"),
+            Self::Duplicate(s) => write!(f, "square '{s}' is listed twice"),
+            Self::ManOnPromotionRank(s) => write!(f, "man on the promotion rank: '{s}'"),
+            Self::TooManyPieces => write!(f, "more than 12 pieces for one side"),
         }
     }
 }
@@ -277,8 +291,9 @@ pub struct Position {
 
 impl Position {
     /// Пустая доска.
-    pub const fn empty(side: Color) -> Position {
-        Position {
+    #[must_use]
+    pub const fn empty(side: Color) -> Self {
+        Self {
             white: 0,
             black: 0,
             kings: 0,
@@ -287,8 +302,9 @@ impl Position {
     }
 
     /// Начальная расстановка: по 12 простых, ход белых.
-    pub const fn initial() -> Position {
-        Position {
+    #[must_use]
+    pub const fn initial() -> Self {
+        Self {
             white: 0x0000_0FFF,
             black: 0xFFF0_0000,
             kings: 0,
@@ -298,12 +314,14 @@ impl Position {
 
     /// Все занятые поля.
     #[inline]
+    #[must_use]
     pub const fn occupied(&self) -> u32 {
         self.white | self.black
     }
 
     /// Фигуры указанного цвета.
     #[inline]
+    #[must_use]
     pub const fn pieces(&self, color: Color) -> u32 {
         match color {
             Color::White => self.white,
@@ -313,30 +331,35 @@ impl Position {
 
     /// Простые указанного цвета.
     #[inline]
+    #[must_use]
     pub const fn men(&self, color: Color) -> u32 {
         self.pieces(color) & !self.kings
     }
 
     /// Дамки указанного цвета.
     #[inline]
+    #[must_use]
     pub const fn kings_of(&self, color: Color) -> u32 {
         self.pieces(color) & self.kings
     }
 
     /// Число фигур указанного цвета.
     #[inline]
+    #[must_use]
     pub const fn count(&self, color: Color) -> u32 {
         self.pieces(color).count_ones()
     }
 
     /// Число фигур на доске.
     #[inline]
+    #[must_use]
     pub const fn total(&self) -> u32 {
         self.occupied().count_ones()
     }
 
     /// Фигура на поле.
-    pub fn piece_at(&self, sq: Square) -> Option<Piece> {
+    #[must_use]
+    pub const fn piece_at(&self, sq: Square) -> Option<Piece> {
         let bit = sq.bit();
         let color = if self.white & bit != 0 {
             Color::White
@@ -367,7 +390,7 @@ impl Position {
     }
 
     /// Убирает фигуру с поля.
-    pub fn remove(&mut self, sq: Square) {
+    pub const fn remove(&mut self, sq: Square) {
         let mask = !sq.bit();
         self.white &= mask;
         self.black &= mask;
@@ -376,7 +399,8 @@ impl Position {
 
     /// Проверка внутренней согласованности: фигуры не накладываются, дамки стоят
     /// на занятых полях, простых нет на дамочной горизонтали, у стороны не более 12 фигур.
-    pub fn is_valid(&self) -> bool {
+    #[must_use]
+    pub const fn is_valid(&self) -> bool {
         self.white & self.black == 0
             && self.kings & !self.occupied() == 0
             && self.men(Color::White) & RANK_8 == 0
@@ -386,9 +410,10 @@ impl Position {
     }
 
     /// 64-битный хеш позиции (с учётом очереди хода).
+    #[must_use]
     pub fn hash64(&self) -> u64 {
         #[inline]
-        fn mix(mut x: u64) -> u64 {
+        const fn mix(mut x: u64) -> u64 {
             x ^= x >> 33;
             x = x.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
             x ^= x >> 33;
@@ -396,16 +421,17 @@ impl Position {
             x ^= x >> 33;
             x
         }
-        let a = (self.white as u64) | ((self.black as u64) << 32);
+        let a = u64::from(self.white) | (u64::from(self.black) << 32);
         let side = match self.side {
             Color::White => 0u64,
             Color::Black => 1u64,
         };
-        let b = (self.kings as u64) | (side << 32);
+        let b = u64::from(self.kings) | (side << 32);
         mix(a ^ mix(b.wrapping_add(0x9E37_79B9_7F4A_7C15)))
     }
 
     /// Запись позиции в формате FEN из стандарта PDN: `W:Wa1,c1,Ke3:Bb8,Kd6`.
+    #[must_use]
     pub fn to_fen(&self) -> String {
         let mut out = String::new();
         out.push(match self.side {
@@ -430,16 +456,22 @@ impl Position {
         out
     }
 
-    /// Разбор записи позиции в формате FEN из стандарта PDN.
-    pub fn from_fen(text: &str) -> Result<Position, FenError> {
+    /// Parses a position written in the FEN format of the PDN standard.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FenError`] if the side to move is missing, a section or a square
+    /// cannot be read, a square is listed twice, a man stands on its promotion rank or
+    /// a side has more than twelve pieces.
+    pub fn from_fen(text: &str) -> Result<Self, FenError> {
         let text = text.trim().trim_end_matches('.');
         let mut parts = text.split(':');
         let side = match parts.next().map(str::trim) {
-            Some("W") | Some("w") => Color::White,
-            Some("B") | Some("b") => Color::Black,
+            Some("W" | "w") => Color::White,
+            Some("B" | "b") => Color::Black,
             _ => return Err(FenError::BadSide),
         };
-        let mut pos = Position::empty(side);
+        let mut pos = Self::empty(side);
         for part in parts {
             let part = part.trim().trim_end_matches('.');
             if part.is_empty() {
@@ -447,8 +479,8 @@ impl Position {
             }
             let mut chars = part.chars();
             let color = match chars.next() {
-                Some('W') | Some('w') => Color::White,
-                Some('B') | Some('b') => Color::Black,
+                Some('W' | 'w') => Color::White,
+                Some('B' | 'b') => Color::Black,
                 _ => return Err(FenError::BadSection(part.to_string())),
             };
             for item in chars.as_str().split(',') {
@@ -553,7 +585,7 @@ mod tests {
     fn a1_is_a_dark_corner_and_main_road_is_a1_h8() {
         assert!(Square::from_file_rank(0, 0).is_some());
         assert!(Square::from_file_rank(7, 0).is_none());
-        let road: Vec<String> = squares_of(MAIN_ROAD).map(|s| s.name()).collect();
+        let road: Vec<String> = squares_of(MAIN_ROAD).map(super::Square::name).collect();
         assert_eq!(road, ["a1", "b2", "c3", "d4", "e5", "f6", "g7", "h8"]);
     }
 

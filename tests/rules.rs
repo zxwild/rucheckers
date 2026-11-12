@@ -4,7 +4,7 @@ mod common;
 
 use common::{move_names, mv, pos, sq};
 use rucheckers::board::{Color, Kind, Piece, Position};
-use rucheckers::moves::legal_moves;
+use rucheckers::moves::{legal_moves, Move};
 use rucheckers::rules::{GameState, Outcome, WinReason};
 
 // ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ fn player_may_choose_any_capture_not_necessarily_the_longest() {
         move_names(&p),
         ["c1:a3:c5", "c1:a3:d6", "c1:a3:e7", "c1:a3:f8", "c1:e3", "c1:f4", "c1:g5", "c1:h6"]
     );
-    let counts: Vec<u32> = legal_moves(&p).iter().map(|m| m.captured_count()).collect();
+    let counts: Vec<u32> = legal_moves(&p).iter().map(Move::captured_count).collect();
     assert!(counts.contains(&1) && counts.contains(&2), "{counts:?}");
 }
 

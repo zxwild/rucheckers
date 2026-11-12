@@ -7,7 +7,7 @@ use rucheckers::board::Position;
 use rucheckers::moves::perft;
 
 /// Глубины 1–9. Взятия с разным маршрутом считаются разными ходами.
-const EXPECTED: [u64; 9] = [7, 49, 302, 1469, 7482, 37986, 190146, 929905, 4570667];
+const EXPECTED: [u64; 9] = [7, 49, 302, 1469, 7482, 37986, 190_146, 929_905, 4_570_667];
 
 #[test]
 fn perft_from_initial_position_depths_1_to_9() {

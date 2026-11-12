@@ -5,6 +5,7 @@ use crate::moves::Move;
 use std::fmt;
 
 /// Запись хода: тихий ход через дефис, взятие — через двоеточие со всеми полями маршрута.
+#[must_use]
 pub fn format_move(mv: &Move) -> String {
     let sep = if mv.is_capture() { ':' } else { '-' };
     let mut out = String::with_capacity(3 * (mv.path().len() + 1));
@@ -30,16 +31,21 @@ pub enum NotationError {
 impl fmt::Display for NotationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            NotationError::Syntax => "not a move",
-            NotationError::Illegal => "illegal move",
-            NotationError::Ambiguous => "ambiguous capture",
+            Self::Syntax => "not a move",
+            Self::Illegal => "illegal move",
+            Self::Ambiguous => "ambiguous capture",
         })
     }
 }
 
 impl std::error::Error for NotationError {}
 
-/// Разбирает последовательность полей, разделённых `-`, `:` или `x`.
+/// Parses a sequence of squares separated by `-`, `:` or `x`.
+///
+/// # Errors
+///
+/// Returns [`NotationError::Syntax`] if the text is not such a sequence of at least
+/// two playable squares.
 pub fn parse_squares(text: &str) -> Result<Vec<Square>, NotationError> {
     let text = text.trim().trim_end_matches(['!', '?', '+', '#']);
     let mut squares = Vec::new();
@@ -52,10 +58,17 @@ pub fn parse_squares(text: &str) -> Result<Vec<Square>, NotationError> {
     Ok(squares)
 }
 
-/// Находит среди допустимых ходов `legal` тот, что записан в `text`.
+/// Finds among the legal moves `legal` the one written in `text`.
 ///
-/// Принимается полная запись (`c3:e5:g7`), а для взятий — и сокращённая
-/// (`c3:g7` или с частью промежуточных полей), если она определяет результат однозначно.
+/// The full notation (`c3:e5:g7`) is accepted and, for captures, a shortened one as
+/// well (`c3:g7`, or with some of the intermediate squares) as long as it determines
+/// the result of the move unambiguously.
+///
+/// # Errors
+///
+/// Returns [`NotationError::Syntax`] if the text is not a move at all,
+/// [`NotationError::Illegal`] if no legal move matches it and
+/// [`NotationError::Ambiguous`] if captures with different results match it.
 pub fn parse_move(text: &str, legal: &[Move]) -> Result<Move, NotationError> {
     let squares = parse_squares(text)?;
     let from = squares[0];

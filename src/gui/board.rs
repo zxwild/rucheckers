@@ -258,7 +258,7 @@ fn glow_ring(center: Pos2, inner: f32, peak: f32, outer: f32, intensity: f32) ->
     for (radius, color) in [
         (inner, Color32::TRANSPARENT),
         (peak, glow(fx::GLOW, 0.80 * intensity)),
-        ((peak + outer) / 2.0, glow(fx::GLOW, 0.26 * intensity)),
+        (f32::midpoint(peak, outer), glow(fx::GLOW, 0.26 * intensity)),
         (outer, Color32::TRANSPARENT),
     ] {
         for i in 0..SEGMENTS {
@@ -290,6 +290,8 @@ pub fn draw_lightning(
     frame: &DischargeFrame,
     pixels_per_point: f32,
 ) {
+    // A dark underlay keeps the bolt visible on light squares as well.
+    const SHADE: [f32; 3] = [0.10, 0.13, 0.0];
     let cell = layout.cell;
     let pixel = 1.0 / pixels_per_point.max(0.1);
     let on_screen = |p: fx::Point| {
@@ -304,9 +306,7 @@ pub fn draw_lightning(
             flash.intensity,
         ));
     }
-    // Молния: тёмная подложка (чтобы её было видно и на светлых полях), два слоя
-    // свечения и яркая сердцевина.
-    const SHADE: [f32; 3] = [0.10, 0.13, 0.0];
+    // The bolt: the dark underlay, two layers of glow and a bright core.
     for bolt in &frame.bolts {
         let points: Vec<Pos2> = bolt.points.iter().map(|&p| on_screen(p)).collect();
         let (width, level) = (bolt.width, bolt.intensity);
@@ -392,7 +392,7 @@ pub struct PieceSprites {
 
 impl PieceSprites {
     /// Рассчитывает изображения для клетки со стороной `size_px` физических пикселей.
-    pub fn new(ctx: &egui::Context, size_px: usize) -> PieceSprites {
+    pub fn new(ctx: &egui::Context, size_px: usize) -> Self {
         let size_px = size_px.max(2);
         let upload = |name: &str, image: sprite::PieceImage| {
             let pixels = egui::ColorImage::from_rgba_premultiplied([image.size, image.size], &image.rgba);
@@ -405,7 +405,7 @@ impl PieceSprites {
                 sprite::render_piece(Piece::new(color, kind), size_px, true),
             )
         };
-        PieceSprites {
+        Self {
             size_px,
             pieces: [
                 piece(Color::White, Kind::Man),
@@ -418,11 +418,11 @@ impl PieceSprites {
     }
 
     /// Сторона клетки в физических пикселях, под которую рассчитаны изображения.
-    pub fn size_px(&self) -> usize {
+    pub const fn size_px(&self) -> usize {
         self.size_px
     }
 
-    fn texture(&self, piece: Piece) -> &egui::TextureHandle {
+    const fn texture(&self, piece: Piece) -> &egui::TextureHandle {
         let index = match (piece.color, piece.kind) {
             (Color::White, Kind::Man) => 0,
             (Color::White, Kind::King) => 1,
@@ -510,7 +510,7 @@ pub fn layout_for(rect: Rect, flipped: bool, pixels_per_point: f32) -> BoardLayo
 }
 
 /// Курсор «рука» над шашкой, которой можно ходить, и над доступным полем.
-pub fn cursor_for(hover: bool, dragging: bool) -> egui::CursorIcon {
+pub const fn cursor_for(hover: bool, dragging: bool) -> egui::CursorIcon {
     if dragging {
         egui::CursorIcon::Grabbing
     } else if hover {

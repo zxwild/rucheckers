@@ -28,10 +28,19 @@ const DRAW_FADE_PLIES: u32 = 16;
 /// Если до ничьей по счётчику осталось меньше полуходов, остаток входит в ключ таблицы.
 const DRAW_KEY_PLIES: u32 = 24;
 
-const BOUND_NONE: u8 = 0;
-const BOUND_EXACT: u8 = 1;
-const BOUND_LOWER: u8 = 2;
-const BOUND_UPPER: u8 = 3;
+/// What a stored score says about the true value of a position.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bound {
+    /// The table slot is empty.
+    None,
+    /// The score is exact.
+    Exact,
+    /// The true value is at least the stored score (the search failed high).
+    Lower,
+    /// The true value is at most the stored score (the search failed low).
+    Upper,
+}
+
 const NO_MOVE: u8 = u8::MAX;
 const NO_KILLER: u16 = u16::MAX;
 /// Объём работы (узлы и сгенерированные ходы) между проверками времени и сигнала остановки.
@@ -81,7 +90,7 @@ struct Entry {
     key: u64,
     score: i16,
     depth: i8,
-    bound: u8,
+    bound: Bound,
     mv: u8,
 }
 
@@ -89,7 +98,7 @@ const EMPTY_ENTRY: Entry = Entry {
     key: 0,
     score: 0,
     depth: 0,
-    bound: BOUND_NONE,
+    bound: Bound::None,
     mv: NO_MOVE,
 };
 
@@ -100,9 +109,9 @@ struct Table {
 }
 
 impl Table {
-    fn new(bits: u32) -> Table {
+    fn new(bits: u32) -> Self {
         let size = 1usize << bits.clamp(4, 26);
-        Table {
+        Self {
             entries: vec![EMPTY_ENTRY; size],
             mask: size - 2,
         }
@@ -112,18 +121,18 @@ impl Table {
     fn probe(&self, key: u64) -> Option<Entry> {
         let index = (key as usize) & self.mask;
         let first = self.entries[index];
-        if first.bound != BOUND_NONE && first.key == key {
+        if first.bound != Bound::None && first.key == key {
             return Some(first);
         }
         let second = self.entries[index + 1];
-        if second.bound != BOUND_NONE && second.key == key {
+        if second.bound != Bound::None && second.key == key {
             return Some(second);
         }
         None
     }
 
     #[inline]
-    fn store(&mut self, key: u64, depth: i32, score: i32, bound: u8, mv: u8) {
+    fn store(&mut self, key: u64, depth: i32, score: i32, bound: Bound, mv: u8) {
         let index = (key as usize) & self.mask;
         let entry = Entry {
             key,
@@ -133,7 +142,7 @@ impl Table {
             mv,
         };
         let first = self.entries[index];
-        if first.bound == BOUND_NONE || first.key == key || entry.depth >= first.depth {
+        if first.bound == Bound::None || first.key == key || entry.depth >= first.depth {
             self.entries[index] = entry;
         } else {
             self.entries[index + 1] = entry;
@@ -142,7 +151,7 @@ impl Table {
 }
 
 #[inline]
-fn mix(mut x: u64) -> u64 {
+const fn mix(mut x: u64) -> u64 {
     x ^= x >> 33;
     x = x.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
     x ^= x >> 33;
@@ -150,7 +159,7 @@ fn mix(mut x: u64) -> u64 {
 }
 
 #[inline]
-fn to_table(score: i32, ply: usize) -> i32 {
+const fn to_table(score: i32, ply: usize) -> i32 {
     if score >= WIN_BOUND {
         score + ply as i32
     } else if score <= -WIN_BOUND {
@@ -161,7 +170,7 @@ fn to_table(score: i32, ply: usize) -> i32 {
 }
 
 #[inline]
-fn from_table(score: i32, ply: usize) -> i32 {
+const fn from_table(score: i32, ply: usize) -> i32 {
     if score >= WIN_BOUND {
         score - ply as i32
     } else if score <= -WIN_BOUND {
@@ -195,9 +204,34 @@ fn dedupe_captures(moves: &mut Vec<Move>) {
     moves.truncate(kept);
 }
 
+/// Moves the best of the not yet searched moves (`order[from..]`) to position `from`.
+/// Among equal scores the earliest one wins, so the order stays deterministic.
 #[inline]
-fn killer_key(mv: &Move) -> u16 {
+fn select_best(order: &mut [(i32, u16)], from: usize) {
+    let mut pick = from;
+    for candidate in from + 1..order.len() {
+        if order[candidate].0 > order[pick].0 {
+            pick = candidate;
+        }
+    }
+    order.swap(from, pick);
+}
+
+#[inline]
+const fn killer_key(mv: &Move) -> u16 {
     (mv.from().index() as u16) << 5 | mv.to().index() as u16
+}
+
+/// Transposition table key: the position and, close to a counter draw, the number of
+/// plies left before it.
+fn table_key(st: &GameState) -> u64 {
+    let left = st.plies_to_counter_draw();
+    let salt = if left < DRAW_KEY_PLIES {
+        mix(0xD6E8_FEB8_6659_FD93 ^ u64::from(left))
+    } else {
+        0
+    };
+    st.pos.hash64() ^ salt
 }
 
 struct Searcher<'a> {
@@ -247,17 +281,6 @@ impl Searcher<'_> {
         score.clamp(-WIN_BOUND + 1, WIN_BOUND - 1)
     }
 
-    /// Ключ таблицы: позиция и, вблизи ничьей по счётчику, оставшееся до неё число полуходов.
-    fn key(&self, st: &GameState) -> u64 {
-        let left = st.plies_to_counter_draw();
-        let salt = if left < DRAW_KEY_PLIES {
-            mix(0xD6E8_FEB8_6659_FD93 ^ u64::from(left))
-        } else {
-            0
-        };
-        st.pos.hash64() ^ salt
-    }
-
     /// Повторение позиции: внутри линии поиска достаточно одного совпадения,
     /// среди позиций партии до корня нужно два (тогда это третье появление).
     fn repeated(&self, st: &GameState) -> bool {
@@ -282,6 +305,53 @@ impl Searcher<'_> {
             back += 2;
         }
         false
+    }
+
+    /// Fills `order` with a sorting score for every move: the table move first, then
+    /// big captures, killer moves and the history heuristic.
+    fn score_moves(
+        &self,
+        st: &GameState,
+        moves: &[Move],
+        table_move: u8,
+        ply: usize,
+        order: &mut Vec<(i32, u16)>,
+    ) {
+        let in_capture = moves[0].is_capture();
+        let side = st.pos.side as usize;
+        let killers = self.killers[ply];
+        order.clear();
+        for (index, mv) in moves.iter().enumerate() {
+            let score = if index == table_move as usize {
+                1_000_000_000
+            } else if in_capture {
+                let kings = (mv.captured() & st.pos.kings).count_ones() as i32;
+                1_000 * mv.captured_count() as i32 + 500 * kings + 100 * i32::from(mv.promotes())
+            } else {
+                let k = killer_key(mv);
+                if k == killers[0] {
+                    900_000_000
+                } else if k == killers[1] {
+                    800_000_000
+                } else {
+                    let h = self.history[side * 1024 + k as usize];
+                    h + if mv.promotes() { 500_000_000 } else { 0 }
+                }
+            };
+            order.push((score, index as u16));
+        }
+    }
+
+    /// Remembers a quiet move that refuted the line: it becomes a killer move at this
+    /// ply and gains history score.
+    fn record_cutoff(&mut self, mv: &Move, side: usize, depth: i32, ply: usize) {
+        let k = killer_key(mv);
+        if self.killers[ply][0] != k {
+            self.killers[ply][1] = self.killers[ply][0];
+            self.killers[ply][0] = k;
+        }
+        let slot = &mut self.history[side * 1024 + k as usize];
+        *slot = (*slot + depth * depth).min(400_000_000);
     }
 
     fn negamax(&mut self, st: &GameState, depth: i32, alpha: i32, beta: i32, ply: usize, pv: bool) -> i32 {
@@ -341,45 +411,23 @@ impl Searcher<'_> {
             return alpha;
         }
 
-        let key = self.key(st);
+        let key = table_key(st);
         let mut table_move = NO_MOVE;
         if let Some(entry) = self.table.probe(key) {
             table_move = entry.mv;
             if !pv && i32::from(entry.depth) >= depth {
                 let score = from_table(i32::from(entry.score), ply);
                 match entry.bound {
-                    BOUND_EXACT => return score,
-                    BOUND_LOWER if score >= beta => return score,
-                    BOUND_UPPER if score <= alpha => return score,
+                    Bound::Exact => return score,
+                    Bound::Lower if score >= beta => return score,
+                    Bound::Upper if score <= alpha => return score,
                     _ => {}
                 }
             }
         }
 
-        // Упорядочение: ход из таблицы, затем крупные взятия, «убийцы» и история.
+        self.score_moves(st, moves, table_move, ply, order);
         let side = st.pos.side as usize;
-        let killers = self.killers[ply];
-        order.clear();
-        for (index, mv) in moves.iter().enumerate() {
-            let score = if index == table_move as usize {
-                1_000_000_000
-            } else if in_capture {
-                let kings = (mv.captured() & st.pos.kings).count_ones() as i32;
-                1_000 * mv.captured_count() as i32 + 500 * kings + 100 * i32::from(mv.promotes())
-            } else {
-                let k = killer_key(mv);
-                if k == killers[0] {
-                    900_000_000
-                } else if k == killers[1] {
-                    800_000_000
-                } else {
-                    let h = self.history[side * 1024 + k as usize];
-                    h + if mv.promotes() { 500_000_000 } else { 0 }
-                }
-            };
-            order.push((score, index as u16));
-        }
-
         let count = moves.len();
         // Короткие списки упорядочиваются выбором по ходу перебора (часто хватает первого
         // хода), длинные сортируются сразу.
@@ -394,14 +442,7 @@ impl Searcher<'_> {
         self.path.push(st.pos);
         for i in 0..count {
             if !presorted {
-                // Выбор лучшего из оставшихся ходов.
-                let mut pick = i;
-                for j in i + 1..count {
-                    if order[j].0 > order[pick].0 {
-                        pick = j;
-                    }
-                }
-                order.swap(i, pick);
+                select_best(order, i);
             }
             let index = order[i].1 as usize;
             let mv = &moves[index];
@@ -436,13 +477,7 @@ impl Searcher<'_> {
             }
             if alpha >= beta {
                 if !in_capture {
-                    let k = killer_key(mv);
-                    if self.killers[ply][0] != k {
-                        self.killers[ply][1] = self.killers[ply][0];
-                        self.killers[ply][0] = k;
-                    }
-                    let slot = &mut self.history[side * 1024 + k as usize];
-                    *slot = (*slot + depth * depth).min(400_000_000);
+                    self.record_cutoff(mv, side, depth, ply);
                 }
                 break;
             }
@@ -453,11 +488,11 @@ impl Searcher<'_> {
         }
 
         let bound = if best >= beta {
-            BOUND_LOWER
+            Bound::Lower
         } else if best > original_alpha {
-            BOUND_EXACT
+            Bound::Exact
         } else {
-            BOUND_UPPER
+            Bound::Upper
         };
         self.table
             .store(key, depth, to_table(best, ply), bound, best_index);
@@ -564,7 +599,7 @@ pub fn search(
             break;
         }
         result.depth = depth;
-        result.root_scores = root.clone();
+        result.root_scores.clone_from(&root);
 
         // Форсированный исход найден, и глубины хватает, чтобы в нём не сомневаться.
         if result.score.abs() >= WIN_BOUND && depth >= WIN - result.score.abs() + 2 {

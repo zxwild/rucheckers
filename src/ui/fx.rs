@@ -75,38 +75,42 @@ pub struct EffectSet {
 
 impl EffectSet {
     /// Все части включены.
-    pub const ALL: EffectSet = EffectSet {
+    pub const ALL: Self = Self {
         lightning: true,
         sparks: true,
         flashes: true,
     };
     /// Все части выключены.
-    pub const NONE: EffectSet = EffectSet {
+    pub const NONE: Self = Self {
         lightning: false,
         sparks: false,
         flashes: false,
     };
 
     /// Включена ли хотя бы одна часть.
-    pub fn any(self) -> bool {
+    #[must_use]
+    pub const fn any(self) -> bool {
         self.lightning || self.sparks || self.flashes
     }
 }
 
 /// Плавный разгон и торможение шашки на отрезке пути: доля пройденного расстояния
 /// по доле прошедшего времени.
+#[must_use]
 pub fn ease(x: f64) -> f64 {
     let x = x.clamp(0.0, 1.0);
     x * x * (3.0 - 2.0 * x)
 }
 
 /// Обратная функция к [`ease`]: доля времени, за которую пройдена доля пути `u`.
+#[must_use]
 pub fn ease_inverse(u: f64) -> f64 {
     let u = u.clamp(0.0, 1.0);
     0.5 - ((1.0 - 2.0 * u).asin() / 3.0).sin()
 }
 
 /// Яркость участка молнии через `age` секунд после того, как над ним пролетела шашка.
+#[must_use]
 pub fn trail_intensity(age: f64) -> f32 {
     if !(0.0..TRAIL_SECONDS).contains(&age) {
         0.0
@@ -119,6 +123,7 @@ pub fn trail_intensity(age: f64) -> f32 {
 
 /// Цвет искры по её «температуре»: 1 — только что вылетела (почти белая),
 /// 0 — догорает (тёмно-жёлтая). В середине жизни искра зеленовато-жёлтая.
+#[must_use]
 pub fn spark_color(heat: f32) -> [f32; 3] {
     const HOT: [f32; 3] = [0.95, 1.00, 0.74];
     const COOL: [f32; 3] = [0.46, 0.60, 0.04];
@@ -141,6 +146,7 @@ pub fn spark_color(heat: f32) -> [f32; 3] {
 /// На искру действуют сопротивление воздуха и сила тяжести: `dv/dt = −k·v + g`.
 /// Используется точное решение этого уравнения, поэтому кадр не зависит от частоты
 /// обновления экрана.
+#[must_use]
 pub fn spark_position(origin: Point, velocity: Point, age: f32) -> Point {
     let age = age.max(0.0);
     let k = SPARK_DRAG;
@@ -153,6 +159,7 @@ pub fn spark_position(origin: Point, velocity: Point, age: f32) -> Point {
 }
 
 /// Скорость искры через `age` секунд после вылета.
+#[must_use]
 pub fn spark_velocity(velocity: Point, age: f32) -> Point {
     let fade = (-SPARK_DRAG * age.max(0.0)).exp();
     (
@@ -179,6 +186,7 @@ fn bolt_amplitudes(length: f32) -> Vec<f32> {
 /// направления; размах сдвига от прохода к проходу уменьшается. Концы остаются
 /// на месте, вершины идут вдоль отрезка равномерно. Одинаковое зерно даёт одинаковую
 /// ломаную.
+#[must_use]
 pub fn bolt_path(a: Point, b: Point, seed: u64) -> Vec<Point> {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let length = dx.hypot(dy);
@@ -194,8 +202,8 @@ pub fn bolt_path(a: Point, b: Point, seed: u64) -> Vec<Point> {
         for pair in points.windows(2) {
             let shift = (rng.unit() as f32 * 2.0 - 1.0) * amplitude;
             let middle = (
-                (pair[0].0 + pair[1].0) / 2.0 + normal.0 * shift,
-                (pair[0].1 + pair[1].1) / 2.0 + normal.1 * shift,
+                f32::midpoint(pair[0].0, pair[1].0) + normal.0 * shift,
+                f32::midpoint(pair[0].1, pair[1].1) + normal.1 * shift,
             );
             next.push(pair[0]);
             next.push(middle);
@@ -208,6 +216,7 @@ pub fn bolt_path(a: Point, b: Point, seed: u64) -> Vec<Point> {
 
 /// Наибольшее отклонение точек ломаной от прямой, которое может дать [`bolt_path`]
 /// для отрезка длины `length`.
+#[must_use]
 pub fn max_bolt_deviation(length: f32) -> f32 {
     if !length.is_finite() || length < 1e-4 {
         return 0.0;
@@ -263,6 +272,7 @@ pub struct DischargeFrame {
 
 impl DischargeFrame {
     /// Нечего рисовать.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bolts.is_empty() && self.halo.is_none() && self.flashes.is_empty() && self.sparks.is_empty()
     }
@@ -303,26 +313,31 @@ pub struct Discharge {
 impl Discharge {
     /// Разряд по пути `knots` (точки и моменты времени, по порядку) с ударами `strikes`.
     /// `seed` определяет форму молний и разлёт искр.
-    pub fn new(knots: Vec<(Point, f64)>, strikes: Vec<Strike>, seed: u64) -> Discharge {
-        Discharge { knots, strikes, seed }
+    #[must_use]
+    pub const fn new(knots: Vec<(Point, f64)>, strikes: Vec<Strike>, seed: u64) -> Self {
+        Self { knots, strikes, seed }
     }
 
     /// Момент начала: шашка трогается с места.
+    #[must_use]
     pub fn start(&self) -> f64 {
         self.knots.first().map_or(0.0, |k| k.1)
     }
 
     /// Момент, когда шашка встаёт на конечное поле.
+    #[must_use]
     pub fn arrival(&self) -> f64 {
         self.knots.last().map_or(0.0, |k| k.1)
     }
 
     /// Удары по побитым шашкам.
+    #[must_use]
     pub fn strikes(&self) -> &[Strike] {
         &self.strikes
     }
 
     /// Момент, когда гаснет молния.
+    #[must_use]
     pub fn bolt_end(&self) -> f64 {
         self.arrival() + TRAIL_SECONDS
     }
@@ -334,11 +349,13 @@ impl Discharge {
     }
 
     /// Закончился ли эффект к моменту `now`.
+    #[must_use]
     pub fn is_finished(&self, now: f64) -> bool {
         self.knots.len() < 2 || now >= self.end()
     }
 
     /// Положение бьющей шашки в момент `now`.
+    #[must_use]
     pub fn head(&self, now: f64) -> Point {
         let Some(&(first, start)) = self.knots.first() else {
             return (0.0, 0.0);
@@ -363,7 +380,7 @@ impl Discharge {
     }
 
     /// Зерно для части эффекта: не зависит от порядка вычислений.
-    fn sub_seed(&self, a: u64, b: u64, c: u64) -> u64 {
+    const fn sub_seed(&self, a: u64, b: u64, c: u64) -> u64 {
         let mut rng = Rng::new(
             self.seed
                 ^ a.wrapping_mul(0x9E37_79B9_7F4A_7C15)
@@ -466,6 +483,7 @@ impl Discharge {
     }
 
     /// Кадр эффекта в момент `now`; показываются только части из `parts`.
+    #[must_use]
     pub fn frame(&self, now: f64, parts: EffectSet) -> DischargeFrame {
         let mut frame = DischargeFrame::default();
         if self.knots.len() < 2 || now < self.start() || now >= self.end() {

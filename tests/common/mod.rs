@@ -111,7 +111,7 @@ pub fn quiet_line(
 }
 
 /// Ходит ли этим ходом дамка.
-pub fn is_king_move(pos: &Position, m: &Move) -> bool {
+pub const fn is_king_move(pos: &Position, m: &Move) -> bool {
     pos.kings & m.from().bit() != 0
 }
 
@@ -153,7 +153,7 @@ pub fn winning_moves(pos: &Position, plies: u32) -> Vec<Move> {
 }
 
 /// Цвет по-русски (для сообщений тестов).
-pub fn color_name(color: Color) -> &'static str {
+pub const fn color_name(color: Color) -> &'static str {
     match color {
         Color::White => "белые",
         Color::Black => "чёрные",

@@ -21,6 +21,7 @@ pub const FADE_SECONDS: f64 = 0.20;
 pub const CAPTURED_ALPHA: f32 = 0.42;
 
 /// Длительность одного отрезка пути между полями `a` и `b`.
+#[must_use]
 pub fn segment_seconds(a: Square, b: Square) -> f64 {
     let distance = (i32::from(a.file()) - i32::from(b.file())).unsigned_abs().max(1);
     STEP_SECONDS + EXTRA_SQUARE_SECONDS * f64::from(distance - 1)
@@ -61,7 +62,8 @@ impl MoveAnimation {
     /// `first_step` — сколько прыжков уже показано (игрок сделал их по шагам);
     /// анимируются остальные. `start` — время начала. Взятие нескольких шашек
     /// сопровождается разрядом; отключить его можно через [`Self::with_discharge`].
-    pub fn new(mv: Move, piece: Piece, first_step: usize, start: f64) -> MoveAnimation {
+    #[must_use]
+    pub fn new(mv: Move, piece: Piece, first_step: usize, start: f64) -> Self {
         let first_step = first_step.min(mv.path().len());
         let points: Vec<Square> = mv.squares().collect();
         let mut ends = Vec::new();
@@ -71,7 +73,7 @@ impl MoveAnimation {
             ends.push(elapsed);
         }
         let discharge = mv.captured_count() >= fx::MIN_CAPTURES;
-        MoveAnimation {
+        Self {
             mv,
             piece,
             first_step,
@@ -82,33 +84,39 @@ impl MoveAnimation {
     }
 
     /// Включает или отключает разряд (он возможен только при взятии нескольких шашек).
-    pub fn with_discharge(mut self, enabled: bool) -> MoveAnimation {
+    #[must_use]
+    pub const fn with_discharge(mut self, enabled: bool) -> Self {
         self.discharge = enabled && self.mv.captured_count() >= fx::MIN_CAPTURES;
         self
     }
 
     /// Анимируемый ход.
-    pub fn mv(&self) -> &Move {
+    #[must_use]
+    pub const fn mv(&self) -> &Move {
         &self.mv
     }
 
     /// Шашка до хода.
-    pub fn piece(&self) -> Piece {
+    #[must_use]
+    pub const fn piece(&self) -> Piece {
         self.piece
     }
 
     /// Время начала.
-    pub fn start(&self) -> f64 {
+    #[must_use]
+    pub const fn start(&self) -> f64 {
         self.start
     }
 
     /// Длительность движения шашки.
+    #[must_use]
     pub fn travel_seconds(&self) -> f64 {
         self.ends.last().copied().unwrap_or(0.0)
     }
 
     /// Сопровождается ли ход электрическим разрядом.
-    pub fn has_discharge(&self) -> bool {
+    #[must_use]
+    pub const fn has_discharge(&self) -> bool {
         self.discharge
     }
 
@@ -148,6 +156,7 @@ impl MoveAnimation {
     }
 
     /// Момент первого удара разряда (в абсолютном времени), если разряд есть.
+    #[must_use]
     pub fn first_strike_time(&self) -> Option<f64> {
         self.discharge.then(|| self.start + self.pass_seconds(0))
     }
@@ -157,6 +166,7 @@ impl MoveAnimation {
     /// Для шашек, которые этим ходом не бьются, — всегда 1. Побитая шашка без разряда
     /// бледнеет, когда через неё перепрыгнули, и исчезает после завершения хода.
     /// При разряде она исчезает сразу, как только над ней пролетела бьющая шашка.
+    #[must_use]
     pub fn captured_alpha(&self, sq: Square, now: f64) -> f32 {
         let Some(step) = (0..self.mv.path().len()).find(|&i| self.mv.captured_at(i) == Some(sq)) else {
             return 1.0;
@@ -179,6 +189,7 @@ impl MoveAnimation {
     /// Полная длительность. Ход с разрядом считается законченным, когда погасла
     /// молния (искры ещё летят, но следующему ходу не мешают); обычное взятие —
     /// когда исчезли побитые шашки.
+    #[must_use]
     pub fn total_seconds(&self) -> f64 {
         let tail = if self.discharge {
             fx::TRAIL_SECONDS
@@ -191,12 +202,14 @@ impl MoveAnimation {
     }
 
     /// Моменты (в абсолютном времени), когда шашка встаёт на очередное поле.
+    #[must_use]
     pub fn landing_times(&self) -> Vec<f64> {
         self.ends.iter().map(|end| self.start + end).collect()
     }
 
     /// Разряд, сопровождающий ход: путь шашки с моментами времени и удары по побитым
     /// шашкам в экранных клетках. `flipped` — доска перевёрнута (внизу чёрные).
+    #[must_use]
     pub fn discharge(&self, flipped: bool, seed: u64) -> Option<Discharge> {
         if !self.discharge {
             return None;
@@ -225,6 +238,7 @@ impl MoveAnimation {
     }
 
     /// Кадр в момент `now`.
+    #[must_use]
     pub fn frame(&self, now: f64) -> AnimFrame {
         let t = now - self.start;
         let points: Vec<Square> = self.mv.squares().collect();

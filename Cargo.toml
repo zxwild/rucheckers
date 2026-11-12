@@ -26,6 +26,25 @@ rodio = { version = "=0.20.1", default-features = false }
 # Системный диалог выбора файла (macOS: AppKit; Linux: XDG Desktop Portal, запасной вариант — zenity).
 rfd = { version = "=0.15.4", default-features = false, features = ["xdg-portal", "async-std"] }
 
+[lints.rust]
+# The program needs no unsafe code, so the compiler rejects any attempt to add it.
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+use_self = "warn"
+# Board geometry, pixel rendering and sound synthesis convert between integers and
+# floats all the time. The value ranges are small and covered by tests, and spelling
+# every conversion out with `try_from` would bury the arithmetic.
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+# Tests compare exactly representable values on purpose.
+float_cmp = "allow"
+# Coordinate pairs such as `outer_x_px` and `outer_y_px` are meant to look alike.
+similar_names = "allow"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

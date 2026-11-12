@@ -37,13 +37,22 @@ pub enum SessionEvent {
     Jumped,
 }
 
+/// The computer's reply to the position it was asked about.
+#[derive(Clone, Copy, Debug)]
+enum Reply {
+    /// The search is still running.
+    Pending,
+    /// The search has finished; `None` means there was no move to make. The reply
+    /// waits here until the natural pause before the computer's move is over.
+    Ready(Option<Move>),
+}
+
 #[derive(Debug)]
 struct Thinking {
     job: SearchJob,
     node: NodeId,
     started: f64,
-    /// Готовый ответ, ожидающий окончания естественной паузы.
-    ready: Option<Option<Move>>,
+    reply: Reply,
 }
 
 /// Партия с компьютером.
@@ -63,8 +72,9 @@ pub struct Session {
 
 impl Session {
     /// Новая партия: человек играет цветом `human` против уровня `level`.
-    pub fn new(human: Color, level: u8, seed: u64) -> Session {
-        let mut session = Session {
+    #[must_use]
+    pub fn new(human: Color, level: u8, seed: u64) -> Self {
+        let mut session = Self {
             tree: GameTree::new(),
             human,
             level: clamp_level(level),
@@ -104,21 +114,25 @@ impl Session {
         self.events.push(SessionEvent::Jumped);
     }
 
-    pub fn tree(&self) -> &GameTree {
+    #[must_use]
+    pub const fn tree(&self) -> &GameTree {
         &self.tree
     }
 
     /// Цвет человека.
-    pub fn human(&self) -> Color {
+    #[must_use]
+    pub const fn human(&self) -> Color {
         self.human
     }
 
     /// Цвет компьютера.
-    pub fn computer(&self) -> Color {
+    #[must_use]
+    pub const fn computer(&self) -> Color {
         self.human.opponent()
     }
 
-    pub fn level(&self) -> u8 {
+    #[must_use]
+    pub const fn level(&self) -> u8 {
         self.level
     }
 
@@ -132,7 +146,7 @@ impl Session {
     }
 
     /// Наименьшая пауза перед ответом компьютера, с.
-    pub fn set_min_think(&mut self, seconds: f64) {
+    pub const fn set_min_think(&mut self, seconds: f64) {
         self.min_think = if seconds.is_finite() {
             seconds.max(0.0)
         } else {
@@ -141,32 +155,38 @@ impl Session {
     }
 
     /// Идёт игра (а не просмотр истории).
-    pub fn is_live(&self) -> bool {
+    #[must_use]
+    pub const fn is_live(&self) -> bool {
         self.live
     }
 
     /// Думает ли компьютер прямо сейчас.
-    pub fn is_thinking(&self) -> bool {
+    #[must_use]
+    pub const fn is_thinking(&self) -> bool {
         self.thinking.is_some()
     }
 
     /// Результат партии в показанной позиции.
+    #[must_use]
     pub fn outcome(&self) -> Option<Outcome> {
         self.tree.current_node().outcome()
     }
 
     /// Чья очередь хода в показанной позиции.
+    #[must_use]
     pub fn side_to_move(&self) -> Color {
         self.tree.current_node().position().side
     }
 
     /// Может ли человек сделать ход в показанной позиции.
+    #[must_use]
     pub fn human_to_move(&self) -> bool {
         self.outcome().is_none() && self.side_to_move() == self.human
     }
 
     /// Доступна ли команда «Продолжить отсюда»: идёт просмотр, партия в показанной
     /// позиции не закончена, и очередь хода за компьютером.
+    #[must_use]
     pub fn can_continue(&self) -> bool {
         !self.live && self.outcome().is_none() && self.side_to_move() != self.human
     }
@@ -182,7 +202,8 @@ impl Session {
     }
 
     /// Состояние выбора хода мышью.
-    pub fn input(&self) -> &MoveInput {
+    #[must_use]
+    pub const fn input(&self) -> &MoveInput {
         &self.input
     }
 
@@ -275,20 +296,20 @@ impl Session {
     /// `now` — монотонное время в секундах.
     pub fn update(&mut self, now: f64) {
         if let Some(thinking) = &mut self.thinking {
-            if thinking.ready.is_none() {
+            if matches!(thinking.reply, Reply::Pending) {
                 match thinking.job.poll() {
                     JobStatus::Running => {}
-                    JobStatus::Done(choice) => thinking.ready = Some(choice.map(|c| c.mv)),
+                    JobStatus::Done(choice) => thinking.reply = Reply::Ready(choice.map(|c| c.mv)),
                     JobStatus::Failed => {
                         // Поток расчёта не ответил: чтобы партия не остановилась,
                         // делается случайный допустимый ход.
                         let legal = self.tree.get(thinking.node).map(|n| legal_moves(n.position()));
                         let fallback = legal.and_then(|moves| self.rng.pick(&moves).copied());
-                        thinking.ready = Some(fallback);
+                        thinking.reply = Reply::Ready(fallback);
                     }
                 }
             }
-            if let Some(answer) = thinking.ready {
+            if let Reply::Ready(answer) = thinking.reply {
                 if now - thinking.started >= self.min_think {
                     let node = thinking.node;
                     self.thinking = None;
@@ -320,7 +341,7 @@ impl Session {
                 job,
                 node,
                 started: now,
-                ready: None,
+                reply: Reply::Pending,
             });
         }
     }

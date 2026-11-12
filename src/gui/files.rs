@@ -36,7 +36,7 @@ pub enum FileJobState {
 
 impl FileJob {
     /// Открывает диалог. `default_name` — предлагаемое имя файла при сохранении.
-    pub fn start(action: FileAction, lang: Lang, default_name: &str) -> FileJob {
+    pub fn start(action: FileAction, lang: Lang, default_name: &str) -> Self {
         let (sender, receiver) = channel();
         let saving = matches!(action, FileAction::Save(_));
         let title = tr(lang, if saving { Text::SaveTitle } else { Text::OpenTitle }).to_string();
@@ -62,7 +62,7 @@ impl FileJob {
                 .name("rucheckers-dialog".to_string())
                 .spawn(run);
         }
-        FileJob { action, receiver }
+        Self { action, receiver }
     }
 
     /// Проверяет, закрыт ли диалог.

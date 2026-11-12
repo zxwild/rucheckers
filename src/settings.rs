@@ -36,8 +36,8 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings {
-            lang: Lang::Ru,
+        Self {
+            lang: Lang::DEFAULT,
             level: DEFAULT_LEVEL,
             human: Color::White,
             sound: true,
@@ -56,7 +56,7 @@ fn parse_switch(value: &str) -> Option<bool> {
     }
 }
 
-fn switch(value: bool) -> &'static str {
+const fn switch(value: bool) -> &'static str {
     if value {
         "on"
     } else {
@@ -66,16 +66,18 @@ fn switch(value: bool) -> &'static str {
 
 impl Settings {
     /// Настройки по умолчанию с языком, выбранным по локали системы.
-    pub fn for_locale(locale: Option<&str>) -> Settings {
-        Settings {
+    #[must_use]
+    pub fn for_locale(locale: Option<&str>) -> Self {
+        Self {
             lang: Lang::from_locale(locale),
-            ..Settings::default()
+            ..Self::default()
         }
     }
 
     /// Спецэффекты, которые нужно показывать: выбранные по отдельности, если включён
     /// общий выключатель, иначе никакие.
-    pub fn active_effects(&self) -> EffectSet {
+    #[must_use]
+    pub const fn active_effects(&self) -> EffectSet {
         if self.effects_enabled {
             self.effects
         } else {
@@ -84,9 +86,10 @@ impl Settings {
     }
 
     /// Текст файла настроек.
+    #[must_use]
     pub fn to_text(&self) -> String {
         format!(
-            "# Русские шашки / Russian Draughts\nlanguage={}\nlevel={}\ncolor={}\nsound={}\npanel={}\n\
+            "# Russian Draughts settings\nlanguage={}\nlevel={}\ncolor={}\nsound={}\npanel={}\n\
              effects={}\neffect_lightning={}\neffect_sparks={}\neffect_flashes={}\n",
             self.lang.code(),
             clamp_level(self.level),
@@ -104,7 +107,8 @@ impl Settings {
     }
 
     /// Разбор текста файла настроек поверх значений `base`.
-    pub fn from_text(text: &str, base: Settings) -> Settings {
+    #[must_use]
+    pub fn from_text(text: &str, base: Self) -> Self {
         let mut settings = base;
         for line in text.lines() {
             let line = line.trim();
@@ -170,19 +174,36 @@ impl Settings {
     }
 
     /// Читает настройки из файла. Если файла нет или он не читается, возвращает `base`.
-    pub fn load(path: &Path, base: Settings) -> Settings {
+    #[must_use]
+    pub fn load(path: &Path, base: Self) -> Self {
         match fs::read(path) {
-            Ok(bytes) => Settings::from_text(&String::from_utf8_lossy(&bytes), base),
+            Ok(bytes) => Self::from_text(&String::from_utf8_lossy(&bytes), base),
             Err(_) => base,
         }
     }
 
-    /// Записывает настройки в файл, создавая каталог при необходимости.
+    /// Writes the settings to the file, creating its directory if needed.
+    ///
+    /// The text goes to a temporary file next to the target, which then replaces the
+    /// target in one step: if the program or the computer stops in the middle of
+    /// saving, the previous settings survive instead of a half-written file.
+    ///
+    /// # Errors
+    ///
+    /// Returns the I/O error if the directory cannot be created or the file cannot be
+    /// written or put in place.
     pub fn save(&self, path: &Path) -> io::Result<()> {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
-        fs::write(path, self.to_text())
+        let mut temporary = path.as_os_str().to_owned();
+        temporary.push(".tmp");
+        let temporary = PathBuf::from(temporary);
+        fs::write(&temporary, self.to_text())?;
+        fs::rename(&temporary, path).inspect_err(|_| {
+            // Nothing more can be done if even the clean-up fails.
+            let _ = fs::remove_file(&temporary);
+        })
     }
 }
 
@@ -191,6 +212,7 @@ impl Settings {
 /// * macOS: `~/Library/Application Support/rucheckers/settings.conf`;
 /// * прочие системы: `$XDG_CONFIG_HOME/rucheckers/settings.conf`
 ///   или `~/.config/rucheckers/settings.conf`.
+#[must_use]
 pub fn settings_path_from(home: Option<&str>, xdg_config_home: Option<&str>, macos: bool) -> Option<PathBuf> {
     let non_empty = |value: Option<&str>| value.filter(|v| !v.trim().is_empty()).map(PathBuf::from);
     let base = if macos {
@@ -205,6 +227,7 @@ pub fn settings_path_from(home: Option<&str>, xdg_config_home: Option<&str>, mac
 }
 
 /// Путь к файлу настроек в текущей системе; `None`, если домашний каталог неизвестен.
+#[must_use]
 pub fn default_settings_path() -> Option<PathBuf> {
     let home = env::var("HOME").ok();
     let xdg = env::var("XDG_CONFIG_HOME").ok();
@@ -212,6 +235,7 @@ pub fn default_settings_path() -> Option<PathBuf> {
 }
 
 /// Локаль сообщений из переменных окружения.
+#[must_use]
 pub fn system_locale() -> Option<String> {
     ["LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()
@@ -223,51 +247,122 @@ pub fn system_locale() -> Option<String> {
 mod tests {
     use super::*;
 
+    /// A directory for the files of one test, removed when the test ends.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(test: &str) -> Self {
+            let dir = env::temp_dir().join(format!("rucheckers-{test}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Every combination of the three effect switches.
+    fn effect_sets() -> impl Iterator<Item = EffectSet> {
+        (0..8u8).map(|bits| EffectSet {
+            lightning: bits & 1 != 0,
+            sparks: bits & 2 != 0,
+            flashes: bits & 4 != 0,
+        })
+    }
+
     #[test]
-    fn text_round_trip() {
-        let all = [
-            Settings::default(),
+    fn every_combination_of_settings_survives_writing_and_reading() {
+        let mut checked = 0;
+        for lang in Lang::ALL {
+            for level in MIN_LEVEL..=MAX_LEVEL {
+                for human in [Color::White, Color::Black] {
+                    for switches in 0..8u8 {
+                        for effects in effect_sets() {
+                            let settings = Settings {
+                                lang,
+                                level,
+                                human,
+                                sound: switches & 1 != 0,
+                                panel: switches & 2 != 0,
+                                effects_enabled: switches & 4 != 0,
+                                effects,
+                            };
+                            // The base differs from the saved value in every field, so
+                            // a field that is not written or not read shows up.
+                            let base = Settings {
+                                lang: if lang == Lang::En { Lang::Ru } else { Lang::En },
+                                level: if level == MIN_LEVEL { MAX_LEVEL } else { MIN_LEVEL },
+                                human: human.opponent(),
+                                sound: !settings.sound,
+                                panel: !settings.panel,
+                                effects_enabled: !settings.effects_enabled,
+                                effects: EffectSet {
+                                    lightning: !effects.lightning,
+                                    sparks: !effects.sparks,
+                                    flashes: !effects.flashes,
+                                },
+                            };
+                            assert_eq!(Settings::from_text(&settings.to_text(), base), settings);
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 12 * 10 * 2 * 8 * 8);
+    }
+
+    #[test]
+    fn each_change_is_kept_across_restarts() {
+        // What the program does: load at start, save after every change.
+        let dir = TempDir::new("restarts");
+        let path = dir.0.join("rucheckers").join("settings.conf");
+        let restart = || Settings::load(&path, Settings::default());
+        assert_eq!(restart(), Settings::default(), "first start: no file yet");
+
+        let changes: [fn(&mut Settings); 9] = [
+            |s| s.level = 7,
+            |s| s.human = Color::Black,
+            |s| s.lang = Lang::Ja,
+            |s| s.sound = false,
+            |s| s.panel = false,
+            |s| s.effects.sparks = false,
+            |s| s.effects_enabled = false,
+            |s| s.effects.lightning = false,
+            |s| s.level = 10,
+        ];
+        let mut expected = Settings::default();
+        for change in changes {
+            let mut settings = restart();
+            assert_eq!(settings, expected, "the previous run's settings are back");
+            change(&mut settings);
+            change(&mut expected);
+            settings.save(&path).unwrap();
+        }
+        assert_eq!(
+            restart(),
             Settings {
-                lang: Lang::En,
+                lang: Lang::Ja,
                 level: 10,
                 human: Color::Black,
                 sound: false,
                 panel: false,
                 effects_enabled: false,
                 effects: EffectSet {
-                    lightning: true,
+                    lightning: false,
                     sparks: false,
                     flashes: true,
                 },
-            },
-            Settings {
-                lang: Lang::Ru,
-                level: 1,
-                human: Color::Black,
-                sound: true,
-                panel: false,
-                effects_enabled: true,
-                effects: EffectSet::NONE,
-            },
-            Settings {
-                effects: EffectSet {
-                    lightning: false,
-                    sparks: true,
-                    flashes: false,
-                },
-                ..Settings::default()
-            },
-        ];
-        for settings in all {
-            assert_eq!(
-                Settings::from_text(&settings.to_text(), Settings::default()),
-                settings
-            );
-        }
+            }
+        );
     }
 
     #[test]
-    fn garbage_falls_back_to_defaults() {
+    fn garbage_falls_back_to_the_base_values() {
         let base = Settings::default();
         for text in [
             "",
@@ -292,18 +387,33 @@ mod tests {
     }
 
     #[test]
+    fn a_file_of_an_earlier_version_is_read() {
+        // Before the special effects and the ten new languages there were five keys.
+        let old = Settings::from_text(
+            "# Русские шашки / Russian Draughts\nlanguage=en\nlevel=3\ncolor=black\nsound=off\npanel=on\n",
+            Settings::default(),
+        );
+        assert_eq!(
+            old,
+            Settings {
+                lang: Lang::En,
+                level: 3,
+                human: Color::Black,
+                sound: false,
+                panel: true,
+                effects_enabled: true,
+                effects: EffectSet::ALL,
+            }
+        );
+    }
+
+    #[test]
     fn effects_are_on_by_default_and_switch_separately_or_all_at_once() {
         let defaults = Settings::default();
         assert!(defaults.effects_enabled);
         assert_eq!(defaults.active_effects(), EffectSet::ALL);
-        // Файл настроек прежней версии (без раздела спецэффектов) читается: всё включено.
-        let old = Settings::from_text(
-            "language=en\nlevel=3\ncolor=black\nsound=off\npanel=on\n",
-            defaults,
-        );
-        assert_eq!(old.active_effects(), EffectSet::ALL);
 
-        // Каждый эффект отключается отдельно.
+        // Each effect is switched off on its own.
         let no_sparks = Settings::from_text("effect_sparks=off", defaults);
         assert_eq!(
             no_sparks.active_effects(),
@@ -321,7 +431,7 @@ mod tests {
             }
         );
 
-        // Общий выключатель гасит всё сразу, но выбор по отдельности сохраняется.
+        // The main switch turns everything off, but the separate choices are kept.
         let all_off = Settings::from_text("effects=off\neffect_sparks=off", defaults);
         assert_eq!(all_off.active_effects(), EffectSet::NONE);
         assert!(!all_off.active_effects().any());
@@ -343,7 +453,6 @@ mod tests {
                 ..EffectSet::ALL
             }
         );
-        assert_eq!(Settings::from_text(&all_off.to_text(), defaults), all_off);
         for key in [
             "effects=off",
             "effect_lightning=on",
@@ -355,10 +464,45 @@ mod tests {
     }
 
     #[test]
-    fn save_and_load() {
-        let dir = env::temp_dir().join(format!("rucheckers-test-{}", std::process::id()));
-        let path = dir.join("nested").join("settings.conf");
-        let settings = Settings {
+    fn the_file_is_plain_readable_text() {
+        let text = Settings {
+            lang: Lang::Zh,
+            level: 9,
+            human: Color::Black,
+            ..Settings::default()
+        }
+        .to_text();
+        assert!(text.is_ascii());
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].starts_with('#'));
+        assert_eq!(
+            lines[1..],
+            [
+                "language=zh",
+                "level=9",
+                "color=black",
+                "sound=on",
+                "panel=on",
+                "effects=on",
+                "effect_lightning=on",
+                "effect_sparks=on",
+                "effect_flashes=on",
+            ]
+        );
+        // A level outside the range (it cannot come from the interface) is written clamped.
+        let clamped = Settings {
+            level: 200,
+            ..Settings::default()
+        };
+        assert!(clamped.to_text().contains(&format!("level={MAX_LEVEL}\n")));
+    }
+
+    #[test]
+    fn saving_creates_the_directory_and_replaces_the_file_in_one_step() {
+        let dir = TempDir::new("save");
+        let folder = dir.0.join("nested").join("deeper");
+        let path = folder.join("settings.conf");
+        let first = Settings {
             lang: Lang::En,
             level: 8,
             human: Color::Black,
@@ -371,15 +515,46 @@ mod tests {
                 flashes: false,
             },
         };
-        settings.save(&path).unwrap();
-        assert_eq!(Settings::load(&path, Settings::default()), settings);
-        assert_eq!(
-            Settings::load(&dir.join("missing.conf"), Settings::default()),
-            Settings::default()
-        );
-        // Каталог вместо файла не читается и не вызывает сбоя.
-        assert_eq!(Settings::load(&dir, Settings::default()), Settings::default());
-        let _ = fs::remove_dir_all(&dir);
+        first.save(&path).unwrap();
+        assert_eq!(Settings::load(&path, Settings::default()), first);
+
+        // Saving again replaces the contents and leaves no temporary file behind.
+        let second = Settings {
+            lang: Lang::Ko,
+            level: 2,
+            ..first
+        };
+        second.save(&path).unwrap();
+        assert_eq!(Settings::load(&path, Settings::default()), second);
+        assert_eq!(fs::read_to_string(&path).unwrap(), second.to_text());
+        let names: Vec<_> = fs::read_dir(&folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["settings.conf"]);
+    }
+
+    #[test]
+    fn unreadable_and_unwritable_files_do_not_panic() {
+        let dir = TempDir::new("failures");
+        let base = Settings::default();
+        assert_eq!(Settings::load(&dir.0.join("missing.conf"), base), base);
+        // A directory in place of the file cannot be read and is not an error for loading.
+        assert_eq!(Settings::load(&dir.0, base), base);
+        // Bytes that are not UTF-8 are skipped; the readable lines still count.
+        let mixed = dir.0.join("mixed.conf");
+        fs::write(&mixed, b"\xff\xfe\x00garbage\nlevel=6\n\xc3\x28=on\n").unwrap();
+        assert_eq!(Settings::load(&mixed, base), Settings { level: 6, ..base });
+
+        // Saving below a regular file fails and reports the error instead of panicking.
+        let blocker = dir.0.join("blocker");
+        fs::write(&blocker, "not a directory").unwrap();
+        assert!(base.save(&blocker.join("settings.conf")).is_err());
+        // Saving over a directory fails too, and the temporary file is cleaned up.
+        let occupied = dir.0.join("occupied");
+        fs::create_dir(&occupied).unwrap();
+        assert!(base.save(&occupied).is_err());
+        assert!(!dir.0.join("occupied.tmp").exists());
     }
 
     #[test]
@@ -395,7 +570,7 @@ mod tests {
         assert_eq!(
             settings_path_from(Some("/home/u"), Some("relative"), false),
             Some(PathBuf::from("/home/u/.config/rucheckers/settings.conf")),
-            "относительный XDG_CONFIG_HOME игнорируется"
+            "a relative XDG_CONFIG_HOME is ignored"
         );
         assert_eq!(
             settings_path_from(Some("/Users/u"), Some("/cfg"), true),
@@ -408,9 +583,18 @@ mod tests {
     }
 
     #[test]
-    fn locale_selects_language() {
+    fn locale_selects_the_language_of_the_first_start() {
         assert_eq!(Settings::for_locale(Some("en_GB.UTF-8")).lang, Lang::En);
         assert_eq!(Settings::for_locale(Some("ru_RU.UTF-8")).lang, Lang::Ru);
-        assert_eq!(Settings::for_locale(None).lang, Lang::Ru);
+        assert_eq!(Settings::for_locale(Some("ko_KR.UTF-8")).lang, Lang::Ko);
+        assert_eq!(Settings::for_locale(None).lang, Lang::DEFAULT);
+        // A saved language wins over the locale.
+        let saved = Settings::from_text("language=de", Settings::for_locale(Some("fr_FR.UTF-8")));
+        assert_eq!(saved.lang, Lang::De);
+        let everything_else = Settings {
+            lang: Lang::DEFAULT,
+            ..Settings::for_locale(Some("tr_TR"))
+        };
+        assert_eq!(everything_else, Settings::default());
     }
 }

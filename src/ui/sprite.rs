@@ -24,6 +24,7 @@ pub struct PieceImage {
 
 impl PieceImage {
     /// Пиксель в столбце `x` и строке `y`; вне изображения — прозрачный.
+    #[must_use]
     pub fn pixel(&self, x: usize, y: usize) -> [u8; 4] {
         if x >= self.size || y >= self.size {
             return [0; 4];
@@ -33,6 +34,7 @@ impl PieceImage {
     }
 
     /// Непрозрачность пикселя (0…255).
+    #[must_use]
     pub fn alpha(&self, x: usize, y: usize) -> u8 {
         self.pixel(x, y)[3]
     }
@@ -188,7 +190,7 @@ fn crown_coverage(px: f32, py: f32, center: f32, size: f32) -> f32 {
 
 /// Число отсчётов рельефа на пиксель по каждой оси: мелкие шашки считаются точнее,
 /// у крупных детали рельефа и так шире пикселя.
-fn relief_samples(size: usize) -> usize {
+const fn relief_samples(size: usize) -> usize {
     match size {
         0..=63 => 3,
         64..=159 => 2,
@@ -200,6 +202,7 @@ fn relief_samples(size: usize) -> usize {
 ///
 /// Центр шашки — в центре изображения. `shadow` добавляет мягкую тень под шашкой;
 /// сама шашка от этого не меняется.
+#[must_use]
 pub fn render_piece(piece: Piece, size: usize, shadow: bool) -> PieceImage {
     let mut rgba = vec![0u8; size * size * 4];
     if size == 0 {
@@ -298,6 +301,7 @@ pub fn render_piece(piece: Piece, size: usize, shadow: bool) -> PieceImage {
 }
 
 /// Мягкая тень под шашкой, которую держат мышью: размытый тёмный круг без самой шашки.
+#[must_use]
 pub fn render_lift_shadow(size: usize) -> PieceImage {
     let mut rgba = vec![0u8; size * size * 4];
     let n = size as f32;
@@ -561,7 +565,7 @@ mod tests {
                 assert_eq!(crown_contains(x, y), crown_contains(-x, y), "({x}, {y})");
             }
         }
-        let middle = (top + bottom) / 2.0 + CROWN_SHIFT;
+        let middle = f32::midpoint(top, bottom) + CROWN_SHIFT;
         assert!(
             (middle * half).abs() < 0.5,
             "середина короны смещена на {} пикс.",

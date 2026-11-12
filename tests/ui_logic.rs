@@ -5,7 +5,7 @@ mod common;
 
 use common::{pos, sq};
 use rucheckers::board::{Color, Position, Square};
-use rucheckers::moves::legal_moves;
+use rucheckers::moves::{legal_moves, Move};
 use rucheckers::notation::format_move;
 use rucheckers::tree::GameTree;
 use rucheckers::ui::geometry::{BoardLayout, FRAME_FRACTION};
@@ -158,7 +158,7 @@ fn board_stays_square_and_scales_with_the_window() {
         let (ax, ay) = l.square_center(sq("c3"));
         let (bx, by) = l.square_center(sq("d4"));
         let (mx, my) = l.point_at(2.5, 2.5);
-        assert!((mx - (ax + bx) / 2.0).abs() < 1e-3 && (my - (ay + by) / 2.0).abs() < 1e-3);
+        assert!((mx - f32::midpoint(ax, bx)).abs() < 1e-3 && (my - f32::midpoint(ay, by)).abs() < 1e-3);
     }
 }
 
@@ -596,7 +596,7 @@ fn final_targets_always_give_one_definite_result() {
             if moves.is_empty() {
                 break;
             }
-            let mut origins: Vec<Square> = moves.iter().map(|m| m.from()).collect();
+            let mut origins: Vec<Square> = moves.iter().map(Move::from).collect();
             origins.dedup();
             for origin in origins {
                 let mut input = MoveInput::new();

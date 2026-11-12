@@ -4,6 +4,7 @@ mod app;
 mod audio;
 mod board;
 mod files;
+mod fonts;
 mod icon;
 mod theme;
 

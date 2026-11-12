@@ -28,7 +28,8 @@ pub struct SearchJob {
 
 impl SearchJob {
     /// Запускает расчёт хода в отдельном потоке.
-    pub fn start(state: GameState, history: Vec<Position>, level: u8, seed: u64) -> SearchJob {
+    #[must_use]
+    pub fn start(state: GameState, history: Vec<Position>, level: u8, seed: u64) -> Self {
         let (sender, receiver) = channel();
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
@@ -41,10 +42,11 @@ impl SearchJob {
         let _ = thread::Builder::new()
             .name("rucheckers-ai".to_string())
             .spawn(work);
-        SearchJob { receiver, stop }
+        Self { receiver, stop }
     }
 
     /// Проверяет, готов ли ответ, не блокируя вызывающий поток.
+    #[must_use]
     pub fn poll(&self) -> JobStatus {
         match self.receiver.try_recv() {
             Ok(choice) => JobStatus::Done(choice),

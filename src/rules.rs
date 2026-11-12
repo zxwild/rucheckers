@@ -62,15 +62,17 @@ pub enum Outcome {
 
 impl Outcome {
     /// Победитель, если партия не закончилась вничью.
-    pub fn winner(&self) -> Option<Color> {
+    #[must_use]
+    pub const fn winner(&self) -> Option<Color> {
         match self {
-            Outcome::Win { winner, .. } => Some(*winner),
-            Outcome::Draw(_) => None,
+            Self::Win { winner, .. } => Some(*winner),
+            Self::Draw(_) => None,
         }
     }
 
-    pub fn is_draw(&self) -> bool {
-        matches!(self, Outcome::Draw(_))
+    #[must_use]
+    pub const fn is_draw(&self) -> bool {
+        matches!(self, Self::Draw(_))
     }
 }
 
@@ -91,13 +93,12 @@ pub struct DrawCounters {
 }
 
 /// Правило 2: сторона, у которой три и более дамки против одинокой дамки соперника.
+#[must_use]
 pub fn kings_vs_king_side(pos: &Position) -> Option<Color> {
     for strong in [Color::White, Color::Black] {
         let weak = strong.opponent();
-        if pos.kings_of(strong).count_ones() >= 3
-            && pos.count(weak) == 1
-            && pos.kings_of(weak).count_ones() == 1
-        {
+        // The weaker side has a single piece, and that piece is a king.
+        if pos.kings_of(strong).count_ones() >= 3 && pos.count(weak) == 1 && pos.kings_of(weak) != 0 {
             return Some(strong);
         }
     }
@@ -106,6 +107,7 @@ pub fn kings_vs_king_side(pos: &Position) -> Option<Color> {
 
 /// Правило 5: сторона, у которой ровно три шашки (в любом сочетании дамок и простых)
 /// против одинокой дамки соперника, стоящей на большой дороге.
+#[must_use]
 pub fn main_road_side(pos: &Position) -> Option<Color> {
     for strong in [Color::White, Color::Black] {
         let weak = strong.opponent();
@@ -117,7 +119,8 @@ pub fn main_road_side(pos: &Position) -> Option<Color> {
 }
 
 /// Правило 4: лимит ходов для текущего числа фигур, если у обеих сторон есть дамки.
-pub fn balance_limit(pos: &Position) -> Option<u32> {
+#[must_use]
+pub const fn balance_limit(pos: &Position) -> Option<u32> {
     if pos.kings_of(Color::White) == 0 || pos.kings_of(Color::Black) == 0 {
         return None;
     }
@@ -138,20 +141,23 @@ pub struct GameState {
 
 impl GameState {
     /// Состояние с обнулёнными счётчиками.
-    pub fn new(pos: Position) -> GameState {
-        GameState {
+    #[must_use]
+    pub fn new(pos: Position) -> Self {
+        Self {
             pos,
             counters: DrawCounters::default(),
         }
     }
 
     /// Начало партии.
-    pub fn initial() -> GameState {
-        GameState::new(Position::initial())
+    #[must_use]
+    pub fn initial() -> Self {
+        Self::new(Position::initial())
     }
 
     /// Состояние после хода `mv` (ход должен быть допустимым в этой позиции).
-    pub fn play(&self, mv: &Move) -> GameState {
+    #[must_use]
+    pub fn play(&self, mv: &Move) -> Self {
         let mover = self.pos.side;
         let king_move = self.pos.kings & mv.from().bit() != 0;
         let capture = mv.is_capture();
@@ -198,7 +204,7 @@ impl GameState {
             _ => 0,
         };
 
-        GameState {
+        Self {
             pos: next,
             counters: DrawCounters {
                 kings_vs_king,
@@ -210,6 +216,7 @@ impl GameState {
     }
 
     /// Ничья по счётчикам (правила 2–5), если один из лимитов достигнут.
+    #[must_use]
     pub fn counter_draw(&self) -> Option<DrawReason> {
         let c = &self.counters;
         if u32::from(c.kings_vs_king) >= KINGS_VS_KING_MOVES {
@@ -235,6 +242,7 @@ impl GameState {
     /// Через сколько полуходов самое раннее из правил 2–5 зафиксирует ничью, если
     /// соотношение сил не изменится и простые не будут ходить.
     /// `u32::MAX`, если ни одно правило сейчас не отсчитывается.
+    #[must_use]
     pub fn plies_to_counter_draw(&self) -> u32 {
         let c = &self.counters;
         let mut best = u32::MAX;
@@ -294,6 +302,7 @@ impl GameState {
 
 /// Сколько раз позиция `current` встречается среди `earlier` (более ранних позиций
 /// ветки), считая её саму.
+#[must_use]
 pub fn occurrences(earlier: &[Position], current: &Position) -> u32 {
     1 + earlier.iter().filter(|p| *p == current).count() as u32
 }

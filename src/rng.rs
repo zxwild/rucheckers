@@ -1,4 +1,4 @@
-//! Небольшой детерминированный генератор псевдослучайных чисел (SplitMix64).
+//! Небольшой детерминированный генератор псевдослучайных чисел (`SplitMix64`).
 //!
 //! Своя реализация избавляет от внешней зависимости и делает партии
 //! воспроизводимыми в тестах при фиксированном зерне.
@@ -15,16 +15,18 @@ pub struct Rng {
 
 impl Rng {
     /// Генератор с заданным зерном: одинаковое зерно даёт одинаковую последовательность.
-    pub fn new(seed: u64) -> Rng {
-        Rng { state: seed }
+    #[must_use]
+    pub const fn new(seed: u64) -> Self {
+        Self { state: seed }
     }
 
     /// Генератор со случайным зерном.
-    pub fn from_entropy() -> Rng {
-        Rng::new(entropy_seed())
+    #[must_use]
+    pub fn from_entropy() -> Self {
+        Self::new(entropy_seed())
     }
 
-    pub fn next_u64(&mut self) -> u64 {
+    pub const fn next_u64(&mut self) -> u64 {
         self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.state;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -78,11 +80,11 @@ impl Rng {
 }
 
 /// Зерно из системных источников: время и случайные ключи хеширования стандартной библиотеки.
+#[must_use]
 pub fn entropy_seed() -> u64 {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos() as u64);
     let mut hasher = RandomState::new().build_hasher();
     hasher.write_u64(nanos);
     hasher.finish() ^ nanos.rotate_left(32)

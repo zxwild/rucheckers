@@ -606,7 +606,7 @@ fn randomly_corrupted_pdn_never_panics() {
     let (mut accepted, mut rejected) = (0u32, 0u32);
     for i in 0..6_000 {
         let mut bytes = sources[i % sources.len()].clone();
-        for _ in 0..1 + rng.below(4) {
+        for _ in 0..=rng.below(4) {
             if bytes.is_empty() {
                 break;
             }

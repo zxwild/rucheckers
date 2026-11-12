@@ -49,11 +49,11 @@ fn assert_draw_at(tree: &mut GameTree, expected: usize, reason: DrawReason, allo
     );
 }
 
-fn any_quiet(_: usize, _: &Position, m: &Move) -> bool {
+const fn any_quiet(_: usize, _: &Position, m: &Move) -> bool {
     !m.promotes()
 }
 
-fn kings_only(_: usize, p: &Position, m: &Move) -> bool {
+const fn kings_only(_: usize, p: &Position, m: &Move) -> bool {
     is_king_move(p, m)
 }
 

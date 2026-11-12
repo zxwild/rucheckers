@@ -61,11 +61,13 @@ const LEVELS: [Level; 10] = [
 ];
 
 /// Приводит номер уровня к допустимому диапазону.
+#[must_use]
 pub fn clamp_level(level: u8) -> u8 {
     level.clamp(MIN_LEVEL, MAX_LEVEL)
 }
 
 /// Настройки уровня `level` (номер приводится к диапазону 1–10).
+#[must_use]
 pub fn level_settings(level: u8) -> Level {
     LEVELS[(clamp_level(level) - MIN_LEVEL) as usize]
 }

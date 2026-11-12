@@ -30,14 +30,14 @@ pub enum Sound {
 
 impl Sound {
     /// Все сигналы.
-    pub const ALL: [Sound; 7] = [
-        Sound::Move,
-        Sound::Capture,
-        Sound::Promotion,
-        Sound::Discharge,
-        Sound::Win,
-        Sound::Loss,
-        Sound::Draw,
+    pub const ALL: [Self; 7] = [
+        Self::Move,
+        Self::Capture,
+        Self::Promotion,
+        Self::Discharge,
+        Self::Win,
+        Self::Loss,
+        Self::Draw,
     ];
 }
 
@@ -137,6 +137,7 @@ fn finish(mut buffer: Vec<f32>, peak: f32) -> Vec<f32> {
 }
 
 /// Отсчёты сигнала (моно, [`SAMPLE_RATE`] Гц). Результат детерминирован.
+#[must_use]
 pub fn synthesize(sound: Sound) -> Vec<f32> {
     let mut rng = Rng::new(0x5EED_0000 + sound as u64);
     match sound {

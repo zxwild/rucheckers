@@ -36,7 +36,7 @@ const POSITIONS: [&str; 9] = [
     "B:Wb2,f2,Kc3:Bh2,d6,f6",
 ];
 
-fn never() -> AtomicBool {
+const fn never() -> AtomicBool {
     AtomicBool::new(false)
 }
 
@@ -200,7 +200,7 @@ fn hanging_rate(level: u8, trials: u64) -> f64 {
             count += 1;
         }
     }
-    count as f64 / trials as f64
+    f64::from(count) / trials as f64
 }
 
 #[test]
