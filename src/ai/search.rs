@@ -220,7 +220,7 @@ fn select_best(order: &mut [(i32, u16)], from: usize) {
 
 #[inline]
 const fn killer_key(mv: &Move) -> u16 {
-    (mv.from().index() as u16) << 5 | mv.to().index() as u16
+    ((mv.from().index() as u16) << 5) | mv.to().index() as u16
 }
 
 /// Transposition table key: the position and, close to a counter draw, the number of
