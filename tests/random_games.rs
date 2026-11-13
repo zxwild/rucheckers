@@ -1,5 +1,5 @@
-//! Случайные партии: тысячи партий из случайных допустимых ходов с фиксированным зерном,
-//! доведённых до конца, с проверкой инвариантов после каждого хода.
+//! Random games: thousands of games of random legal moves with a fixed seed, played to
+//! the end, with invariants checked after every move.
 
 mod common;
 
@@ -11,8 +11,8 @@ use rucheckers::rng::Rng;
 use rucheckers::rules::{GameState, Outcome};
 use rucheckers::tree::GameTree;
 
-/// Верхняя граница длины партии в полуходах: правила ничьей гарантируют окончание
-/// намного раньше, превышение означает ошибку.
+/// Upper bound on the length of a game in plies: the draw rules guarantee an end much
+/// earlier, so exceeding it means a bug.
 const MAX_PLIES: usize = 2_000;
 
 #[derive(Default)]
@@ -27,7 +27,7 @@ struct Stats {
     longest_capture: u32,
 }
 
-/// Проверка расстановки: шашки только на тёмных полях, нет простых на дамочной горизонтали.
+/// Checks the placement: pieces on dark squares only, no men on their promotion rank.
 fn assert_position_invariants(pos: &Position) {
     assert!(pos.is_valid(), "{pos}");
     assert_eq!(pos.white & pos.black, 0);
@@ -35,24 +35,24 @@ fn assert_position_invariants(pos: &Position) {
     assert_eq!(
         pos.men(Color::White) & RANK_8,
         0,
-        "белая простая на восьмой горизонтали\n{pos}"
+        "a white man on the eighth rank\n{pos}"
     );
     assert_eq!(
         pos.men(Color::Black) & RANK_1,
         0,
-        "чёрная простая на первой горизонтали\n{pos}"
+        "a black man on the first rank\n{pos}"
     );
     let mut counted = 0;
     for rank in 0..8u8 {
         for file in 0..8u8 {
             match Square::from_file_rank(file, rank) {
                 Some(sq) => {
-                    assert_eq!((file + rank) % 2, 0, "игровое поле должно быть тёмным");
+                    assert_eq!((file + rank) % 2, 0, "a playable square must be dark");
                     if let Some(piece) = pos.piece_at(sq) {
                         counted += 1;
                         if piece.kind == Kind::Man {
                             let last = if piece.color == Color::White { 7 } else { 0 };
-                            assert_ne!(rank, last, "простая на дамочной горизонтали\n{pos}");
+                            assert_ne!(rank, last, "a man on its promotion rank\n{pos}");
                         }
                     }
                 }
@@ -60,11 +60,11 @@ fn assert_position_invariants(pos: &Position) {
             }
         }
     }
-    assert_eq!(counted, pos.total(), "все шашки стоят на тёмных полях");
+    assert_eq!(counted, pos.total(), "all pieces stand on dark squares");
 }
 
-/// Играет одну случайную партию. Параллельно ведётся дерево партии: его результат
-/// сверяется с независимым подсчётом повторений по полной истории.
+/// Plays one random game. A game tree is kept in parallel: its result is compared with
+/// an independent count of repetitions over the full history.
 fn play_random_game(rng: &mut Rng, stats: &mut Stats) -> Outcome {
     let mut state = GameState::initial();
     let mut earlier: Vec<Position> = Vec::new();
@@ -77,7 +77,7 @@ fn play_random_game(rng: &mut Rng, stats: &mut Stats) -> Outcome {
         assert_eq!(
             tree.current_node().outcome(),
             expected,
-            "дерево и прямой подсчёт расходятся\n{pos}"
+            "the tree and the direct count disagree\n{pos}"
         );
         assert_eq!(tree.current_node().state(), &state);
         if let Some(outcome) = expected {
@@ -86,7 +86,7 @@ fn play_random_game(rng: &mut Rng, stats: &mut Stats) -> Outcome {
 
         let moves = legal_moves(&pos);
         assert!(!moves.is_empty());
-        // Взятие обязательно: если оно есть, все допустимые ходы — взятия.
+        // Capturing is mandatory: if there is a capture, all legal moves are captures.
         let mut captures = Vec::new();
         generate_captures(&pos, &mut captures);
         assert_eq!(has_capture(&pos, pos.side), !captures.is_empty());
@@ -95,7 +95,7 @@ fn play_random_game(rng: &mut Rng, stats: &mut Stats) -> Outcome {
         } else {
             assert_eq!(moves, captures);
         }
-        // Запись каждого хода однозначно разбирается обратно.
+        // The notation of every move parses back unambiguously.
         for m in &moves {
             assert_eq!(parse_move(&format_move(m), &moves), Ok(*m), "{pos}");
         }
@@ -104,20 +104,27 @@ fn play_random_game(rng: &mut Rng, stats: &mut Stats) -> Outcome {
         let before_total = pos.total();
         let before_own = pos.count(pos.side);
 
-        // Ход и его отмена восстанавливают позицию.
+        // Making a move and taking it back restores the position.
         let mut scratch = pos;
         let undo = scratch.make(&mv);
         let after = scratch;
         scratch.unmake(&mv, undo);
-        assert_eq!(scratch, pos, "ход {mv:?} и его отмена не восстановили позицию");
+        assert_eq!(
+            scratch, pos,
+            "making {mv:?} and taking it back did not restore the position"
+        );
         assert_eq!(after, pos.after(&mv));
 
-        // Очередь хода чередуется, число шашек не растёт.
+        // The side to move alternates; the number of pieces does not grow.
         assert_eq!(after.side, pos.side.opponent());
         assert_eq!(after.total(), before_total - mv.captured_count());
-        assert_eq!(after.count(pos.side), before_own, "своих шашек столько же");
+        assert_eq!(
+            after.count(pos.side),
+            before_own,
+            "the mover keeps all its pieces"
+        );
         assert!(after.total() <= before_total);
-        // Побиты только чужие шашки, и каждая — ровно один раз.
+        // Only enemy pieces are captured, and each exactly once.
         assert_eq!(mv.captured() & pos.pieces(pos.side), 0);
         assert_eq!(mv.captured() & !pos.pieces(pos.side.opponent()), 0);
         if mv.is_capture() {
@@ -128,7 +135,7 @@ fn play_random_game(rng: &mut Rng, stats: &mut Stats) -> Outcome {
         } else {
             assert_eq!(mv.path().len(), 1);
         }
-        // Превращение: простая пришла на последнюю горизонталь и стала дамкой.
+        // Promotion: a man has reached the last rank and become a king.
         let was_king = pos.kings & mv.from().bit() != 0;
         let is_king = after.kings & mv.to().bit() != 0;
         assert_eq!(is_king, was_king || mv.promotes());
@@ -143,7 +150,7 @@ fn play_random_game(rng: &mut Rng, stats: &mut Stats) -> Outcome {
         tree.play(&mv).unwrap();
         stats.plies += 1;
     }
-    panic!("партия не закончилась за {MAX_PLIES} полуходов");
+    panic!("the game did not end within {MAX_PLIES} plies");
 }
 
 fn run_games(seed: u64, games: u32) -> Stats {
@@ -169,16 +176,16 @@ fn three_thousand_random_games_keep_all_invariants() {
     let stats = run_games(0x00C0_FFEE, 3_000);
     assert_eq!(stats.games, 3_000);
     assert_eq!(stats.white_wins + stats.black_wins + stats.draws, 3_000);
-    // Случайная игра должна задействовать все части правил.
+    // Random play must exercise every part of the rules.
     assert!(
         stats.white_wins > 100 && stats.black_wins > 100,
-        "победы обеих сторон"
+        "wins by both sides"
     );
-    assert!(stats.draws > 10, "ничьи встречаются: {}", stats.draws);
+    assert!(stats.draws > 10, "draws occur: {}", stats.draws);
     assert!(stats.captures > 30_000 && stats.promotions > 3_000);
     assert!(
         stats.longest_capture >= 4,
-        "встречаются длинные серии: {}",
+        "long multi-captures occur: {}",
         stats.longest_capture
     );
     assert!(stats.plies / u64::from(stats.games) > 30);
@@ -196,13 +203,13 @@ fn random_games_are_reproducible_for_a_fixed_seed() {
     assert_ne!(
         (a.plies, a.captures),
         (c.plies, c.captures),
-        "другое зерно — другие партии"
+        "another seed gives other games"
     );
 }
 
-/// Долгая проверка: запускается отдельно командой `cargo test -- --ignored`.
+/// A long check: run separately with `cargo test -- --ignored`.
 #[test]
-#[ignore = "долгая проверка: сто тысяч случайных партий"]
+#[ignore = "long check: a hundred thousand random games"]
 fn hundred_thousand_random_games_keep_all_invariants() {
     let stats = run_games(0x0DEC_0DE5, 100_000);
     assert_eq!(stats.games, 100_000);

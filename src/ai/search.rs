@@ -1,12 +1,12 @@
-//! Поиск лучшего хода: итеративное углубление, альфа-бета с главным вариантом,
-//! таблица перестановок, упорядочение ходов и сокращение поздних ходов.
+//! Search for the best move: iterative deepening, principal variation alpha-beta, a
+//! transposition table, move ordering and late move reductions.
 //!
-//! Особенности шашек, учтённые в поиске:
-//! * взятия обязательны, поэтому они не расходуют глубину, а статическая оценка
-//!   берётся только в позициях, где стороне нечего бить;
-//! * правила ничьей (повторение и счётчики) проверяются в каждом узле;
-//! * оценка плавно убывает к нулю при приближении ничьей по счётчику, чтобы
-//!   сильнейшая сторона вовремя меняла соотношение сил.
+//! Features of draughts that the search takes into account:
+//! * captures are mandatory, so they do not consume depth, and the static evaluation
+//!   is taken only in positions where the side to move has nothing to capture;
+//! * the draw rules (repetition and counters) are checked in every node;
+//! * the score fades smoothly to zero as a counter draw approaches, so that the
+//!   stronger side changes the balance of forces in time.
 
 use super::eval::evaluate;
 use crate::board::Position;
@@ -16,16 +16,16 @@ use crate::rules::GameState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// Оценка выигрыша в текущем узле; выигрыш через `n` полуходов оценивается как `WIN - n`.
+/// Score of a win in the current node; a win in `n` plies is scored as `WIN - n`.
 pub const WIN: i32 = 30_000;
-/// Граница, выше которой оценка означает форсированный выигрыш.
+/// The bound above which a score means a forced win.
 pub const WIN_BOUND: i32 = WIN - 1_000;
 const INF: i32 = 32_000;
-/// Наибольшая глубина линии поиска в полуходах.
+/// Greatest depth of a search line in plies.
 const MAX_PLY: usize = 120;
-/// За столько полуходов до ничьей по счётчику оценка начинает убывать к нулю.
+/// This many plies before a counter draw the score starts to fade to zero.
 const DRAW_FADE_PLIES: u32 = 16;
-/// Если до ничьей по счётчику осталось меньше полуходов, остаток входит в ключ таблицы.
+/// If fewer plies are left before a counter draw, their number becomes part of the table key.
 const DRAW_KEY_PLIES: u32 = 24;
 
 /// What a stored score says about the true value of a position.
@@ -43,45 +43,46 @@ enum Bound {
 
 const NO_MOVE: u8 = u8::MAX;
 const NO_KILLER: u16 = u16::MAX;
-/// Объём работы (узлы и сгенерированные ходы) между проверками времени и сигнала остановки.
+/// Amount of work (nodes and generated moves) between checks of the time and the stop signal.
 const POLL_WORK: usize = 2_048;
 
-/// Параметры одного поиска.
+/// Parameters of one search.
 #[derive(Clone, Debug)]
 pub struct SearchParams {
-    /// Наибольшая глубина в тихих полуходах (взятия глубину не расходуют).
+    /// Greatest depth in quiet plies (captures do not consume depth).
     pub max_depth: i32,
-    /// Жёсткий лимит времени: по его истечении поиск прерывается.
+    /// Hard time limit: the search is interrupted when it runs out.
     pub hard_time: Option<Duration>,
-    /// Мягкий лимит: после него новая итерация не начинается.
+    /// Soft limit: no new iteration starts after it.
     pub soft_time: Option<Duration>,
-    /// Доводить ли взятия до конца на границе глубины.
+    /// Whether captures are followed to the end at the depth limit.
     pub quiescence: bool,
-    /// Амплитуда псевдослучайной добавки к оценке (в сотых простой).
+    /// Amplitude of the pseudo-random addition to the score (in hundredths of a man).
     pub jitter: i32,
-    /// Зерно: порядок равноценных ходов и добавка к оценке.
+    /// Seed: the order of equal moves and the addition to the score.
     pub seed: u64,
-    /// Размер таблицы перестановок: 2^`table_bits` записей.
+    /// Size of the transposition table: 2^`table_bits` entries.
     pub table_bits: u32,
-    /// Считать точную оценку каждого хода в корне (нужно уровням со случайным выбором).
+    /// Compute the exact score of every root move (needed by levels that choose at random).
     pub exact_root_scores: bool,
 }
 
-/// Результат поиска.
+/// Result of a search.
 #[derive(Clone, Debug)]
 pub struct SearchResult {
-    /// Лучший ход; `None`, если ходов нет или поиск прерван до первой оценки.
+    /// The best move; `None` if there are no moves or the search was interrupted before the
+    /// first score.
     pub best: Option<Move>,
-    /// Оценка лучшего хода с точки зрения стороны, чья очередь хода.
+    /// Score of the best move from the point of view of the side to move.
     pub score: i32,
-    /// Глубина последней полностью завершённой итерации.
+    /// Depth of the last fully completed iteration.
     pub depth: i32,
-    /// Число просмотренных узлов.
+    /// Number of nodes visited.
     pub nodes: u64,
-    /// Оценки ходов в корне по последней завершённой итерации.
-    /// Точны для всех ходов только при `exact_root_scores`.
+    /// Scores of the root moves from the last completed iteration.
+    /// They are exact for all moves only with `exact_root_scores`.
     pub root_scores: Vec<(Move, i32)>,
-    /// Поиск остановлен по времени или по внешнему сигналу.
+    /// The search was stopped by the clock or by an external signal.
     pub aborted: bool,
 }
 
@@ -102,7 +103,7 @@ const EMPTY_ENTRY: Entry = Entry {
     mv: NO_MOVE,
 };
 
-/// Таблица перестановок: корзины по две записи (предпочтение глубине и всегда заменяемая).
+/// Transposition table: buckets of two entries (one prefers depth, the other is always replaced).
 struct Table {
     entries: Vec<Entry>,
     mask: usize,
@@ -180,9 +181,9 @@ const fn from_table(score: i32, ply: usize) -> i32 {
     }
 }
 
-/// Убирает взятия, которые отличаются только маршрутом: если совпадают исходное и
-/// конечное поля и набор побитых шашек, позиция после хода одна и та же, и для поиска
-/// такие ходы равноценны.
+/// Removes captures that differ only in their route: if the first and last squares and
+/// the set of captured pieces are the same, the position after the move is the same,
+/// and such moves are equal for the search.
 fn dedupe_captures(moves: &mut Vec<Move>) {
     if moves.len() < 2 || !moves[0].is_capture() {
         return;
@@ -240,12 +241,12 @@ struct Searcher<'a> {
     started: Instant,
     hard_time: Option<Duration>,
     nodes: u64,
-    /// Объём работы с последней проверки времени (узлы и сгенерированные ходы).
+    /// Amount of work since the last time check (nodes and generated moves).
     work: usize,
     aborted: bool,
-    /// Позиции ветки партии до корня и текущей линии поиска.
+    /// Positions of the game branch up to the root and of the current search line.
     path: Vec<Position>,
-    /// Индекс корневой позиции в `path`.
+    /// Index of the root position in `path`.
     root_index: usize,
     killers: Vec<[u16; 2]>,
     history: Vec<i32>,
@@ -267,7 +268,7 @@ impl Searcher<'_> {
         }
     }
 
-    /// Статическая оценка с точки зрения стороны, чья очередь хода.
+    /// Static score from the point of view of the side to move.
     fn eval(&self, st: &GameState) -> i32 {
         let mut score = evaluate(&st.pos);
         if self.jitter > 0 {
@@ -281,8 +282,8 @@ impl Searcher<'_> {
         score.clamp(-WIN_BOUND + 1, WIN_BOUND - 1)
     }
 
-    /// Повторение позиции: внутри линии поиска достаточно одного совпадения,
-    /// среди позиций партии до корня нужно два (тогда это третье появление).
+    /// Repetition of a position: inside the search line one match is enough; among the
+    /// game positions before the root two are needed (then this is the third occurrence).
     fn repeated(&self, st: &GameState) -> bool {
         let reversible = st.counters.kings_only as usize;
         if reversible < 4 {
@@ -362,8 +363,8 @@ impl Searcher<'_> {
         let mut moves = std::mem::take(&mut self.move_buffers[ply]);
         let mut order = std::mem::take(&mut self.order_buffers[ply]);
         generate_moves(&st.pos, &mut moves);
-        // Время проверяется по объёму работы, а не по числу узлов: в позициях с длинными
-        // взятиями дамок один узел может содержать сотни ходов.
+        // The time is checked by the amount of work, not by the number of nodes: in
+        // positions with long king captures a single node can hold hundreds of moves.
         self.work += 1 + moves.len();
         if self.work >= POLL_WORK {
             self.work = 0;
@@ -404,7 +405,7 @@ impl Searcher<'_> {
         }
         let depth = depth.max(0);
 
-        // Быстрее, чем за `ply` полуходов, уже не выиграть и не проиграть.
+        // Nobody can win or lose faster than in `ply` plies any more.
         alpha = alpha.max(-(WIN - ply as i32));
         beta = beta.min(WIN - ply as i32 - 1);
         if alpha >= beta {
@@ -429,8 +430,8 @@ impl Searcher<'_> {
         self.score_moves(st, moves, table_move, ply, order);
         let side = st.pos.side as usize;
         let count = moves.len();
-        // Короткие списки упорядочиваются выбором по ходу перебора (часто хватает первого
-        // хода), длинные сортируются сразу.
+        // Short lists are ordered by selection as the moves are searched (the first move
+        // is often enough); long ones are sorted at once.
         let presorted = count > 24;
         if presorted {
             order.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
@@ -500,10 +501,10 @@ impl Searcher<'_> {
     }
 }
 
-/// Ищет лучший ход в состоянии `state`.
+/// Searches for the best move in the state `state`.
 ///
-/// `history` — позиции ветки партии, предшествующие текущей (нужны для учёта повторений).
-/// `stop` позволяет прервать поиск извне.
+/// `history` holds the positions of the game branch before the current one (needed to
+/// account for repetitions). `stop` allows the search to be interrupted from outside.
 pub fn search(
     state: &GameState,
     history: &[Position],
@@ -525,7 +526,7 @@ pub fn search(
     if root.is_empty() {
         return result;
     }
-    // Случайный начальный порядок: из равноценных ходов выбирается случайный.
+    // A random initial order: among equal moves a random one is chosen.
     rng.shuffle(&mut root);
 
     let mut path = Vec::with_capacity(history.len() + MAX_PLY + 1);
@@ -555,7 +556,7 @@ pub fn search(
         let mut alpha = -INF;
         let mut best: Option<(usize, i32)> = None;
         searcher.path.push(state.pos);
-        // Индексный цикл: оценки записываются в `root` по ходу перебора.
+        // An index loop: the scores are written into `root` as the moves are searched.
         #[allow(clippy::needless_range_loop)]
         for i in 0..root.len() {
             let mv = root[i].0;
@@ -587,8 +588,8 @@ pub fn search(
         }
         searcher.path.pop();
 
-        // Прерванная итерация учитывается, только если в ней уже оценён хотя бы первый
-        // (лучший по прошлой итерации) ход: найденное в ней улучшение достоверно.
+        // An interrupted iteration counts only if at least its first move (the best of the
+        // previous iteration) has been scored: an improvement found in it can be trusted.
         if let Some((index, score)) = best {
             result.best = Some(root[index].0);
             result.score = score;
@@ -601,7 +602,7 @@ pub fn search(
         result.depth = depth;
         result.root_scores.clone_from(&root);
 
-        // Форсированный исход найден, и глубины хватает, чтобы в нём не сомневаться.
+        // A forced outcome is found, and the depth is enough to leave no doubt about it.
         if result.score.abs() >= WIN_BOUND && depth >= WIN - result.score.abs() + 2 {
             break;
         }

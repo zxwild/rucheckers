@@ -1,16 +1,16 @@
-//! Значок окна: создаётся программно, без файлов ресурсов.
+//! The window icon: made by the program, without resource files.
 
 use eframe::egui::IconData;
 use rucheckers::board::{Color, Kind, Piece};
 use rucheckers::ui::sprite::render_piece;
 
 const SIZE: usize = 128;
-/// Сглаживание края фона: число отсчётов по каждой оси на пиксель.
+/// Anti-aliasing of the background edge: samples per pixel along each axis.
 const SAMPLES: usize = 3;
-/// Цвет тёмного поля под шашкой.
+/// The colour of the dark square under the piece.
 const SQUARE: [f32; 3] = [0.63, 0.44, 0.25];
 
-/// Принадлежит ли точка (в долях стороны значка) скруглённому квадрату фона.
+/// Whether a point (in fractions of the icon side) is inside the rounded background square.
 fn inside_square(x: f32, y: f32) -> bool {
     let (u, v) = (x * 2.0 - 1.0, y * 2.0 - 1.0);
     let corner = 0.22;
@@ -21,7 +21,7 @@ fn inside_square(x: f32, y: f32) -> bool {
     qx.hypot(qy) <= corner
 }
 
-/// Значок приложения: белая шашка на тёмном поле — та же, что на доске.
+/// The application icon: a white piece on a dark square, the same one as on the board.
 pub fn app_icon() -> IconData {
     let piece = render_piece(Piece::new(Color::White, Kind::Man), SIZE, true);
     let mut rgba = Vec::with_capacity(SIZE * SIZE * 4);
@@ -37,14 +37,14 @@ pub fn app_icon() -> IconData {
                 }
             }
             let background = inside as f32 / (SAMPLES * SAMPLES) as f32;
-            // Шашка (с предумноженной прозрачностью) накладывается поверх фона.
+            // The piece (with premultiplied alpha) is laid over the background.
             let top = piece.pixel(px, py);
             let top_alpha = f32::from(top[3]) / 255.0;
             let alpha = top_alpha + background * (1.0 - top_alpha);
             for channel in 0..3 {
                 let premultiplied =
                     f32::from(top[channel]) / 255.0 + SQUARE[channel] * background * (1.0 - top_alpha);
-                // Значок хранится без предумножения.
+                // The icon is stored without premultiplication.
                 let value = if alpha > 0.0 { premultiplied / alpha } else { 0.0 };
                 rgba.push((value * 255.0).round().clamp(0.0, 255.0) as u8);
             }

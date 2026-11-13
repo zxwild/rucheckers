@@ -1,12 +1,13 @@
-//! Доска 8×8, поля, фигуры и позиция.
+//! The 8×8 board, squares, pieces and a position.
 //!
-//! Игра идёт на 32 тёмных полях. Поля нумеруются от 0 до 31 слева направо и снизу вверх
-//! с точки зрения белых: `a1 = 0`, `c1 = 1`, `e1 = 2`, `g1 = 3`, `b2 = 4`, …, `h8 = 31`.
-//! Позиция хранится тремя 32-битными масками: белые, чёрные и дамки.
+//! The game is played on the 32 dark squares. They are numbered from 0 to 31, left to
+//! right and bottom to top as White sees the board: `a1 = 0`, `c1 = 1`, `e1 = 2`,
+//! `g1 = 3`, `b2 = 4`, …, `h8 = 31`. A position is three 32-bit masks: white pieces,
+//! black pieces and kings.
 
 use std::fmt;
 
-/// Сторона.
+/// A side.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Color {
     White,
@@ -14,7 +15,7 @@ pub enum Color {
 }
 
 impl Color {
-    /// Противоположная сторона.
+    /// The opposite side.
     #[inline]
     #[must_use]
     pub const fn opponent(self) -> Self {
@@ -25,16 +26,16 @@ impl Color {
     }
 }
 
-/// Вид фигуры.
+/// Kind of a piece.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Kind {
-    /// Простая шашка.
+    /// A man.
     Man,
-    /// Дамка.
+    /// A king.
     King,
 }
 
-/// Фигура на доске.
+/// A piece on the board.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Piece {
     pub color: Color,
@@ -53,13 +54,13 @@ impl Piece {
     }
 }
 
-/// Направления диагоналей (индексы в таблице соседей).
+/// Diagonal directions (indices into the neighbour table).
 pub const NE: usize = 0;
 pub const NW: usize = 1;
 pub const SE: usize = 2;
 pub const SW: usize = 3;
 
-/// Признак отсутствия соседнего поля в таблице [`NEIGHBOR`].
+/// Marks a missing neighbour in the table [`NEIGHBOR`].
 pub(crate) const NO_SQUARE: u8 = 255;
 
 const fn build_neighbors() -> [[u8; 4]; 32] {
@@ -83,28 +84,28 @@ const fn build_neighbors() -> [[u8; 4]; 32] {
     table
 }
 
-/// Соседнее поле по каждому из четырёх диагональных направлений.
+/// The neighbouring square in each of the four diagonal directions.
 pub(crate) static NEIGHBOR: [[u8; 4]; 32] = build_neighbors();
 
 const fn build_main_road() -> u32 {
     let mut mask = 0u32;
     let mut i = 0;
     while i < 8 {
-        // Поле с одинаковыми номерами вертикали и горизонтали: a1, b2, …, h8.
+        // A square whose file and rank numbers are equal: a1, b2, …, h8.
         mask |= 1 << (i * 4 + i / 2);
         i += 1;
     }
     mask
 }
 
-/// Большая дорога: диагональ a1–h8.
+/// The main road: the diagonal a1–h8.
 pub const MAIN_ROAD: u32 = build_main_road();
-/// Восьмая горизонталь: здесь белая простая становится дамкой.
+/// The eighth rank: a white man becomes a king here.
 pub const RANK_8: u32 = 0xF000_0000;
-/// Первая горизонталь: здесь чёрная простая становится дамкой.
+/// The first rank: a black man becomes a king here.
 pub const RANK_1: u32 = 0x0000_000F;
 
-/// Дамочная горизонталь для простых указанного цвета.
+/// The promotion rank for men of the given colour.
 #[inline]
 #[must_use]
 pub const fn promotion_mask(color: Color) -> u32 {
@@ -114,15 +115,15 @@ pub const fn promotion_mask(color: Color) -> u32 {
     }
 }
 
-/// Тёмное поле доски.
+/// A dark square of the board.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Square(pub(crate) u8);
 
 impl Square {
-    /// Число игровых полей.
+    /// Number of playable squares.
     pub const COUNT: usize = 32;
 
-    /// Поле по номеру 0..32.
+    /// The square with the number 0..32.
     #[must_use]
     pub const fn from_index(index: usize) -> Option<Self> {
         if index < Self::COUNT {
@@ -132,8 +133,8 @@ impl Square {
         }
     }
 
-    /// Поле по вертикали и горизонтали (обе от нуля: `a` = 0, первая горизонталь = 0).
-    /// Для светлых полей и координат вне доски возвращает `None`.
+    /// The square at a file and a rank (both from zero: `a` = 0, the first rank = 0).
+    /// Returns `None` for light squares and for coordinates off the board.
     #[must_use]
     pub const fn from_file_rank(file: u8, rank: u8) -> Option<Self> {
         if file < 8 && rank < 8 && (file + rank) % 2 == 0 {
@@ -149,28 +150,29 @@ impl Square {
         self.0 as usize
     }
 
-    /// Вертикаль от нуля (`a` = 0).
+    /// File from zero (`a` = 0).
     #[inline]
     #[must_use]
     pub const fn file(self) -> u8 {
         2 * (self.0 % 4) + (self.0 / 4) % 2
     }
 
-    /// Горизонталь от нуля (первая = 0).
+    /// Rank from zero (the first = 0).
     #[inline]
     #[must_use]
     pub const fn rank(self) -> u8 {
         self.0 / 4
     }
 
-    /// Битовая маска поля.
+    /// Bit mask of the square.
     #[inline]
     #[must_use]
     pub const fn bit(self) -> u32 {
         1u32 << self.0
     }
 
-    /// Соседнее поле по диагонали в направлении `dir` ([`NE`], [`NW`], [`SE`], [`SW`]).
+    /// The neighbouring square along a diagonal in the direction `dir` ([`NE`], [`NW`],
+    /// [`SE`], [`SW`]).
     #[must_use]
     pub fn step(self, dir: usize) -> Option<Self> {
         let next = *NEIGHBOR[self.index()].get(dir)?;
@@ -181,19 +183,19 @@ impl Square {
         }
     }
 
-    /// Лежит ли поле на большой дороге a1–h8.
+    /// Whether the square is on the main road a1–h8.
     #[inline]
     #[must_use]
     pub const fn on_main_road(self) -> bool {
         MAIN_ROAD & self.bit() != 0
     }
 
-    /// Все 32 поля по возрастанию номера.
+    /// All 32 squares in ascending order of their numbers.
     pub fn all() -> impl Iterator<Item = Self> {
         (0..Self::COUNT as u8).map(Square)
     }
 
-    /// Имя поля в шашечной нотации: `c3`.
+    /// Name of the square in draughts notation: `c3`.
     #[must_use]
     pub fn name(self) -> String {
         let mut s = String::with_capacity(2);
@@ -202,7 +204,7 @@ impl Square {
         s
     }
 
-    /// Разбор имени поля (`c3`, `C3`). Светлые поля не принимаются.
+    /// Parses the name of a square (`c3`, `C3`). Light squares are not accepted.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         let bytes = text.as_bytes();
@@ -230,7 +232,7 @@ impl fmt::Display for Square {
     }
 }
 
-/// Перечисление полей, отмеченных в маске, по возрастанию номера.
+/// Iterates over the squares set in a mask, in ascending order of their numbers.
 pub fn squares_of(mask: u32) -> impl Iterator<Item = Square> {
     let mut rest = mask;
     std::iter::from_fn(move || {
@@ -244,20 +246,20 @@ pub fn squares_of(mask: u32) -> impl Iterator<Item = Square> {
     })
 }
 
-/// Ошибка разбора записи позиции.
+/// Error of parsing a position.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum FenError {
-    /// Не указана или неверно указана очередь хода.
+    /// The side to move is missing or wrong.
     BadSide,
-    /// Раздел не начинается с `W` или `B`.
+    /// A section does not start with `W` or `B`.
     BadSection(String),
-    /// Неизвестное или светлое поле.
+    /// An unknown or light square.
     BadSquare(String),
-    /// Поле указано дважды.
+    /// A square is listed twice.
     Duplicate(String),
-    /// Простая стоит на дамочной горизонтали.
+    /// A man stands on its promotion rank.
     ManOnPromotionRank(String),
-    /// У стороны больше двенадцати шашек.
+    /// A side has more than twelve pieces.
     TooManyPieces,
 }
 
@@ -276,21 +278,21 @@ impl fmt::Display for FenError {
 
 impl std::error::Error for FenError {}
 
-/// Позиция: расстановка и очередь хода.
+/// A position: the placement of the pieces and the side to move.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Position {
-    /// Белые фигуры.
+    /// White pieces.
     pub white: u32,
-    /// Чёрные фигуры.
+    /// Black pieces.
     pub black: u32,
-    /// Дамки обоих цветов.
+    /// Kings of both colours.
     pub kings: u32,
-    /// Чья очередь хода.
+    /// The side to move.
     pub side: Color,
 }
 
 impl Position {
-    /// Пустая доска.
+    /// An empty board.
     #[must_use]
     pub const fn empty(side: Color) -> Self {
         Self {
@@ -301,7 +303,7 @@ impl Position {
         }
     }
 
-    /// Начальная расстановка: по 12 простых, ход белых.
+    /// The starting position: 12 men each, White to move.
     #[must_use]
     pub const fn initial() -> Self {
         Self {
@@ -312,14 +314,14 @@ impl Position {
         }
     }
 
-    /// Все занятые поля.
+    /// All occupied squares.
     #[inline]
     #[must_use]
     pub const fn occupied(&self) -> u32 {
         self.white | self.black
     }
 
-    /// Фигуры указанного цвета.
+    /// Pieces of the given colour.
     #[inline]
     #[must_use]
     pub const fn pieces(&self, color: Color) -> u32 {
@@ -329,35 +331,35 @@ impl Position {
         }
     }
 
-    /// Простые указанного цвета.
+    /// Men of the given colour.
     #[inline]
     #[must_use]
     pub const fn men(&self, color: Color) -> u32 {
         self.pieces(color) & !self.kings
     }
 
-    /// Дамки указанного цвета.
+    /// Kings of the given colour.
     #[inline]
     #[must_use]
     pub const fn kings_of(&self, color: Color) -> u32 {
         self.pieces(color) & self.kings
     }
 
-    /// Число фигур указанного цвета.
+    /// Number of pieces of the given colour.
     #[inline]
     #[must_use]
     pub const fn count(&self, color: Color) -> u32 {
         self.pieces(color).count_ones()
     }
 
-    /// Число фигур на доске.
+    /// Number of pieces on the board.
     #[inline]
     #[must_use]
     pub const fn total(&self) -> u32 {
         self.occupied().count_ones()
     }
 
-    /// Фигура на поле.
+    /// The piece on a square.
     #[must_use]
     pub const fn piece_at(&self, sq: Square) -> Option<Piece> {
         let bit = sq.bit();
@@ -376,7 +378,7 @@ impl Position {
         Some(Piece { color, kind })
     }
 
-    /// Ставит фигуру на поле, заменяя прежнюю.
+    /// Puts a piece on a square, replacing the one that was there.
     pub fn put(&mut self, sq: Square, piece: Piece) {
         self.remove(sq);
         let bit = sq.bit();
@@ -389,7 +391,7 @@ impl Position {
         }
     }
 
-    /// Убирает фигуру с поля.
+    /// Removes the piece from a square.
     pub const fn remove(&mut self, sq: Square) {
         let mask = !sq.bit();
         self.white &= mask;
@@ -397,8 +399,8 @@ impl Position {
         self.kings &= mask;
     }
 
-    /// Проверка внутренней согласованности: фигуры не накладываются, дамки стоят
-    /// на занятых полях, простых нет на дамочной горизонтали, у стороны не более 12 фигур.
+    /// Checks internal consistency: pieces do not overlap, kings stand on occupied
+    /// squares, no man is on its promotion rank, and a side has at most 12 pieces.
     #[must_use]
     pub const fn is_valid(&self) -> bool {
         self.white & self.black == 0
@@ -409,7 +411,7 @@ impl Position {
             && self.black.count_ones() <= 12
     }
 
-    /// 64-битный хеш позиции (с учётом очереди хода).
+    /// 64-bit hash of the position (the side to move included).
     #[must_use]
     pub fn hash64(&self) -> u64 {
         #[inline]
@@ -430,7 +432,7 @@ impl Position {
         mix(a ^ mix(b.wrapping_add(0x9E37_79B9_7F4A_7C15)))
     }
 
-    /// Запись позиции в формате FEN из стандарта PDN: `W:Wa1,c1,Ke3:Bb8,Kd6`.
+    /// Writes the position in the FEN format of the PDN standard: `W:Wa1,c1,Ke3:Bb8,Kd6`.
     #[must_use]
     pub fn to_fen(&self) -> String {
         let mut out = String::new();
@@ -516,7 +518,7 @@ impl fmt::Debug for Position {
 }
 
 impl fmt::Display for Position {
-    /// Текстовая диаграмма: `w`/`b` — простые, `W`/`B` — дамки, `.` — пустое тёмное поле.
+    /// A text diagram: `w`/`b` are men, `W`/`B` are kings, `.` is an empty dark square.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for rank in (0..8u8).rev() {
             write!(f, "{} ", rank + 1)?;
@@ -569,15 +571,15 @@ mod tests {
         assert_eq!(Square::parse("g1"), Square::from_index(3));
         assert_eq!(Square::parse("b2"), Square::from_index(4));
         assert_eq!(Square::parse("h8"), Square::from_index(31));
-        assert_eq!(Square::parse("b1"), None, "светлое поле");
+        assert_eq!(Square::parse("b1"), None, "a light square");
         assert_eq!(Square::parse("i1"), None);
         assert_eq!(Square::parse("a9"), None);
         assert_eq!(Square::parse(""), None);
-        assert_eq!(Square::parse("ц3"), None);
+        assert_eq!(Square::parse("é3"), None);
         for sq in Square::all() {
             assert_eq!(Square::parse(&sq.name()), Some(sq));
             assert_eq!(Square::from_file_rank(sq.file(), sq.rank()), Some(sq));
-            assert_eq!((sq.file() + sq.rank()) % 2, 0, "все игровые поля тёмные");
+            assert_eq!((sq.file() + sq.rank()) % 2, 0, "all playable squares are dark");
         }
     }
 

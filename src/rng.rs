@@ -1,26 +1,26 @@
-//! Небольшой детерминированный генератор псевдослучайных чисел (`SplitMix64`).
+//! A small deterministic pseudo-random number generator (`SplitMix64`).
 //!
-//! Своя реализация избавляет от внешней зависимости и делает партии
-//! воспроизводимыми в тестах при фиксированном зерне.
+//! Having its own implementation spares an external dependency and makes games
+//! reproducible in tests when the seed is fixed.
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Генератор псевдослучайных чисел.
+/// Pseudo-random number generator.
 #[derive(Clone, Debug)]
 pub struct Rng {
     state: u64,
 }
 
 impl Rng {
-    /// Генератор с заданным зерном: одинаковое зерно даёт одинаковую последовательность.
+    /// A generator with the given seed: the same seed gives the same sequence.
     #[must_use]
     pub const fn new(seed: u64) -> Self {
         Self { state: seed }
     }
 
-    /// Генератор со случайным зерном.
+    /// A generator with a random seed.
     #[must_use]
     pub fn from_entropy() -> Self {
         Self::new(entropy_seed())
@@ -34,26 +34,26 @@ impl Rng {
         z ^ (z >> 31)
     }
 
-    /// Равномерное целое из `0..n`; для `n == 0` возвращает 0.
+    /// A uniform integer from `0..n`; returns 0 for `n == 0`.
     pub fn below(&mut self, n: usize) -> usize {
         if n == 0 {
             return 0;
         }
-        // Умножение со сдвигом вместо остатка: без заметного смещения для малых n.
+        // Multiply and shift instead of a remainder: no noticeable bias for small n.
         ((u128::from(self.next_u64()) * n as u128) >> 64) as usize
     }
 
-    /// Равномерное вещественное из `[0, 1)`.
+    /// A uniform real number from `[0, 1)`.
     pub fn unit(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
     }
 
-    /// Истина с вероятностью `p`.
+    /// True with probability `p`.
     pub fn chance(&mut self, p: f64) -> bool {
         self.unit() < p
     }
 
-    /// Равномерное целое из отрезка `[-amplitude, amplitude]`.
+    /// A uniform integer from the closed range `[-amplitude, amplitude]`.
     pub fn symmetric(&mut self, amplitude: i32) -> i32 {
         if amplitude <= 0 {
             return 0;
@@ -61,7 +61,7 @@ impl Rng {
         self.below(2 * amplitude as usize + 1) as i32 - amplitude
     }
 
-    /// Случайная перестановка (Фишер — Йетс).
+    /// A random permutation (Fisher–Yates).
     pub fn shuffle<T>(&mut self, items: &mut [T]) {
         for i in (1..items.len()).rev() {
             let j = self.below(i + 1);
@@ -69,7 +69,7 @@ impl Rng {
         }
     }
 
-    /// Случайный элемент среза.
+    /// A random element of a slice.
     pub fn pick<'a, T>(&mut self, items: &'a [T]) -> Option<&'a T> {
         if items.is_empty() {
             None
@@ -79,7 +79,7 @@ impl Rng {
     }
 }
 
-/// Зерно из системных источников: время и случайные ключи хеширования стандартной библиотеки.
+/// A seed from system sources: the time and the random hashing keys of the standard library.
 #[must_use]
 pub fn entropy_seed() -> u64 {
     let nanos = SystemTime::now()
@@ -134,7 +134,7 @@ mod tests {
         let mut sorted = items.clone();
         sorted.sort_unstable();
         assert_eq!(sorted, (0..20).collect::<Vec<u32>>());
-        assert_ne!(items, sorted, "двадцать элементов почти наверняка переставлены");
+        assert_ne!(items, sorted, "twenty items are almost certainly reordered");
         assert_eq!(rng.pick::<u32>(&[]), None);
         assert!(items.contains(rng.pick(&items).unwrap()));
     }

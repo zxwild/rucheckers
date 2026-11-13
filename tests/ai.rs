@@ -1,8 +1,8 @@
-//! Компьютерный соперник: допустимость ходов и лимит времени на каждом уровне,
-//! тактика на высоких уровнях, учёт правил ничьей, партии с самим собой и
-//! превосходство сильных уровней над слабыми.
+//! The computer opponent: legal moves and the time limit on every level, tactics on the
+//! high levels, awareness of the draw rules, games against itself and the superiority
+//! of strong levels over weak ones.
 //!
-//! Долгие проверки помечены `#[ignore]` и запускаются командой
+//! Long checks are marked `#[ignore]` and are run with
 //! `cargo test --release -- --ignored`.
 
 mod common;
@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 const INITIAL: &str = "W:Wa1,c1,e1,g1,b2,d2,f2,h2,a3,c3,e3,g3:Bb6,d6,f6,h6,a7,c7,e7,g7,b8,d8,f8,h8";
 
-/// Позиции разного характера: дебют, середина игры, окончания с дамками, выбор взятия.
+/// Positions of different kinds: opening, middle game, endgames with kings, a choice of captures.
 const POSITIONS: [&str; 9] = [
     INITIAL,
     "B:Wa1,c1,e1,g1,b2,d2,f2,h2,a3,e3,g3,d4:Bb6,d6,f6,h6,a7,c7,e7,g7,b8,d8,f8,h8",
@@ -42,11 +42,11 @@ const fn never() -> AtomicBool {
 
 fn pick(state: &GameState, history: &[Position], level: u8, seed: u64) -> Move {
     choose_move(state, history, level, seed, &never())
-        .expect("ход должен существовать")
+        .expect("the move must exist")
         .mv
 }
 
-/// Выбирает ход и проверяет его допустимость и время расчёта.
+/// Chooses a move and checks that it is legal and how long the calculation took.
 fn timed_pick(fen: &str, level: u8, seed: u64) -> (Move, Duration) {
     let state = GameState::new(pos(fen));
     let legal = legal_moves(&state.pos);
@@ -55,17 +55,17 @@ fn timed_pick(fen: &str, level: u8, seed: u64) -> (Move, Duration) {
     let elapsed = started.elapsed();
     assert!(
         legal.contains(&chosen),
-        "уровень {level}: недопустимый ход {chosen:?} в {fen}"
+        "level {level}: illegal move {chosen:?} in {fen}"
     );
     assert!(
         elapsed < Duration::from_millis(MOVE_TIME_LIMIT_MS),
-        "уровень {level}: расчёт занял {elapsed:?} в {fen}"
+        "level {level}: the calculation took {elapsed:?} in {fen}"
     );
     (chosen, elapsed)
 }
 
 // ---------------------------------------------------------------------------
-// Допустимость ходов и лимит времени
+// Legal moves and the time limit
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -89,7 +89,7 @@ fn level_9_returns_legal_moves_within_the_time_limit() {
 #[test]
 fn level_10_returns_a_legal_move_within_five_seconds() {
     let (_, elapsed) = timed_pick(POSITIONS[2], 10, 10);
-    // Десятый уровень использует отведённое время, а не отвечает мгновенно.
+    // The tenth level uses its time instead of answering at once.
     assert!(elapsed > Duration::from_millis(500), "{elapsed:?}");
 }
 
@@ -102,7 +102,7 @@ fn weak_levels_answer_in_milliseconds() {
         }
         assert!(
             started.elapsed() < Duration::from_secs(2),
-            "уровень {level}: {:?}",
+            "level {level}: {:?}",
             started.elapsed()
         );
     }
@@ -113,13 +113,13 @@ fn no_move_is_returned_only_when_there_are_none() {
     for level in MIN_LEVEL..=MAX_LEVEL {
         let lost = GameState::new(pos("W:Wa1:Bb2,c3"));
         assert!(choose_move(&lost, &[], level, 1, &never()).is_none());
-        // Единственный ход возвращается сразу, без поиска.
+        // The only move is returned at once, without a search.
         let forced = GameState::new(pos("W:Wc3:Bd4,f6"));
         let choice = choose_move(&forced, &[], level, 1, &never()).unwrap();
         assert_eq!(format_move(&choice.mv), "c3:e5:g7");
         assert_eq!(choice.nodes, 0);
     }
-    // Номер уровня вне диапазона приводится к допустимому.
+    // A level number out of range is brought into range.
     let state = GameState::initial();
     assert!(legal_moves(&state.pos).contains(&pick(&state, &[], 0, 1)));
     assert!(legal_moves(&state.pos).contains(&pick(&state, &[], 77, 1)));
@@ -129,14 +129,14 @@ fn no_move_is_returned_only_when_there_are_none() {
 #[test]
 fn search_can_be_cancelled_from_outside() {
     let state = GameState::new(pos(POSITIONS[2]));
-    // Сигнал остановки выставлен заранее: поиск возвращается сразу и всё равно даёт ход.
+    // The stop signal is set in advance: the search returns at once and still gives a move.
     let stop = AtomicBool::new(true);
     let started = Instant::now();
     let choice = choose_move(&state, &[], 10, 1, &stop).unwrap();
     assert!(started.elapsed() < Duration::from_millis(500));
     assert!(legal_moves(&state.pos).contains(&choice.mv));
 
-    // Остановка во время расчёта.
+    // Stopping during the calculation.
     let stop = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stop);
     let handle = std::thread::spawn(move || {
@@ -149,7 +149,7 @@ fn search_can_be_cancelled_from_outside() {
     let (choice, elapsed) = handle.join().unwrap();
     assert!(
         elapsed < Duration::from_millis(1_500),
-        "расчёт остановлен через {elapsed:?}"
+        "the calculation stopped after {elapsed:?}"
     );
     assert!(choice.is_some());
 }
@@ -166,14 +166,14 @@ fn background_job_reports_the_result_and_stops_when_dropped() {
                 std::thread::sleep(Duration::from_millis(2));
             }
             JobStatus::Done(choice) => break choice,
-            JobStatus::Failed => panic!("поток расчёта не ответил"),
+            JobStatus::Failed => panic!("the calculation thread did not answer"),
         }
     };
     assert!(legal_moves(&state.pos).contains(&choice.unwrap().mv));
-    // После получения ответа канал закрыт.
+    // After the answer has been received the channel is closed.
     assert!(matches!(job.poll(), JobStatus::Failed));
 
-    // Долгий расчёт прерывается при уничтожении задания; новые задания при этом работают.
+    // A long calculation is interrupted when its job is dropped; new jobs still work.
     let long = SearchJob::start(GameState::new(pos(POSITIONS[2])), Vec::new(), 10, 1);
     assert!(matches!(long.poll(), JobStatus::Running));
     drop(long);
@@ -186,12 +186,13 @@ fn background_job_reports_the_result_and_stops_when_dropped() {
 }
 
 // ---------------------------------------------------------------------------
-// Слабые уровни ошибаются, сильные — нет
+// Weak levels make mistakes, strong ones do not
 // ---------------------------------------------------------------------------
 
-/// Доля случаев, в которых уровень делает ход, сразу подставляющий шашку под бесплатное взятие.
+/// Fraction of the cases in which a level plays a move that at once leaves a piece to be
+/// captured for free.
 fn hanging_rate(level: u8, trials: u64) -> f64 {
-    // Ход c3-d4 отдаёт шашку даром (e5:c3), остальные ходы безопасны.
+    // The move c3-d4 gives a piece away for nothing (e5:c3); the other moves are safe.
     let state = GameState::new(pos("W:Wa1,c3,g1,h2:Be5,f6,g7,h8"));
     let blunder = mv(&state.pos, "c3-d4");
     let mut count = 0;
@@ -208,25 +209,25 @@ fn level_1_makes_obvious_mistakes_and_strong_levels_do_not() {
     let novice = hanging_rate(1, 300);
     assert!(
         novice > 0.08,
-        "первый уровень зевает шашку заметно часто: {novice}"
+        "the first level blunders a piece noticeably often: {novice}"
     );
     let middle = hanging_rate(4, 300);
     assert!(
         middle < novice,
-        "четвёртый уровень ошибается реже первого: {middle} против {novice}"
+        "the fourth level errs less often than the first: {middle} versus {novice}"
     );
     for level in 7..=9 {
         assert_eq!(
             hanging_rate(level, 12),
             0.0,
-            "уровень {level} не отдаёт шашку даром"
+            "level {level} does not give a piece away for nothing"
         );
     }
 }
 
 #[test]
 fn every_level_takes_the_last_piece_when_it_can() {
-    // Взятие обязательно и единственно — даже первый уровень завершает партию.
+    // The capture is mandatory and the only one: even the first level finishes the game.
     for level in MIN_LEVEL..=MAX_LEVEL {
         let state = GameState::new(pos("W:Wc3,a1:Bd4"));
         assert_eq!(format_move(&pick(&state, &[], level, 3)), "c3:e5");
@@ -234,11 +235,11 @@ fn every_level_takes_the_last_piece_when_it_can() {
 }
 
 // ---------------------------------------------------------------------------
-// Тактика: форсированный выигрыш в несколько ходов
+// Tactics: a forced win in several moves
 // ---------------------------------------------------------------------------
 
-/// Позиции с единственным выигрывающим ходом. Глубина выигрыша в полуходах и сам ход
-/// подтверждаются в тесте независимым полным перебором (`common::wins_within`).
+/// Positions with a single winning move. The depth of the win in plies and the move
+/// itself are confirmed in the test by an independent full search (`common::wins_within`).
 const WINS_IN_5: [(&str, &str); 6] = [
     ("B:Wh2,g5,Kf8:BKa3,b6", "b6-c5"),
     ("B:Wc1,b2,h4,a5:Ba3,e3,b6,c7", "e3-d2"),
@@ -256,19 +257,16 @@ const WINS_IN_7: [(&str, &str); 5] = [
     ("W:Wc1,d2,Kg7:Bb4,Kf4,b6", "d2-c3"),
 ];
 
-/// Проверяет саму задачу: выигрыш есть ровно за `plies` полуходов и ключевой ход единственный.
+/// Checks the problem itself: there is a win in exactly `plies` plies and the key move is unique.
 fn verified_key_move(fen: &str, key: &str, plies: u32) -> (GameState, Move) {
     let position = pos(fen);
-    assert!(
-        wins_within(&position, plies),
-        "{fen}: выигрыша за {plies} полуходов нет"
-    );
+    assert!(wins_within(&position, plies), "{fen}: no win in {plies} plies");
     assert!(
         !wins_within(&position, plies - 2),
-        "{fen}: выигрыш короче {plies} полуходов"
+        "{fen}: the win is shorter than {plies} plies"
     );
     let winning = winning_moves(&position, plies);
-    assert_eq!(winning.len(), 1, "{fen}: ключевой ход не единственный");
+    assert_eq!(winning.len(), 1, "{fen}: the key move is not unique");
     assert_eq!(format_move(&winning[0]), key, "{fen}");
     (GameState::new(position), winning[0])
 }
@@ -279,13 +277,13 @@ fn assert_levels_find(tasks: &[(&str, &str)], plies: u32, levels: std::ops::Rang
         for level in levels.clone() {
             let started = Instant::now();
             let choice = choose_move(&state, &[], level, 7, &never()).unwrap();
-            assert_eq!(choice.mv, key_move, "уровень {level} не нашёл {key} в {fen}");
+            assert_eq!(choice.mv, key_move, "level {level} did not find {key} in {fen}");
             let score = choice.score.unwrap();
             assert!(
                 score >= WIN_BOUND,
-                "уровень {level}: выигрыш не распознан, оценка {score}"
+                "level {level}: the win is not recognized, score {score}"
             );
-            // Найдя форсированный выигрыш, компьютер не тратит всё время.
+            // Having found a forced win, the computer does not spend all its time.
             assert!(started.elapsed() < Duration::from_millis(MOVE_TIME_LIMIT_MS));
         }
     }
@@ -319,30 +317,30 @@ fn search_reports_a_win_score_with_the_distance_to_it() {
     assert_eq!(
         result.score,
         rucheckers::ai::search::WIN - 5,
-        "выигрыш на пятом полуходе"
+        "a win at the fifth ply"
     );
     assert!(!result.aborted);
-    // С точки зрения проигрывающей стороны оценка симметрична.
+    // From the losing side's point of view the score is symmetric.
     let after = state.play(&key_move);
     let reply = search(&after, &[], &params, &never());
     assert_eq!(reply.score, -(rucheckers::ai::search::WIN - 4));
 }
 
 // ---------------------------------------------------------------------------
-// Правила ничьей в поиске
+// The draw rules in the search
 // ---------------------------------------------------------------------------
 
 #[test]
 fn computer_avoids_a_draw_by_the_kings_only_rule_when_it_is_ahead() {
-    // У белых две дамки и простая против дамки и простой. Ход h4-g5 отдаёт простую.
+    // White has two kings and a man against a king and a man. The move h4-g5 gives the man away.
     let start = pos("W:WKc1,Ke1,h4:BKb8,f6");
     let sacrifice = mv(&start, "h4-g5");
     for level in 8..=9 {
-        // Обычно простую отдавать незачем.
+        // Normally there is no reason to give the man away.
         let fresh = GameState::new(start);
-        assert_ne!(pick(&fresh, &[], level, 1), sacrifice, "уровень {level}");
-        // Но если сделано 29 полуходов дамками, любой ход дамкой — ничья по правилу 3,
-        // и сохранить перевес можно только ходом простой.
+        assert_ne!(pick(&fresh, &[], level, 1), sacrifice, "level {level}");
+        // But if 29 plies have been made by kings, any king move is a draw by rule 3, and
+        // the advantage can be kept only by moving the man.
         let stale = GameState {
             pos: start,
             counters: DrawCounters {
@@ -351,13 +349,13 @@ fn computer_avoids_a_draw_by_the_kings_only_rule_when_it_is_ahead() {
             },
         };
         let choice = choose_move(&stale, &[], level, 1, &never()).unwrap();
-        assert_eq!(choice.mv, sacrifice, "уровень {level}");
-        assert!(choice.score.unwrap() > 0, "уровень {level}: {:?}", choice.score);
+        assert_eq!(choice.mv, sacrifice, "level {level}");
+        assert!(choice.score.unwrap() > 0, "level {level}: {:?}", choice.score);
     }
 }
 
-/// Партия, в которой дамки ходят туда-обратно: в текущей позиции ход чёрных `a7-b8`
-/// приводит к третьему повторению.
+/// A game in which the kings shuttle back and forth: in the current position Black's
+/// move `a7-b8` leads to the third repetition.
 fn shuffle_tree(fen: &str) -> GameTree {
     let mut tree = GameTree::from_position(pos(fen));
     play_all(
@@ -370,7 +368,7 @@ fn shuffle_tree(fen: &str) -> GameTree {
 
 #[test]
 fn computer_takes_a_draw_by_repetition_when_it_is_behind() {
-    // У чёрных одна дамка против дамки и трёх простых.
+    // Black has one king against a king and three men.
     let tree = shuffle_tree("W:WKg1,a1,c1,e1:BKb8");
     let node = tree.current();
     let state = *tree.current_node().state();
@@ -379,21 +377,22 @@ fn computer_takes_a_draw_by_repetition_when_it_is_behind() {
     assert_eq!(history.len(), 7);
     for level in 7..=9 {
         let choice = choose_move(&state, &history, level, 3, &never()).unwrap();
-        assert_eq!(choice.mv, repeat, "уровень {level} должен повторить позицию");
+        assert_eq!(choice.mv, repeat, "level {level} must repeat the position");
         assert_eq!(
             choice.score,
             Some(0),
-            "уровень {level}: повторение оценивается как ничья"
+            "level {level}: the repetition is scored as a draw"
         );
-        // Без истории партии тот же ход ничьей не даёт, и позиция оценивается как плохая.
+        // Without the history of the game the same move gives no draw, and the position is
+        // scored as bad.
         let blind = choose_move(&state, &[], level, 3, &never()).unwrap();
-        assert!(blind.score.unwrap() < 0, "уровень {level}: {:?}", blind.score);
+        assert!(blind.score.unwrap() < 0, "level {level}: {:?}", blind.score);
     }
 }
 
 #[test]
 fn computer_avoids_a_draw_by_repetition_when_it_is_ahead() {
-    // Теперь у чёрных дамка и три простые против одинокой дамки.
+    // Now Black has a king and three men against a lone king.
     let tree = shuffle_tree("W:WKg1:BKb8,d8,f8,h8");
     let node = tree.current();
     let state = *tree.current_node().state();
@@ -401,16 +400,13 @@ fn computer_avoids_a_draw_by_repetition_when_it_is_ahead() {
     let repeat = mv(&state.pos, "a7-b8");
     for level in 7..=9 {
         let choice = choose_move(&state, &history, level, 3, &never()).unwrap();
-        assert_ne!(
-            choice.mv, repeat,
-            "уровень {level} не должен соглашаться на повторение"
-        );
-        assert!(choice.score.unwrap() > 0, "уровень {level}: {:?}", choice.score);
+        assert_ne!(choice.mv, repeat, "level {level} must not agree to a repetition");
+        assert!(choice.score.unwrap() > 0, "level {level}: {:?}", choice.score);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Партии компьютера с самим собой
+// Games of the computer against itself
 // ---------------------------------------------------------------------------
 
 struct GameRecord {
@@ -418,8 +414,8 @@ struct GameRecord {
     moves: Vec<String>,
 }
 
-/// Партия между двумя уровнями. Каждый ход проверяется на допустимость, история
-/// ведётся в дереве партии — так же, как в приложении.
+/// A game between two levels. Every move is checked for legality, and the history is
+/// kept in a game tree, the same way as in the application.
 fn self_play(white: u8, black: u8, seed: u64) -> GameRecord {
     let mut rng = Rng::new(seed);
     let mut tree = GameTree::new();
@@ -429,7 +425,7 @@ fn self_play(white: u8, black: u8, seed: u64) -> GameRecord {
         if let Some(outcome) = node.outcome() {
             return GameRecord { outcome, moves };
         }
-        assert!(moves.len() < 1_000, "партия не заканчивается");
+        assert!(moves.len() < 1_000, "the game does not end");
         let state = *node.state();
         let level = if state.pos.side == Color::White {
             white
@@ -440,7 +436,7 @@ fn self_play(white: u8, black: u8, seed: u64) -> GameRecord {
         let chosen = pick(&state, &history, level, rng.next_u64());
         assert!(
             legal_moves(&state.pos).contains(&chosen),
-            "недопустимый ход {chosen:?}\n{}",
+            "illegal move {chosen:?}\n{}",
             state.pos
         );
         moves.push(format_move(&chosen));
@@ -448,7 +444,8 @@ fn self_play(white: u8, black: u8, seed: u64) -> GameRecord {
     }
 }
 
-/// Очки первого уровня в матче из `games` партий со сменой цвета (победа — 2, ничья — 1).
+/// Points of the first level in a match of `games` games with alternating colours (a win is
+/// 2, a draw is 1).
 fn match_points(first: u8, second: u8, games: u64, seed: u64) -> (u64, u64) {
     let (mut a, mut b) = (0, 0);
     for game in 0..games {
@@ -479,25 +476,25 @@ fn self_play_games_finish_without_failures() {
         let record = self_play(white, black, 500 + i as u64);
         assert!(
             record.moves.len() >= 10,
-            "уровни {white}–{black}: слишком короткая партия"
+            "levels {white}–{black}: the game is too short"
         );
     }
 }
 
 #[test]
 fn games_differ_from_one_another() {
-    // Одинаковое зерно — одинаковая партия, разные зёрна — разные партии.
+    // The same seed gives the same game; different seeds give different games.
     for level in [2, 5, 7] {
         let a = self_play(level, level, 1);
         let b = self_play(level, level, 1);
         let c = self_play(level, level, 2);
         assert_eq!(
             a.moves, b.moves,
-            "уровень {level}: партия воспроизводима при том же зерне"
+            "level {level}: the game is reproducible with the same seed"
         );
-        assert_ne!(a.moves, c.moves, "уровень {level}: партии не должны совпадать");
+        assert_ne!(a.moves, c.moves, "level {level}: the games must not coincide");
     }
-    // Сильный уровень тоже не играет один и тот же дебют: среди первых ходов есть разные.
+    // A strong level does not play one and the same opening either: the first moves vary.
     let state = GameState::initial();
     let mut first_moves: Vec<String> = (0..16)
         .map(|seed| format_move(&pick(&state, &[], 8, seed)))
@@ -506,27 +503,27 @@ fn games_differ_from_one_another() {
     first_moves.dedup();
     assert!(
         first_moves.len() >= 2,
-        "первые ходы восьмого уровня: {first_moves:?}"
+        "first moves of the eighth level: {first_moves:?}"
     );
 }
 
 #[test]
 fn stronger_levels_beat_weaker_ones() {
-    // Матчи с большим разрывом в уровнях: сильный должен побеждать уверенно.
+    // Matches with a large gap between levels: the strong one must win confidently.
     let (strong, weak) = match_points(7, 1, 10, 100);
-    assert!(strong >= 18 && weak <= 2, "7 против 1: {strong}:{weak}");
+    assert!(strong >= 18 && weak <= 2, "7 against 1: {strong}:{weak}");
     let (strong, weak) = match_points(5, 2, 12, 200);
-    assert!(strong >= 18, "5 против 2: {strong}:{weak}");
+    assert!(strong >= 18, "5 against 2: {strong}:{weak}");
     let (strong, weak) = match_points(4, 1, 12, 300);
-    assert!(strong >= 18, "4 против 1: {strong}:{weak}");
+    assert!(strong >= 18, "4 against 1: {strong}:{weak}");
 }
 
 // ---------------------------------------------------------------------------
-// Долгие проверки (cargo test --release -- --ignored)
+// Long checks (cargo test --release -- --ignored)
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "долгая проверка: лимит времени на всех уровнях и позициях"]
+#[ignore = "long check: the time limit on all levels and positions"]
 fn long_every_level_stays_within_the_time_limit_on_every_position() {
     for level in MIN_LEVEL..=MAX_LEVEL {
         for (i, fen) in POSITIONS.iter().enumerate() {
@@ -536,32 +533,32 @@ fn long_every_level_stays_within_the_time_limit_on_every_position() {
 }
 
 #[test]
-#[ignore = "долгая проверка: лестница уровней, каждый следующий сильнее предыдущего"]
+#[ignore = "long check: the ladder of levels, each next one stronger than the previous"]
 fn long_each_level_outscores_the_previous_one() {
     for level in MIN_LEVEL..8 {
         let (strong, weak) = match_points(level + 1, level, 40, 9_000 + u64::from(level));
         assert!(
             strong > weak + 12,
-            "уровень {} против {}: {strong}:{weak}",
+            "level {} against {}: {strong}:{weak}",
             level + 1,
             level
         );
     }
     let (strong, weak) = match_points(9, 8, 16, 9_900);
-    assert!(strong > weak, "уровень 9 против 8: {strong}:{weak}");
+    assert!(strong > weak, "level 9 against 8: {strong}:{weak}");
 }
 
 #[test]
-#[ignore = "долгая проверка: партии десятого уровня (несколько минут)"]
+#[ignore = "long check: games of the tenth level (several minutes)"]
 fn long_top_level_beats_middle_levels_and_finishes_self_play() {
     let (strong, weak) = match_points(10, 6, 4, 9_950);
-    assert!(strong >= 6, "уровень 10 против 6: {strong}:{weak}");
+    assert!(strong >= 6, "level 10 against 6: {strong}:{weak}");
     let record = self_play(10, 10, 9_999);
     assert!(record.moves.len() >= 20);
 }
 
 #[test]
-#[ignore = "долгая проверка: тактика и ничьи на десятом уровне"]
+#[ignore = "long check: tactics and draws on the tenth level"]
 fn long_top_level_handles_draw_rules() {
     let tree = shuffle_tree("W:WKg1,a1,c1,e1:BKb8");
     let state = *tree.current_node().state();

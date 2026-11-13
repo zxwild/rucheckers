@@ -1,95 +1,95 @@
-//! Ходы и генератор ходов русских шашек.
+//! Moves and the move generator of Russian draughts.
 //!
-//! Правила, реализованные здесь:
-//! * простая ходит на одно поле вперёд, бьёт вперёд и назад;
-//! * дамка ходит и бьёт по диагонали на любое расстояние;
-//! * взятие обязательно и доводится до конца, выбор между вариантами свободный;
-//! * побитые шашки снимаются после завершения хода, до этого они остаются препятствием,
-//!   и дважды перескочить одну шашку нельзя (турецкий удар);
-//! * после взятия дамка обязана встать на поле, с которого возможно продолжение боя,
-//!   если такие поля есть;
-//! * простая, достигшая дамочной горизонтали во время взятия, продолжает бить как дамка.
+//! The rules implemented here:
+//! * a man moves one square forward and captures forward and backward;
+//! * a king moves and captures along a diagonal over any distance;
+//! * capturing is mandatory and is carried to its end; the choice between captures is free;
+//! * captured pieces are removed after the move is finished; until then they remain an
+//!   obstacle, and the same piece cannot be jumped twice (the Turkish strike);
+//! * after a capture a king must land on a square from which the capture can be
+//!   continued, if there are such squares;
+//! * a man that reaches its promotion rank during a capture goes on capturing as a king.
 
-// Направление диагонали — индекс в таблице соседей сразу для нескольких полей,
-// поэтому циклы по направлениям записаны через индекс.
+// A diagonal direction is an index into the neighbour table for several squares at once,
+// which is why the loops over directions are written with an index.
 #![allow(clippy::needless_range_loop)]
 
 use crate::board::{promotion_mask, Color, Position, Square, NE, NEIGHBOR, NO_SQUARE, NW, SE, SW};
 use std::fmt;
 
-/// Наибольшее число приземлений в одном ходе: за ход нельзя побить больше 12 шашек.
+/// Greatest number of landings in one move: no more than 12 pieces can be captured in a move.
 pub const MAX_STEPS: usize = 12;
 
-/// Ход: исходное поле и последовательность полей, на которые встаёт шашка.
+/// A move: the starting square and the sequence of squares the piece lands on.
 ///
-/// У тихого хода одно приземление. У взятия — по одному на каждую побитую шашку,
-/// поэтому взятия с разным маршрутом — разные ходы.
+/// A quiet move has one landing. A capture has one for every captured piece, so
+/// captures with different routes are different moves.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Move {
     from: Square,
     steps: [Square; MAX_STEPS],
     len: u8,
     captured: u32,
-    /// Номер приземления, на котором простая стала дамкой, плюс один; 0 — превращения нет.
+    /// Number of the landing at which a man became a king, plus one; 0 means no promotion.
     promo: u8,
 }
 
 impl Move {
-    /// Исходное поле.
+    /// The starting square.
     #[inline]
     #[must_use]
     pub const fn from(&self) -> Square {
         self.from
     }
 
-    /// Конечное поле.
+    /// The last square.
     #[inline]
     #[must_use]
     pub const fn to(&self) -> Square {
         self.steps[self.len as usize - 1]
     }
 
-    /// Поля приземления по порядку; последнее — конечное.
+    /// The landing squares in order; the final one is the last.
     #[inline]
     #[must_use]
     pub fn path(&self) -> &[Square] {
         &self.steps[..self.len as usize]
     }
 
-    /// Все поля маршрута: исходное и приземления.
+    /// All squares of the route: the starting square and the landings.
     pub fn squares(&self) -> impl Iterator<Item = Square> + '_ {
         std::iter::once(self.from).chain(self.path().iter().copied())
     }
 
-    /// Является ли ход взятием.
+    /// Whether the move is a capture.
     #[inline]
     #[must_use]
     pub const fn is_capture(&self) -> bool {
         self.captured != 0
     }
 
-    /// Маска побитых шашек.
+    /// Mask of the captured pieces.
     #[inline]
     #[must_use]
     pub const fn captured(&self) -> u32 {
         self.captured
     }
 
-    /// Число побитых шашек.
+    /// Number of captured pieces.
     #[inline]
     #[must_use]
     pub const fn captured_count(&self) -> u32 {
         self.captured.count_ones()
     }
 
-    /// Становится ли простая дамкой в результате хода.
+    /// Whether a man becomes a king as a result of the move.
     #[inline]
     #[must_use]
     pub const fn promotes(&self) -> bool {
         self.promo != 0
     }
 
-    /// Номер приземления (от нуля), на котором простая стала дамкой.
+    /// Number of the landing (from zero) at which a man became a king.
     #[must_use]
     pub const fn promotion_step(&self) -> Option<usize> {
         if self.promo == 0 {
@@ -99,7 +99,7 @@ impl Move {
         }
     }
 
-    /// Шашка, побитая на шаге `step` (от нуля). Для тихого хода — `None`.
+    /// The piece captured at step `step` (from zero). `None` for a quiet move.
     #[must_use]
     pub fn captured_at(&self, step: usize) -> Option<Square> {
         if !self.is_capture() || step >= self.len as usize {
@@ -122,7 +122,7 @@ impl Move {
         None
     }
 
-    /// Побитые шашки в порядке взятия.
+    /// The captured pieces in the order of capture.
     #[must_use]
     pub fn captured_in_order(&self) -> Vec<Square> {
         (0..self.len as usize)
@@ -142,7 +142,7 @@ impl fmt::Debug for Move {
     }
 }
 
-/// Направление диагонали от `a` к `b`, если поля лежат на одной диагонали.
+/// Direction of the diagonal from `a` to `b`, if the squares are on one diagonal.
 fn direction(a: Square, b: Square) -> Option<usize> {
     let df = i32::from(b.file()) - i32::from(a.file());
     let dr = i32::from(b.rank()) - i32::from(a.rank());
@@ -162,7 +162,7 @@ const fn bit(index: u8) -> u32 {
     1u32 << index
 }
 
-/// Направления тихого хода простой.
+/// Directions of a man's quiet move.
 #[inline]
 const fn forward_dirs(color: Color) -> [usize; 2] {
     match color {
@@ -171,11 +171,11 @@ const fn forward_dirs(color: Color) -> [usize; 2] {
     }
 }
 
-/// Обход вариантов взятия одной шашкой.
+/// Walks through the captures available to one piece.
 struct CaptureGen<'a> {
     enemy: u32,
-    /// Все шашки на доске, кроме бьющей: её исходное поле во время боя свободно,
-    /// а уже побитые шашки остаются на месте до конца хода.
+    /// All pieces on the board except the capturing one: its starting square is empty
+    /// during the capture, while pieces already captured stay in place until the move ends.
     occ: u32,
     promo_mask: u32,
     from: Square,
@@ -196,7 +196,7 @@ impl CaptureGen<'_> {
         });
     }
 
-    /// Взятия простой с поля `sq`. Возвращает `true`, если нашлось хотя бы одно.
+    /// Captures of a man from the square `sq`. Returns `true` if at least one was found.
     fn man(&mut self, sq: u8, captured: u32) -> bool {
         if self.len >= MAX_STEPS {
             return false;
@@ -220,7 +220,7 @@ impl CaptureGen<'_> {
             self.steps[self.len] = Square(land);
             self.len += 1;
             let continues = if self.promo_mask & bit(land) != 0 {
-                // Простая стала дамкой и сразу продолжает бой как дамка.
+                // The man has become a king and goes on capturing as a king at once.
                 self.promo = self.len as u8;
                 let more = self.king(land, taken);
                 if !more {
@@ -240,14 +240,14 @@ impl CaptureGen<'_> {
         found
     }
 
-    /// Взятия дамки с поля `sq`. Возвращает `true`, если нашлось хотя бы одно.
+    /// Captures of a king from the square `sq`. Returns `true` if at least one was found.
     fn king(&mut self, sq: u8, captured: u32) -> bool {
         if self.len >= MAX_STEPS {
             return false;
         }
         let mut found = false;
         for dir in 0..4 {
-            // Идём по свободным полям до первой шашки.
+            // Walk over the empty squares up to the first piece.
             let mut cur = NEIGHBOR[sq as usize][dir];
             while cur != NO_SQUARE && self.occ & bit(cur) == 0 {
                 cur = NEIGHBOR[cur as usize][dir];
@@ -256,7 +256,7 @@ impl CaptureGen<'_> {
                 continue;
             }
             let over_bit = bit(cur);
-            // Своя шашка или уже побитая (турецкий удар) — препятствие.
+            // An own piece, or one already captured (the Turkish strike), is an obstacle.
             if self.enemy & over_bit == 0 || captured & over_bit != 0 {
                 continue;
             }
@@ -273,7 +273,7 @@ impl CaptureGen<'_> {
                 count += 1;
                 land = NEIGHBOR[land as usize][dir];
             }
-            // Сначала поля, с которых бой продолжается: они обязательны.
+            // First the squares from which the capture continues: they are mandatory.
             let mut any_continuation = false;
             for &target in &landings[..count] {
                 self.steps[self.len] = Square(target);
@@ -284,7 +284,7 @@ impl CaptureGen<'_> {
                 self.len -= 1;
                 self.steps[self.len] = Square(0);
             }
-            // Если продолжения нет ни с одного поля, дамка встаёт на любое из них.
+            // If the capture continues from none of the squares, the king lands on any of them.
             if !any_continuation {
                 for &target in &landings[..count] {
                     self.steps[self.len] = Square(target);
@@ -299,7 +299,7 @@ impl CaptureGen<'_> {
     }
 }
 
-/// Все взятия стороны, чья очередь хода. Список `out` дополняется.
+/// All captures of the side to move. The list `out` is appended to.
 pub fn generate_captures(pos: &Position, out: &mut Vec<Move>) {
     let own = pos.pieces(pos.side);
     let enemy = pos.pieces(pos.side.opponent());
@@ -326,8 +326,8 @@ pub fn generate_captures(pos: &Position, out: &mut Vec<Move>) {
     }
 }
 
-/// Все тихие ходы стороны, чья очередь хода (без учёта обязательности взятия).
-/// Список `out` дополняется.
+/// All quiet moves of the side to move (regardless of whether a capture is mandatory).
+/// The list `out` is appended to.
 pub fn generate_quiet(pos: &Position, out: &mut Vec<Move>) {
     let own = pos.pieces(pos.side);
     let occ = pos.occupied();
@@ -373,7 +373,7 @@ pub fn generate_quiet(pos: &Position, out: &mut Vec<Move>) {
     }
 }
 
-/// Все допустимые ходы: если есть взятия, то только они. Список `out` перезаписывается.
+/// All legal moves: only the captures if there are any. The list `out` is overwritten.
 pub fn generate_moves(pos: &Position, out: &mut Vec<Move>) {
     out.clear();
     generate_captures(pos, out);
@@ -382,7 +382,7 @@ pub fn generate_moves(pos: &Position, out: &mut Vec<Move>) {
     }
 }
 
-/// Все допустимые ходы в позиции.
+/// All legal moves in a position.
 #[must_use]
 pub fn legal_moves(pos: &Position) -> Vec<Move> {
     let mut out = Vec::with_capacity(16);
@@ -390,7 +390,7 @@ pub fn legal_moves(pos: &Position) -> Vec<Move> {
     out
 }
 
-/// Может ли сторона `color` что-нибудь побить, если ход её.
+/// Whether the side `color` could capture something if it were its move.
 #[must_use]
 pub fn has_capture(pos: &Position, color: Color) -> bool {
     let own = pos.pieces(color);
@@ -420,14 +420,14 @@ pub fn has_capture(pos: &Position, color: Color) -> bool {
     false
 }
 
-/// Данные для отмены хода.
+/// Data for taking a move back.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Undo {
     kings: u32,
 }
 
 impl Position {
-    /// Выполняет ход на месте. Ход должен быть получен генератором для этой позиции.
+    /// Makes a move in place. The move must come from the generator for this position.
     pub const fn make(&mut self, mv: &Move) -> Undo {
         let undo = Undo { kings: self.kings };
         let from_bit = mv.from().bit();
@@ -451,7 +451,7 @@ impl Position {
         undo
     }
 
-    /// Отменяет ход, выполненный [`Position::make`].
+    /// Takes back a move made by [`Position::make`].
     pub const fn unmake(&mut self, mv: &Move, undo: Undo) {
         let from_bit = mv.from().bit();
         let to_bit = mv.to().bit();
@@ -469,7 +469,7 @@ impl Position {
         self.kings = undo.kings;
     }
 
-    /// Позиция после хода.
+    /// The position after a move.
     #[inline]
     #[must_use]
     pub fn after(&self, mv: &Move) -> Self {
@@ -479,7 +479,7 @@ impl Position {
     }
 }
 
-/// Число последовательностей ходов длиной `depth` полуходов из позиции.
+/// Number of move sequences `depth` plies long from a position.
 #[must_use]
 pub fn perft(pos: &Position, depth: u32) -> u64 {
     fn go(pos: &Position, depth: u32, buffers: &mut [Vec<Move>]) -> u64 {

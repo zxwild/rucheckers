@@ -1,41 +1,41 @@
-//! Системные диалоги выбора файла.
+//! System file dialogs.
 //!
-//! На macOS диалог должен открываться в главном потоке и сам ведёт цикл событий.
-//! На остальных системах он открывается в отдельном потоке, чтобы окно продолжало
-//! перерисовываться, пока пользователь выбирает файл.
+//! On macOS the dialog must be opened on the main thread and runs the event loop itself.
+//! On other systems it is opened in a separate thread, so that the window keeps
+//! repainting while the user is choosing a file.
 
 use rucheckers::i18n::{tr, Lang, Text};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 
-/// Расширение файлов партий.
+/// Extension of game files.
 pub const EXTENSION: &str = "pdn";
 
-/// Что делать с выбранным файлом.
+/// What to do with the chosen file.
 pub enum FileAction {
     Open,
-    /// Сохранить подготовленный текст PDN.
+    /// Save the prepared PDN text.
     Save(String),
 }
 
-/// Открытый диалог выбора файла.
+/// An open file dialog.
 pub struct FileJob {
     pub action: FileAction,
     receiver: Receiver<Option<PathBuf>>,
 }
 
-/// Состояние диалога.
+/// State of the dialog.
 pub enum FileJobState {
-    /// Пользователь ещё выбирает.
+    /// The user is still choosing.
     Pending,
-    /// Диалог закрыт без выбора.
+    /// The dialog was closed without a choice.
     Cancelled,
-    /// Выбран файл.
+    /// A file was chosen.
     Chosen(PathBuf),
 }
 
 impl FileJob {
-    /// Открывает диалог. `default_name` — предлагаемое имя файла при сохранении.
+    /// Opens the dialog. `default_name` is the file name suggested for saving.
     pub fn start(action: FileAction, lang: Lang, default_name: &str) -> Self {
         let (sender, receiver) = channel();
         let saving = matches!(action, FileAction::Save(_));
@@ -57,7 +57,8 @@ impl FileJob {
         run();
         #[cfg(not(target_os = "macos"))]
         {
-            // Если поток создать не удалось, канал закрывается и диалог считается отменённым.
+            // If the thread cannot be created, the channel closes and the dialog counts as
+            // cancelled.
             let _ = std::thread::Builder::new()
                 .name("rucheckers-dialog".to_string())
                 .spawn(run);
@@ -65,7 +66,7 @@ impl FileJob {
         Self { action, receiver }
     }
 
-    /// Проверяет, закрыт ли диалог.
+    /// Checks whether the dialog has been closed.
     pub fn poll(&self) -> FileJobState {
         match self.receiver.try_recv() {
             Ok(Some(path)) => FileJobState::Chosen(path),
@@ -75,7 +76,7 @@ impl FileJob {
     }
 }
 
-/// Добавляет расширение `.pdn`, если пользователь его не указал.
+/// Adds the `.pdn` extension if the user gave none.
 pub fn with_extension(mut path: PathBuf) -> PathBuf {
     if path.extension().is_none() {
         path.set_extension(EXTENSION);

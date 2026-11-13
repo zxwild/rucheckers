@@ -1,22 +1,22 @@
-//! Статическая оценка позиции.
+//! Static evaluation of a position.
 //!
-//! Оценка измеряется в сотых долях простой шашки и складывается из материала,
-//! продвижения и расположения простых, охраны дамочных полей, подвижности дамок
-//! и поправок для окончаний, в которых перевес не реализуется.
+//! The score is measured in hundredths of a man and is made up of material, the
+//! advancement and placement of men, the guard of the promotion squares, the mobility
+//! of kings, and corrections for endgames in which an advantage cannot be converted.
 
 use crate::board::{squares_of, Color, Position, Square, MAIN_ROAD, NEIGHBOR, NO_SQUARE};
 
-/// Стоимость простой.
+/// Value of a man.
 pub const MAN_VALUE: i32 = 100;
-/// Стоимость дамки.
+/// Value of a king.
 pub const KING_VALUE: i32 = 290;
 
-/// Бонус простой за продвижение по горизонталям (с точки зрения её стороны).
+/// Bonus of a man for advancing along the ranks (from its own side's point of view).
 const ADVANCE: [i32; 8] = [0, 2, 4, 7, 10, 14, 20, 0];
-/// Бонус простой за близость к центру по вертикалям.
+/// Bonus of a man for being close to the centre along the files.
 const FILE_BONUS: [i32; 8] = [-4, 0, 3, 5, 5, 3, 0, -4];
-/// Бонус простым на своей первой горизонтали: они не пускают соперника в дамки.
-/// Индекс — номер поля (a1, c1, e1, g1) с точки зрения стороны.
+/// Bonus of men on their own back rank: they keep the opponent from promoting.
+/// The index is the number of the square (a1, c1, e1, g1) from the side's point of view.
 const BACK_RANK_BONUS: [i32; 4] = [2, 8, 8, 4];
 
 const fn build_man_table() -> [i32; 32] {
@@ -26,7 +26,7 @@ const fn build_man_table() -> [i32; 32] {
         let rank = i / 4;
         let file = 2 * (i % 4) + rank % 2;
         table[i] = FILE_BONUS[file];
-        // Центральные поля c3–f6 ценнее остальных.
+        // The central squares c3–f6 are worth more than the rest.
         if rank >= 2 && rank <= 5 && file >= 2 && file <= 5 {
             table[i] += 3;
         }
@@ -35,10 +35,10 @@ const fn build_man_table() -> [i32; 32] {
     table
 }
 
-/// Позиционная ценность поля для белой простой; для чёрной поле зеркалится (31 − i).
+/// Positional value of a square for a white man; for a black one the square is mirrored (31 − i).
 static MAN_TABLE: [i32; 32] = build_man_table();
 
-/// Число свободных полей, доступных дамке тихим ходом.
+/// Number of empty squares a king can reach with a quiet move.
 #[allow(clippy::needless_range_loop)]
 fn king_mobility(sq: Square, occupied: u32) -> i32 {
     let mut count = 0;
@@ -52,7 +52,7 @@ fn king_mobility(sq: Square, occupied: u32) -> i32 {
     count
 }
 
-/// Оценка с точки зрения белых.
+/// Score from White's point of view.
 #[must_use]
 pub fn evaluate_white(pos: &Position) -> i32 {
     let white_men = pos.men(Color::White);
@@ -67,12 +67,12 @@ pub fn evaluate_white(pos: &Position) -> i32 {
     }
     let occupied = pos.occupied();
 
-    // Материал. Чем меньше фигур на доске, тем весомее перевес: это поощряет размены
-    // сильнейшей стороной.
+    // Material. The fewer pieces on the board, the heavier an advantage weighs: this
+    // encourages the stronger side to exchange.
     let material = MAN_VALUE * (wm - bm) + KING_VALUE * (wk - bk);
     let mut score = material + material * (24 - total).max(0) / 48;
 
-    // Простые: расположение и продвижение. К концу партии продвижение важнее.
+    // Men: placement and advancement. Towards the end of the game advancement matters more.
     let advance_weight = 16 + (24 - total).max(0);
     let mut placement = 0;
     let mut advance = 0;
@@ -86,7 +86,7 @@ pub fn evaluate_white(pos: &Position) -> i32 {
     }
     score += placement + advance * advance_weight / 16;
 
-    // Охрана дамочных полей, пока у соперника есть простые.
+    // Guard of the promotion squares while the opponent still has men.
     if bm > 0 {
         let weight = bm.min(6);
         let mut guard = 0;
@@ -104,7 +104,7 @@ pub fn evaluate_white(pos: &Position) -> i32 {
         score -= guard * weight / 6;
     }
 
-    // Дамки: подвижность и контроль большой дороги.
+    // Kings: mobility and control of the main road.
     for sq in squares_of(white_kings) {
         score += king_mobility(sq, occupied);
         if sq.on_main_road() {
@@ -118,7 +118,7 @@ pub fn evaluate_white(pos: &Position) -> i32 {
         }
     }
 
-    // Окончания, в которых материальный перевес обычно не реализуется.
+    // Endgames in which a material advantage usually cannot be converted.
     if wk > 0 && bk > 0 {
         let (strong_total, weak, weak_total) = if score >= 0 {
             (wm + wk, Color::Black, bm + bk)
@@ -126,13 +126,13 @@ pub fn evaluate_white(pos: &Position) -> i32 {
             (bm + bk, Color::White, wm + wk)
         };
         if weak_total == 1 {
-            // Одинокая дамка: две шашки её не ловят, три — только если она не на большой дороге.
+            // A lone king: two pieces cannot catch it, three only if it is off the main road.
             let on_road = pos.kings_of(weak) & MAIN_ROAD != 0;
             if strong_total <= 2 || (strong_total == 3 && on_road) {
                 score /= 8;
             }
         } else if wm == 0 && bm == 0 && (wk - bk).abs() <= 1 {
-            // Только дамки при почти равном числе.
+            // Kings only, in almost equal numbers.
             score /= 3;
         }
     }
@@ -140,7 +140,7 @@ pub fn evaluate_white(pos: &Position) -> i32 {
     score
 }
 
-/// Оценка с точки зрения стороны, чья очередь хода.
+/// Score from the point of view of the side to move.
 #[inline]
 #[must_use]
 pub fn evaluate(pos: &Position) -> i32 {
@@ -159,7 +159,7 @@ mod tests {
         evaluate_white(&Position::from_fen(fen).unwrap())
     }
 
-    /// Позиция, зеркальная относительно центра доски, со сменой цветов.
+    /// The position mirrored through the centre of the board, with the colours swapped.
     fn mirrored(pos: &Position) -> Position {
         Position {
             white: pos.black.reverse_bits(),
@@ -196,7 +196,10 @@ mod tests {
     fn material_matters() {
         assert!(eval("W:Wa1,c1,e1:Bb8,d8") > 50);
         assert!(eval("W:Wa1,c1:Bb8,d8,f8") < -50);
-        assert!(eval("W:WKa1,c1:Bb8,d8") > 150, "дамка заметно сильнее простой");
+        assert!(
+            eval("W:WKa1,c1:Bb8,d8") > 150,
+            "a king is clearly stronger than a man"
+        );
         assert!(eval("W:Wc3,e3,g3,a3,b2:Bb6,d6,f6,h6") > eval("W:Wc3,e3,g3,a3:Bb6,d6,f6,h6"));
     }
 
@@ -204,8 +207,8 @@ mod tests {
     fn lone_king_on_the_main_road_is_drawish() {
         let on_road = eval("W:WKc1,Ke1,Kg1:BKd4");
         let off_road = eval("W:WKc1,Ke1,Kg1:BKb4");
-        assert!(off_road > 4 * on_road, "{off_road} против {on_road}");
-        assert!(eval("W:WKc1,Ke1:BKb4") < 150, "две дамки не ловят одну");
+        assert!(off_road > 4 * on_road, "{off_road} versus {on_road}");
+        assert!(eval("W:WKc1,Ke1:BKb4") < 150, "two kings cannot catch one");
     }
 
     #[test]

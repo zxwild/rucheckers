@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 rust-version = "1.85"
 resolver = "3"
-description = "Русские шашки: игра против компьютера"
+description = "Russian draughts: a game against the computer"
 publish = false
 
 [lib]
@@ -16,14 +16,15 @@ name = "rucheckers"
 path = "src/main.rs"
 
 [dependencies]
-# Окно, ввод и векторная отрисовка (OpenGL через glow). Встроенные шрифты содержат кириллицу.
+# Window, input and vector drawing (OpenGL through glow). The built-in fonts cover Latin and
+# Cyrillic.
 eframe = { version = "=0.31.1", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
-# Оконная библиотека, на которой работает eframe. Указана явно ради её стандартного набора
-# возможностей: в Wayland под GNOME заголовок и рамку окна рисует само приложение.
+# The windowing library eframe runs on. It is listed explicitly for its default feature
+# set: on Wayland under GNOME the application draws the title bar and window frame itself.
 winit = "=0.30.13"
-# Вывод звука. Декодеры отключены: все звуки синтезируются программой.
+# Sound output. The decoders are off: the program synthesizes all its sounds.
 rodio = { version = "=0.20.1", default-features = false }
-# Системный диалог выбора файла (macOS: AppKit; Linux: XDG Desktop Portal, запасной вариант — zenity).
+# System file dialog (macOS: AppKit; Linux: XDG Desktop Portal, falling back to zenity).
 rfd = { version = "=0.15.4", default-features = false, features = ["xdg-portal", "async-std"] }
 
 [lints.rust]
@@ -50,8 +51,8 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 
-# Тесты движка (эталон генератора, партии компьютера) заметно быстрее с оптимизацией.
-# Зависимости в тестах не исполняются, поэтому собираются без неё.
+# The engine tests (move generator reference, computer games) are much faster when optimized.
+# Dependencies do not run in the tests, so they are built without optimization.
 [profile.test]
 opt-level = 2
 

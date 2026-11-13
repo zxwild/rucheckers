@@ -1,6 +1,6 @@
-//! Логика интерфейса, не зависящая от окна: геометрия доски, выбор хода мышью,
-//! расчёт анимации и эффектов, изображение шашки и игровая сессия. Вывод на экран
-//! находится в исполняемом файле.
+//! Interface logic that does not depend on a window: board geometry, choosing a move
+//! with the mouse, animation and effect timing, the picture of a piece and the game
+//! session. Drawing on the screen is in the executable.
 
 pub mod anim;
 pub mod fx;

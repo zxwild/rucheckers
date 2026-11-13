@@ -1,59 +1,60 @@
-//! Общие вспомогательные функции интеграционных тестов.
+//! Helper functions shared by the integration tests.
 #![allow(dead_code)]
 
-use rucheckers::board::{Color, Position, Square};
+use rucheckers::board::{Position, Square};
 use rucheckers::moves::{has_capture, legal_moves, Move};
 use rucheckers::notation::{format_move, parse_move};
 use rucheckers::rules::{occurrences, GameState, Outcome};
 use rucheckers::tree::{GameTree, NodeId};
 
-/// Позиция из записи FEN.
+/// A position from its FEN text.
 pub fn pos(fen: &str) -> Position {
     Position::from_fen(fen).unwrap_or_else(|e| panic!("FEN {fen:?}: {e}"))
 }
 
-/// Поле по имени.
+/// A square by its name.
 pub fn sq(name: &str) -> Square {
-    Square::parse(name).unwrap_or_else(|| panic!("поле {name:?}"))
+    Square::parse(name).unwrap_or_else(|| panic!("square {name:?}"))
 }
 
-/// Отсортированные записи всех допустимых ходов.
+/// The sorted notations of all legal moves.
 pub fn move_names(pos: &Position) -> Vec<String> {
     let mut names: Vec<String> = legal_moves(pos).iter().map(format_move).collect();
     names.sort();
     names
 }
 
-/// Ход по записи среди допустимых в позиции.
+/// The move with the given notation among the legal moves of a position.
 pub fn mv(pos: &Position, text: &str) -> Move {
-    parse_move(text, &legal_moves(pos)).unwrap_or_else(|e| panic!("ход {text:?} в позиции\n{pos}\n{e}"))
+    parse_move(text, &legal_moves(pos))
+        .unwrap_or_else(|e| panic!("move {text:?} in the position\n{pos}\n{e}"))
 }
 
-/// Делает ход в дереве по записи.
+/// Plays a move in a tree by its notation.
 pub fn play(tree: &mut GameTree, text: &str) -> NodeId {
     let m = mv(tree.current_node().position(), text);
-    tree.play(&m).unwrap_or_else(|e| panic!("ход {text:?}: {e}"))
+    tree.play(&m).unwrap_or_else(|e| panic!("move {text:?}: {e}"))
 }
 
-/// Делает в дереве несколько ходов подряд.
+/// Plays several moves in a row in a tree.
 pub fn play_all(tree: &mut GameTree, texts: &[&str]) {
     for text in texts {
         play(tree, text);
     }
 }
 
-/// Результат в текущем узле дерева.
+/// The result in the current node of a tree.
 pub fn outcome(tree: &GameTree) -> Option<Outcome> {
     tree.current_node().outcome()
 }
 
-/// Ищет последовательность из `plies` тихих ходов, в которой:
-/// * каждый ход удовлетворяет условию `allow(номер полухода от 1, позиция до хода, ход)`;
-/// * ни у одной из сторон не возникает взятия;
-/// * позиции не повторяются (в том числе не совпадают с `avoid`);
-/// * после каждого хода у соперника есть ходы.
+/// Looks for a sequence of `plies` quiet moves in which:
+/// * every move satisfies `allow(ply number from 1, position before the move, move)`;
+/// * neither side ever has a capture;
+/// * positions do not repeat (and do not coincide with any of `avoid`);
+/// * after every move the opponent has moves.
 ///
-/// Поиск детерминирован (перебор с возвратом).
+/// The search is deterministic (backtracking).
 pub fn quiet_line(
     start: &Position,
     avoid: &[Position],
@@ -97,7 +98,7 @@ pub fn quiet_line(
     }
     assert!(
         !has_capture(start, start.side),
-        "в исходной позиции есть взятие:\n{start}"
+        "the starting position has a capture:\n{start}"
     );
     let mut seen = avoid.to_vec();
     seen.push(*start);
@@ -105,24 +106,24 @@ pub fn quiet_line(
     let mut budget = 2_000_000;
     assert!(
         go(start, 1, plies, &mut seen, &mut line, allow, &mut budget),
-        "не найдена тихая линия из {plies} полуходов в позиции\n{start}"
+        "no quiet line of {plies} plies found in the position\n{start}"
     );
     line
 }
 
-/// Ходит ли этим ходом дамка.
+/// Whether this move is made by a king.
 pub const fn is_king_move(pos: &Position, m: &Move) -> bool {
     pos.kings & m.from().bit() != 0
 }
 
-/// Результат состояния с учётом всех предыдущих позиций партии (без оптимизаций):
-/// независимая от дерева проверка повторений.
+/// The result of a state given all earlier positions of the game (without
+/// optimizations): a check of repetitions that is independent of the tree.
 pub fn outcome_with_full_history(state: &GameState, earlier: &[Position]) -> Option<Outcome> {
     state.outcome(occurrences(earlier, &state.pos))
 }
 
-/// Простейший независимый решатель: может ли сторона, чья очередь хода, форсированно
-/// лишить соперника ходов не более чем за `plies` полуходов. Правила ничьей не учитываются.
+/// The simplest independent solver: whether the side to move can force the opponent out
+/// of moves in at most `plies` plies. The draw rules are not taken into account.
 pub fn wins_within(pos: &Position, plies: u32) -> bool {
     if plies == 0 {
         return false;
@@ -132,7 +133,7 @@ pub fn wins_within(pos: &Position, plies: u32) -> bool {
         .any(|m| loses_within(&pos.after(m), plies - 1))
 }
 
-/// Проигрывает ли сторона, чья очередь хода, не более чем за `plies` полуходов при любой игре.
+/// Whether the side to move loses in at most `plies` plies whatever it plays.
 pub fn loses_within(pos: &Position, plies: u32) -> bool {
     let moves = legal_moves(pos);
     if moves.is_empty() {
@@ -144,18 +145,10 @@ pub fn loses_within(pos: &Position, plies: u32) -> bool {
     moves.iter().all(|m| wins_within(&pos.after(m), plies - 1))
 }
 
-/// Первые ходы, форсированно выигрывающие не более чем за `plies` полуходов.
+/// The first moves that win by force in at most `plies` plies.
 pub fn winning_moves(pos: &Position, plies: u32) -> Vec<Move> {
     legal_moves(pos)
         .into_iter()
         .filter(|m| loses_within(&pos.after(m), plies - 1))
         .collect()
-}
-
-/// Цвет по-русски (для сообщений тестов).
-pub const fn color_name(color: Color) -> &'static str {
-    match color {
-        Color::White => "белые",
-        Color::Black => "чёрные",
-    }
 }

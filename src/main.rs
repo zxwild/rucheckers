@@ -1,7 +1,7 @@
-//! Русские шашки: игра против компьютера. Точка входа настольного приложения.
+//! Russian draughts: a game against the computer. Entry point of the desktop application.
 //!
-//! Вся логика игры находится в библиотеке `rucheckers` и проверяется тестами без окна;
-//! здесь — только окно, отрисовка, звук и системные диалоги.
+//! All game logic is in the `rucheckers` library and is tested without a window; here
+//! there is only the window, drawing, sound and system dialogs.
 
 mod gui;
 

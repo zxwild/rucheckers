@@ -1,18 +1,18 @@
-//! Дерево партии: история ходов с вариантами.
+//! The game tree: the history of moves with variations.
 //!
-//! Каждый узел хранит позицию после хода и счётчики ничьей, накопленные по ветке,
-//! ведущей к нему. Поэтому повторения позиций и лимиты ничьей всегда считаются
-//! по той ветке, на которой находится узел, и не зависят от соседних вариантов.
+//! Every node keeps the position after its move and the draw counters accumulated along
+//! the branch that leads to it. Repetitions and draw limits are therefore always
+//! counted along the branch the node is on and do not depend on neighbouring variations.
 
 use crate::board::Position;
 use crate::moves::{legal_moves, Move};
 use crate::rules::{GameState, Outcome};
 use std::fmt;
 
-/// Идентификатор узла дерева.
+/// Identifier of a tree node.
 pub type NodeId = usize;
 
-/// Узел дерева партии.
+/// A node of the game tree.
 #[derive(Clone, Debug)]
 pub struct Node {
     parent: Option<NodeId>,
@@ -26,69 +26,69 @@ pub struct Node {
 }
 
 impl Node {
-    /// Родительский узел (у корня его нет).
+    /// The parent node (the root has none).
     #[must_use]
     pub const fn parent(&self) -> Option<NodeId> {
         self.parent
     }
 
-    /// Продолжения: первое — основное, остальные — варианты в порядке создания.
+    /// Continuations: the first is the main one, the rest are variations in order of creation.
     #[must_use]
     pub fn children(&self) -> &[NodeId] {
         &self.children
     }
 
-    /// Ход, которым получена позиция (у корня его нет).
+    /// The move that led to the position (the root has none).
     #[must_use]
     pub const fn mv(&self) -> Option<&Move> {
         self.mv.as_ref()
     }
 
-    /// Позиция и счётчики ничьей.
+    /// The position and the draw counters.
     #[must_use]
     pub const fn state(&self) -> &GameState {
         &self.state
     }
 
-    /// Позиция после хода.
+    /// The position after the move.
     #[must_use]
     pub const fn position(&self) -> &Position {
         &self.state.pos
     }
 
-    /// Число полуходов от начала партии.
+    /// Number of plies from the start of the game.
     #[must_use]
     pub const fn ply(&self) -> u32 {
         self.ply
     }
 
-    /// Сколько раз позиция встретилась на ветке, считая этот узел.
+    /// How many times the position has occurred on the branch, this node included.
     #[must_use]
     pub const fn occurrences(&self) -> u32 {
         self.occurrences
     }
 
-    /// Результат, если партия в этом узле закончена.
+    /// The result, if the game has ended in this node.
     #[must_use]
     pub const fn outcome(&self) -> Option<Outcome> {
         self.outcome
     }
 
-    /// Продолжение, по которому пойдёт переход «вперёд».
+    /// The continuation that stepping "forward" follows.
     #[must_use]
     pub fn preferred_child(&self) -> Option<NodeId> {
         self.children.get(self.preferred).copied()
     }
 }
 
-/// Ошибка изменения дерева.
+/// Error of changing the tree.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TreeError {
-    /// Узла с таким идентификатором нет.
+    /// There is no node with this identifier.
     NoSuchNode,
-    /// Партия в этом узле уже закончена.
+    /// The game has already ended in this node.
     GameOver,
-    /// Ход недопустим в позиции узла.
+    /// The move is not legal in the position of the node.
     IllegalMove,
 }
 
@@ -104,7 +104,7 @@ impl fmt::Display for TreeError {
 
 impl std::error::Error for TreeError {}
 
-/// Дерево партии с указателем на текущую позицию.
+/// A game tree with a pointer to the current position.
 #[derive(Clone, Debug)]
 pub struct GameTree {
     nodes: Vec<Node>,
@@ -118,16 +118,16 @@ impl Default for GameTree {
 }
 
 impl GameTree {
-    /// Корень дерева.
+    /// The root of the tree.
     pub const ROOT: NodeId = 0;
 
-    /// Партия из начальной расстановки.
+    /// A game from the starting position.
     #[must_use]
     pub fn new() -> Self {
         Self::from_position(Position::initial())
     }
 
-    /// Партия из произвольной позиции.
+    /// A game from an arbitrary position.
     #[must_use]
     pub fn from_position(pos: Position) -> Self {
         let state = GameState::new(pos);
@@ -147,37 +147,37 @@ impl GameTree {
         }
     }
 
-    /// Число узлов, включая корень.
+    /// Number of nodes, the root included.
     #[must_use]
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
-    /// Дерево без единого хода.
+    /// Whether the tree has no moves at all.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.nodes.len() <= 1
     }
 
-    /// Узел по идентификатору.
+    /// The node with an identifier.
     #[must_use]
     pub fn get(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id)
     }
 
-    /// Корневой узел.
+    /// The root node.
     #[must_use]
     pub fn root(&self) -> &Node {
         &self.nodes[Self::ROOT]
     }
 
-    /// Идентификатор текущего узла.
+    /// Identifier of the current node.
     #[must_use]
     pub const fn current(&self) -> NodeId {
         self.current
     }
 
-    /// Текущий узел.
+    /// The current node.
     #[must_use]
     pub fn current_node(&self) -> &Node {
         &self.nodes[self.current]
@@ -227,10 +227,9 @@ impl GameTree {
         Ok(id)
     }
 
-    /// Сколько раз позиция `state` встречается на ветке, заканчивающейся в `parent`,
-    /// считая её саму. Повториться могут только позиции, разделённые тихими ходами
-    /// дамок, поэтому достаточно просмотреть столько предков, сколько таких ходов
-    /// сделано подряд.
+    /// How many times the position `state` occurs on the branch that ends in `parent`,
+    /// itself included. Only positions separated by quiet king moves can repeat, so it
+    /// is enough to look at as many ancestors as there were such moves in a row.
     fn count_occurrences(&self, parent: NodeId, state: &GameState) -> u32 {
         let mut count = 1;
         let mut cursor = Some(parent);
@@ -261,7 +260,7 @@ impl GameTree {
         Ok(id)
     }
 
-    /// Переходит к узлу. Ветка, ведущая к нему, становится активной.
+    /// Goes to a node. The branch that leads to it becomes the active one.
     pub fn go_to(&mut self, id: NodeId) -> bool {
         if id >= self.nodes.len() {
             return false;
@@ -277,7 +276,7 @@ impl GameTree {
         true
     }
 
-    /// На ход назад.
+    /// One move back.
     pub fn back(&mut self) -> bool {
         match self.nodes[self.current].parent {
             Some(parent) => {
@@ -288,7 +287,7 @@ impl GameTree {
         }
     }
 
-    /// На ход вперёд по активной ветке.
+    /// One move forward along the active branch.
     pub fn forward(&mut self) -> bool {
         match self.nodes[self.current].preferred_child() {
             Some(child) => {
@@ -299,14 +298,14 @@ impl GameTree {
         }
     }
 
-    /// К началу партии.
+    /// To the start of the game.
     pub const fn go_start(&mut self) -> bool {
         let moved = self.current != Self::ROOT;
         self.current = Self::ROOT;
         moved
     }
 
-    /// К концу активной ветки.
+    /// To the end of the active branch.
     pub fn go_end(&mut self) -> bool {
         let mut moved = false;
         while self.forward() {
@@ -315,7 +314,7 @@ impl GameTree {
         moved
     }
 
-    /// Переходит к соседнему варианту: `step = 1` — следующий, `-1` — предыдущий.
+    /// Goes to a neighbouring variation: `step = 1` is the next one, `-1` the previous one.
     pub fn switch_variation(&mut self, step: isize) -> bool {
         let Some(parent) = self.nodes[self.current].parent else {
             return false;
@@ -333,7 +332,7 @@ impl GameTree {
         self.go_to(target)
     }
 
-    /// Все варианты хода, которым получен узел (включая его самого).
+    /// All variations of the move that led to the node (the node itself included).
     #[must_use]
     pub fn siblings(&self, id: NodeId) -> &[NodeId] {
         match self.nodes.get(id).and_then(|n| n.parent) {
@@ -342,7 +341,7 @@ impl GameTree {
         }
     }
 
-    /// Путь от корня до узла включительно.
+    /// The path from the root to the node, inclusive.
     #[must_use]
     pub fn path_to(&self, id: NodeId) -> Vec<NodeId> {
         let mut path = Vec::new();
@@ -355,7 +354,8 @@ impl GameTree {
         path
     }
 
-    /// Активная ветка: от корня через текущий узел до конца по предпочтительным продолжениям.
+    /// The active branch: from the root through the current node to the end along the
+    /// preferred continuations.
     #[must_use]
     pub fn active_line(&self) -> Vec<NodeId> {
         let mut line = self.path_to(self.current);
@@ -367,7 +367,7 @@ impl GameTree {
         line
     }
 
-    /// Последний узел основной линии (первые продолжения от корня).
+    /// The last node of the main line (the first continuations from the root).
     #[must_use]
     pub fn main_line_end(&self) -> NodeId {
         let mut cursor = Self::ROOT;
@@ -377,8 +377,8 @@ impl GameTree {
         cursor
     }
 
-    /// Позиции ветки, предшествующие узлу, которые ещё могут повториться
-    /// (от более ранних к более поздним, без самого узла).
+    /// The positions of the branch before the node that can still repeat (from earlier
+    /// to later, without the node itself).
     #[must_use]
     pub fn history_before(&self, id: NodeId) -> Vec<Position> {
         let mut history = Vec::new();
@@ -397,8 +397,8 @@ impl GameTree {
         history
     }
 
-    /// Совпадают ли деревья по структуре: начальная позиция, ходы и порядок вариантов.
-    /// Положение указателя текущей позиции не сравнивается.
+    /// Whether the trees have the same structure: starting position, moves and order of
+    /// variations. The pointer to the current position is not compared.
     #[must_use]
     pub fn same_structure(&self, other: &Self) -> bool {
         if self.nodes.len() != other.nodes.len() || self.root().state != other.root().state {
@@ -443,7 +443,7 @@ mod tests {
         let mut tree = GameTree::new();
         let first = legal_moves(tree.root().position())[0];
         let id = tree.play(&first).unwrap();
-        // Тот же ход уже недопустим: теперь очередь чёрных.
+        // The same move is no longer legal: it is Black's turn now.
         assert_eq!(tree.add_move(id, &first), Err(TreeError::IllegalMove));
         assert_eq!(tree.add_move(999, &first), Err(TreeError::NoSuchNode));
         assert!(!tree.go_to(999));

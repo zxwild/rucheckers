@@ -1,6 +1,6 @@
-//! Отрисовка доски и шашек. Доска рисуется векторными фигурами, шашки — изображениями,
-//! рассчитанными под точный размер клетки, поэтому картинка остаётся чёткой при любом
-//! размере окна и плотности экрана.
+//! Drawing of the board and pieces. The board is drawn with vector shapes, the pieces
+//! with images computed for the exact cell size, so the picture stays sharp at any
+//! window size and screen density.
 
 use super::theme;
 use eframe::egui::{
@@ -12,7 +12,7 @@ use rucheckers::ui::geometry::BoardLayout;
 use rucheckers::ui::sprite::{self, PIECE_RADIUS};
 use std::f32::consts::TAU;
 
-/// Цвет с изменённой непрозрачностью (0…1).
+/// A colour with a changed opacity (0…1).
 fn faded(color: Color32, alpha: f32) -> Color32 {
     if alpha >= 0.999 {
         color
@@ -21,7 +21,7 @@ fn faded(color: Color32, alpha: f32) -> Color32 {
     }
 }
 
-/// Детерминированное псевдослучайное число 0…1 по целому ключу (для рисунка древесины).
+/// A deterministic pseudo-random number 0…1 for an integer key (for the wood pattern).
 fn noise(key: u32) -> f32 {
     let mut x = key.wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
     x ^= x >> 15;
@@ -32,13 +32,13 @@ fn noise(key: u32) -> f32 {
     (x & 0xFFFF) as f32 / 65_535.0
 }
 
-/// Прямоугольник клетки.
+/// Rectangle of a cell.
 pub fn cell_rect(layout: &BoardLayout, file: u8, rank: u8) -> Rect {
     let (x, y) = layout.cell_origin(file, rank);
     Rect::from_min_size(pos2(x, y), vec2(layout.cell, layout.cell))
 }
 
-/// Прямоугольник всей доски вместе с рамкой.
+/// Rectangle of the whole board with its frame.
 pub fn outer_rect(layout: &BoardLayout) -> Rect {
     Rect::from_min_size(
         pos2(layout.outer_x, layout.outer_y),
@@ -46,13 +46,13 @@ pub fn outer_rect(layout: &BoardLayout) -> Rect {
     )
 }
 
-/// Центр поля на экране.
+/// Centre of a square on the screen.
 pub fn square_center(layout: &BoardLayout, sq: Square) -> Pos2 {
     let (x, y) = layout.square_center(sq);
     pos2(x, y)
 }
 
-/// Тонкие прожилки древесины внутри прямоугольника.
+/// Thin veins of wood inside a rectangle.
 fn wood_grain(painter: &Painter, rect: Rect, key: u32, color: Color32, count: u32, pixel: f32) {
     for i in 0..count {
         let k = key.wrapping_mul(31).wrapping_add(i * 7 + 1);
@@ -68,7 +68,7 @@ fn wood_grain(painter: &Painter, rect: Rect, key: u32, color: Color32, count: u3
     }
 }
 
-/// Доска: рамка с координатами и 64 клетки.
+/// The board: the frame with coordinates and the 64 cells.
 pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32) {
     let pixel = 1.0 / pixels_per_point.max(0.1);
     let outer = outer_rect(layout);
@@ -78,7 +78,7 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
         vec2(layout.field_size(), layout.field_size()),
     );
 
-    // Тень под доской и рамка.
+    // The shadow under the board and the frame.
     let radius = CornerRadius::same((frame * 0.28).clamp(2.0, 14.0) as u8);
     painter.rect_filled(
         outer.translate(vec2(0.0, frame * 0.10)).expand(frame * 0.03),
@@ -107,7 +107,7 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
         StrokeKind::Inside,
     );
 
-    // Клетки.
+    // The cells.
     for rank in 0..8u8 {
         for file in 0..8u8 {
             let rect = cell_rect(layout, file, rank);
@@ -129,7 +129,7 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
             }
         }
     }
-    // Кант вокруг игрового поля.
+    // The edging around the playing field.
     painter.rect_stroke(
         field,
         0.0,
@@ -137,7 +137,7 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
         StrokeKind::Outside,
     );
 
-    // Координаты: буквы сверху и снизу, цифры слева и справа.
+    // Coordinates: letters above and below, digits on the left and right.
     let font_size = frame * 0.52;
     if font_size >= 6.0 {
         let font = FontId::proportional(font_size);
@@ -169,12 +169,12 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
     }
 }
 
-/// Заливка поля полупрозрачным цветом (последний ход, выбранная шашка).
+/// Fills a square with a semi-transparent colour (the last move, the selected piece).
 pub fn tint_square(painter: &Painter, layout: &BoardLayout, sq: Square, color: Color32) {
     painter.rect_filled(cell_rect(layout, sq.file(), sq.rank()), 0.0, color);
 }
 
-/// Отметка поля, на которое можно пойти.
+/// Mark of a square a piece can go to.
 pub fn draw_target(painter: &Painter, layout: &BoardLayout, sq: Square, hovered: bool) {
     let center = square_center(layout, sq);
     let radius = layout.cell * if hovered { 0.20 } else { 0.15 };
@@ -186,8 +186,8 @@ pub fn draw_target(painter: &Painter, layout: &BoardLayout, sq: Square, hovered:
     painter.circle_filled(center, radius, theme::TARGET);
 }
 
-/// Отметка конечного поля серийного взятия: щелчок по нему выполняет все оставшиеся
-/// прыжки. От обычного доступного поля отличается кольцом.
+/// Mark of the final square of a multi-capture: a click on it makes all the remaining
+/// jumps. It differs from an ordinary reachable square by a ring.
 pub fn draw_final_target(painter: &Painter, layout: &BoardLayout, sq: Square, hovered: bool) {
     draw_target(painter, layout, sq, hovered);
     let center = square_center(layout, sq);
@@ -201,8 +201,8 @@ pub fn draw_final_target(painter: &Painter, layout: &BoardLayout, sq: Square, ho
     painter.circle_stroke(center, radius, Stroke::new(width, theme::TARGET));
 }
 
-/// Свечение: цвет прибавляется к фону и при этом слегка его приглушает. Чистое
-/// сложение на светлых тёплых полях даёт почти белый цвет и теряет оттенок.
+/// A glow: the colour is added to the background and dims it slightly at the same time.
+/// Pure addition gives an almost white colour on light warm squares and loses the tint.
 fn glow(color: [f32; 3], intensity: f32) -> Color32 {
     let intensity = intensity.clamp(0.0, 1.0);
     let channel = |v: f32| (v * intensity * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -214,7 +214,7 @@ fn glow(color: [f32; 3], intensity: f32) -> Color32 {
     )
 }
 
-/// Цвет с заданной непрозрачностью, перекрывающий фон.
+/// A colour with the given opacity that covers the background.
 fn blended(color: [f32; 3], alpha: f32) -> Color32 {
     let alpha = alpha.clamp(0.0, 1.0);
     let channel = |v: f32| (v * alpha * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -226,7 +226,7 @@ fn blended(color: [f32; 3], alpha: f32) -> Color32 {
     )
 }
 
-/// Круглое свечение: яркое в центре и сходящее на нет к краю.
+/// A round glow: bright in the centre and fading to nothing at the edge.
 fn glow_disc(center: Pos2, radius: f32, intensity: f32) -> Shape {
     const SEGMENTS: u32 = 32;
     let mut mesh = egui::Mesh::default();
@@ -251,7 +251,7 @@ fn glow_disc(center: Pos2, radius: f32, intensity: f32) -> Shape {
     Shape::mesh(mesh)
 }
 
-/// Свечение кольцом: ярче всего на радиусе `peak`, сходит на нет к `inner` и `outer`.
+/// A glow in a ring: brightest at the radius `peak`, fading to nothing at `inner` and `outer`.
 fn glow_ring(center: Pos2, inner: f32, peak: f32, outer: f32, intensity: f32) -> Shape {
     const SEGMENTS: u32 = 40;
     let mut mesh = egui::Mesh::default();
@@ -278,12 +278,13 @@ fn glow_ring(center: Pos2, inner: f32, peak: f32, outer: f32, intensity: f32) ->
     Shape::mesh(mesh)
 }
 
-/// Нижний слой разряда: вспышки на побитых шашках, молния за летящей шашкой и ореол
-/// вокруг неё. Рисуется поверх стоящих шашек, но под летящей.
+/// The lower layer of the discharge: flashes on the captured pieces, the lightning
+/// behind the flying piece and the halo around it. It is drawn over the standing pieces
+/// but under the flying one.
 ///
-/// Всё рисуется обычными треугольниками через ту же аппаратно ускоренную отрисовку
-/// (OpenGL), что и остальной интерфейс, поэтому эффект одинаково работает на macOS
-/// и Linux и не требует собственных шейдеров.
+/// Everything is drawn with plain triangles through the same hardware-accelerated
+/// rendering (OpenGL) as the rest of the interface, so the effect works the same on
+/// macOS and Linux and needs no shaders of its own.
 pub fn draw_lightning(
     painter: &Painter,
     layout: &BoardLayout,
@@ -322,7 +323,7 @@ pub fn draw_lightning(
             shapes.push(Shape::line(points.clone(), Stroke::new(thickness, color)));
         }
     }
-    // Ореол: начинается под краем шашки и выступает из-под неё.
+    // The halo: it starts under the edge of the piece and shows from under it.
     if let Some(halo) = &frame.halo {
         let edge = PIECE_RADIUS * cell;
         shapes.push(glow_ring(
@@ -336,7 +337,7 @@ pub fn draw_lightning(
     painter.extend(shapes);
 }
 
-/// Верхний слой разряда: искры. Рисуются поверх всех шашек.
+/// The upper layer of the discharge: the sparks. They are drawn over all pieces.
 pub fn draw_sparks(painter: &Painter, layout: &BoardLayout, frame: &DischargeFrame, pixels_per_point: f32) {
     let cell = layout.cell;
     let pixel = 1.0 / pixels_per_point.max(0.1);
@@ -345,7 +346,7 @@ pub fn draw_sparks(painter: &Painter, layout: &BoardLayout, frame: &DischargeFra
         pos2(x, y)
     };
     let mut shapes: Vec<Shape> = Vec::new();
-    // Искра — короткий светящийся штрих с яркой головкой.
+    // A spark is a short glowing stroke with a bright head.
     for spark in &frame.sparks {
         let (head, tail) = (on_screen(spark.head), on_screen(spark.tail));
         let color = fx::spark_color(spark.heat);
@@ -368,7 +369,7 @@ pub fn draw_sparks(painter: &Painter, layout: &BoardLayout, frame: &DischargeFra
     painter.extend(shapes);
 }
 
-/// Кольцо вокруг шашки, обязанной бить.
+/// The ring around a piece that must capture.
 pub fn draw_obligation_ring(painter: &Painter, layout: &BoardLayout, sq: Square) {
     let center = square_center(layout, sq);
     let width = (layout.cell * 0.045).max(1.5);
@@ -379,11 +380,11 @@ pub fn draw_obligation_ring(painter: &Painter, layout: &BoardLayout, sq: Square)
     );
 }
 
-/// Изображения шашек для текущего размера клетки.
+/// Images of the pieces for the current cell size.
 ///
-/// Шашки рассчитываются попиксельно (`rucheckers::ui::sprite`) ровно под размер клетки
-/// в физических пикселях и хранятся как текстуры: края и рельеф сглажены, а на месте
-/// шашка выводится пиксель в пиксель, без растяжения.
+/// The pieces are computed pixel by pixel (`rucheckers::ui::sprite`) for exactly the
+/// cell size in physical pixels and kept as textures: the edges and the relief are
+/// smooth, and a resting piece is drawn pixel for pixel, without stretching.
 pub struct PieceSprites {
     size_px: usize,
     pieces: [egui::TextureHandle; 4],
@@ -391,7 +392,7 @@ pub struct PieceSprites {
 }
 
 impl PieceSprites {
-    /// Рассчитывает изображения для клетки со стороной `size_px` физических пикселей.
+    /// Computes the images for a cell with the side of `size_px` physical pixels.
     pub fn new(ctx: &egui::Context, size_px: usize) -> Self {
         let size_px = size_px.max(2);
         let upload = |name: &str, image: sprite::PieceImage| {
@@ -417,7 +418,7 @@ impl PieceSprites {
         }
     }
 
-    /// Сторона клетки в физических пикселях, под которую рассчитаны изображения.
+    /// The side of the cell in physical pixels the images were computed for.
     pub const fn size_px(&self) -> usize {
         self.size_px
     }
@@ -433,10 +434,10 @@ impl PieceSprites {
     }
 }
 
-/// Шашка с центром в точке `center` (центр изображения совпадает с центром шашки).
+/// A piece centred at the point `center` (the centre of the image is the centre of the piece).
 ///
-/// `alpha` — непрозрачность (побитые шашки бледнеют), `lifted` — шашку держат мышью:
-/// она чуть крупнее и отбрасывает более длинную мягкую тень.
+/// `alpha` is the opacity (captured pieces dim); `lifted` means the piece is held with
+/// the mouse: it is slightly larger and casts a longer soft shadow.
 pub fn draw_piece(
     painter: &Painter,
     sprites: &PieceSprites,
@@ -457,8 +458,8 @@ pub fn draw_piece(
     painter.image(sprites.texture(piece).id(), rect, whole, tint);
 }
 
-/// Отметка стороны, чья очередь хода, в углу рамки; пока компьютер думает,
-/// вокруг неё вращается дуга.
+/// The mark of the side to move, in a corner of the frame; while the computer is
+/// thinking, an arc rotates around it.
 pub fn draw_turn_marker(
     painter: &Painter,
     center: Pos2,
@@ -492,12 +493,12 @@ pub fn draw_turn_marker(
     }
 }
 
-/// Радиус, в пределах которого точка считается попавшей в шашку (для курсора).
+/// The radius within which a point counts as being on a piece (for the cursor).
 pub fn piece_hit_radius(cell: f32) -> f32 {
     cell * (PIECE_RADIUS + 0.04)
 }
 
-/// Преобразование точки интерфейса в координаты для геометрии.
+/// Converts an interface point into coordinates for the geometry.
 pub fn layout_for(rect: Rect, flipped: bool, pixels_per_point: f32) -> BoardLayout {
     BoardLayout::fit(
         rect.left(),
@@ -509,7 +510,7 @@ pub fn layout_for(rect: Rect, flipped: bool, pixels_per_point: f32) -> BoardLayo
     )
 }
 
-/// Курсор «рука» над шашкой, которой можно ходить, и над доступным полем.
+/// The "hand" cursor over a piece that can move and over a reachable square.
 pub const fn cursor_for(hover: bool, dragging: bool) -> egui::CursorIcon {
     if dragging {
         egui::CursorIcon::Grabbing

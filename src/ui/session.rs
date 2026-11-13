@@ -1,8 +1,8 @@
-//! Игровая сессия: партия человека с компьютером поверх дерева вариантов.
+//! The game session: a game between a human and the computer on top of the tree of variations.
 //!
-//! Сессия решает, чей сейчас ход, запускает и отменяет фоновый расчёт компьютера,
-//! переключается между игрой и просмотром истории. Время передаётся извне, поэтому
-//! логика проверяется без окна.
+//! The session decides whose move it is, starts and cancels the computer's background
+//! calculation, and switches between playing and browsing the history. The time comes
+//! from outside, so the logic is tested without a window.
 
 use super::input::{InputEvent, MoveInput};
 use crate::ai::clamp_level;
@@ -13,10 +13,10 @@ use crate::rng::Rng;
 use crate::rules::Outcome;
 use crate::tree::{GameTree, NodeId};
 
-/// Наименьшая пауза перед ответом компьютера, с: мгновенный ответ выглядит неестественно.
+/// Shortest pause before the computer's reply, s: an instant reply looks unnatural.
 pub const DEFAULT_MIN_THINK_SECONDS: f64 = 0.6;
 
-/// Переход по истории партии.
+/// A step through the history of the game.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Nav {
     Start,
@@ -28,12 +28,12 @@ pub enum Nav {
     To(NodeId),
 }
 
-/// Событие сессии для интерфейса (анимация, звук).
+/// A session event for the interface (animation, sound).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SessionEvent {
-    /// Сделан ход, приведший в узел `node`.
+    /// A move was made that led to the node `node`.
     Played { node: NodeId, by_computer: bool },
-    /// Позиция сменилась без хода: переход по истории, новая или загруженная партия.
+    /// The position changed without a move: a step through the history, a new or a loaded game.
     Jumped,
 }
 
@@ -55,13 +55,14 @@ struct Thinking {
     reply: Reply,
 }
 
-/// Партия с компьютером.
+/// A game against the computer.
 #[derive(Debug)]
 pub struct Session {
     tree: GameTree,
     human: Color,
     level: u8,
-    /// Идёт игра (`true`) или просмотр истории (`false`). При просмотре компьютер не ходит.
+    /// Playing (`true`) or browsing the history (`false`). While browsing the computer does
+    /// not move.
     live: bool,
     input: MoveInput,
     thinking: Option<Thinking>,
@@ -71,7 +72,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// Новая партия: человек играет цветом `human` против уровня `level`.
+    /// A new game: the human plays `human` against the level `level`.
     #[must_use]
     pub fn new(human: Color, level: u8, seed: u64) -> Self {
         let mut session = Self {
@@ -89,7 +90,7 @@ impl Session {
         session
     }
 
-    /// Начинает новую партию в этой же сессии.
+    /// Starts a new game in the same session.
     pub fn new_game(&mut self, human: Color, level: u8) {
         self.thinking = None;
         self.tree = GameTree::new();
@@ -100,7 +101,7 @@ impl Session {
         self.events.push(SessionEvent::Jumped);
     }
 
-    /// Заменяет партию загруженной. Показывается конец основной линии в режиме просмотра.
+    /// Replaces the game with a loaded one. The end of the main line is shown, in browsing mode.
     pub fn load(&mut self, mut tree: GameTree, human: Option<Color>) {
         self.thinking = None;
         let end = tree.main_line_end();
@@ -119,13 +120,13 @@ impl Session {
         &self.tree
     }
 
-    /// Цвет человека.
+    /// The human's colour.
     #[must_use]
     pub const fn human(&self) -> Color {
         self.human
     }
 
-    /// Цвет компьютера.
+    /// The computer's colour.
     #[must_use]
     pub const fn computer(&self) -> Color {
         self.human.opponent()
@@ -136,7 +137,7 @@ impl Session {
         self.level
     }
 
-    /// Меняет уровень. Если компьютер думает, расчёт начинается заново на новом уровне.
+    /// Changes the level. If the computer is thinking, the calculation restarts on the new level.
     pub fn set_level(&mut self, level: u8) {
         let level = clamp_level(level);
         if level != self.level {
@@ -145,7 +146,7 @@ impl Session {
         }
     }
 
-    /// Наименьшая пауза перед ответом компьютера, с.
+    /// Shortest pause before the computer's reply, s.
     pub const fn set_min_think(&mut self, seconds: f64) {
         self.min_think = if seconds.is_finite() {
             seconds.max(0.0)
@@ -154,44 +155,44 @@ impl Session {
         };
     }
 
-    /// Идёт игра (а не просмотр истории).
+    /// Whether the game is being played (not browsed).
     #[must_use]
     pub const fn is_live(&self) -> bool {
         self.live
     }
 
-    /// Думает ли компьютер прямо сейчас.
+    /// Whether the computer is thinking right now.
     #[must_use]
     pub const fn is_thinking(&self) -> bool {
         self.thinking.is_some()
     }
 
-    /// Результат партии в показанной позиции.
+    /// Result of the game in the position shown.
     #[must_use]
     pub fn outcome(&self) -> Option<Outcome> {
         self.tree.current_node().outcome()
     }
 
-    /// Чья очередь хода в показанной позиции.
+    /// The side to move in the position shown.
     #[must_use]
     pub fn side_to_move(&self) -> Color {
         self.tree.current_node().position().side
     }
 
-    /// Может ли человек сделать ход в показанной позиции.
+    /// Whether the human can make a move in the position shown.
     #[must_use]
     pub fn human_to_move(&self) -> bool {
         self.outcome().is_none() && self.side_to_move() == self.human
     }
 
-    /// Доступна ли команда «Продолжить отсюда»: идёт просмотр, партия в показанной
-    /// позиции не закончена, и очередь хода за компьютером.
+    /// Whether "Continue from here" is available: the history is being browsed, the game
+    /// is not over in the position shown, and it is the computer's turn.
     #[must_use]
     pub fn can_continue(&self) -> bool {
         !self.live && self.outcome().is_none() && self.side_to_move() != self.human
     }
 
-    /// «Продолжить отсюда»: компьютер делает ход из показанной позиции.
+    /// "Continue from here": the computer makes a move from the position shown.
     pub fn continue_from_here(&mut self) -> bool {
         if self.can_continue() {
             self.live = true;
@@ -201,7 +202,7 @@ impl Session {
         }
     }
 
-    /// Состояние выбора хода мышью.
+    /// State of choosing a move with the mouse.
     #[must_use]
     pub const fn input(&self) -> &MoveInput {
         &self.input
@@ -216,24 +217,24 @@ impl Session {
         }
     }
 
-    /// Щелчок по полю доски.
+    /// A click on a board square.
     pub fn click(&mut self, sq: Square) -> InputEvent {
         let event = self.input.click(sq);
         self.finish_input(event)
     }
 
-    /// Начало перетаскивания шашки с поля.
+    /// The start of dragging a piece from a square.
     pub fn grab(&mut self, sq: Square) -> bool {
         self.input.grab(sq)
     }
 
-    /// Конец перетаскивания над полем.
+    /// The end of dragging over a square.
     pub fn drop_on(&mut self, sq: Square) -> InputEvent {
         let event = self.input.drop_on(sq);
         self.finish_input(event)
     }
 
-    /// Отмена выбора шашки или незаконченного взятия.
+    /// Cancels the selection of a piece or an unfinished capture.
     pub fn cancel_input(&mut self) -> InputEvent {
         self.input.cancel()
     }
@@ -248,8 +249,8 @@ impl Session {
         event
     }
 
-    /// Ход человека из показанной позиции. Если ход отличается от записанного
-    /// продолжения, создаётся новый вариант. После хода игра продолжается.
+    /// The human's move from the position shown. If it differs from the recorded
+    /// continuation, a new variation is created. After the move the game goes on.
     pub fn play_human(&mut self, mv: &Move) -> bool {
         if !self.human_to_move() {
             return false;
@@ -269,8 +270,8 @@ impl Session {
         }
     }
 
-    /// Переход по истории. Расчёт компьютера прерывается, включается режим просмотра.
-    /// Возвращает `true`, если показанная позиция изменилась.
+    /// A step through the history. The computer's calculation is interrupted and browsing
+    /// mode is switched on. Returns `true` if the position shown has changed.
     pub fn navigate(&mut self, nav: Nav) -> bool {
         let before = self.tree.current();
         match nav {
@@ -292,8 +293,8 @@ impl Session {
         true
     }
 
-    /// Продвигает сессию: принимает ответ компьютера и при необходимости запускает расчёт.
-    /// `now` — монотонное время в секундах.
+    /// Advances the session: takes the computer's reply and starts a calculation when
+    /// needed. `now` is monotonic time in seconds.
     pub fn update(&mut self, now: f64) {
         if let Some(thinking) = &mut self.thinking {
             if matches!(thinking.reply, Reply::Pending) {
@@ -301,8 +302,8 @@ impl Session {
                     JobStatus::Running => {}
                     JobStatus::Done(choice) => thinking.reply = Reply::Ready(choice.map(|c| c.mv)),
                     JobStatus::Failed => {
-                        // Поток расчёта не ответил: чтобы партия не остановилась,
-                        // делается случайный допустимый ход.
+                        // The calculation thread did not answer: so that the game does not
+                        // stall, a random legal move is played.
                         let legal = self.tree.get(thinking.node).map(|n| legal_moves(n.position()));
                         let fallback = legal.and_then(|moves| self.rng.pick(&moves).copied());
                         thinking.reply = Reply::Ready(fallback);
@@ -346,7 +347,7 @@ impl Session {
         }
     }
 
-    /// Забирает накопленные события.
+    /// Takes the accumulated events.
     pub fn take_events(&mut self) -> Vec<SessionEvent> {
         std::mem::take(&mut self.events)
     }

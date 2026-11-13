@@ -1,5 +1,5 @@
-//! Главное окно: доска, панель ходов, диалоги. Связывает игровую сессию с отрисовкой,
-//! анимацией и звуком.
+//! The main window: the board, the move panel and the dialogs. It ties the game session
+//! to drawing, animation and sound.
 
 use super::audio::Audio;
 use super::board;
@@ -29,22 +29,23 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// Наибольшая и наименьшая ширина панели ходов.
+/// The greatest and the smallest width of the move panel.
 const PANEL_WIDTH: f32 = 352.0;
 const PANEL_MIN_WIDTH: f32 = 250.0;
 /// The greatest height of a drop-down list: all ten levels and all twelve languages
 /// are visible without scrolling.
 const LIST_HEIGHT: f32 = 440.0;
-/// Пауза между последним ходом партии и звуком её окончания, с.
+/// Pause between the last move of a game and the sound of its end, s.
 const END_SOUND_DELAY: f64 = 0.45;
 
-/// Анимация сделанного хода: позиция до хода и движение шашки.
+/// Animation of a move that has been made: the position before the move and the travel of
+/// the piece.
 struct Playing {
     anim: MoveAnimation,
     before: Position,
 }
 
-/// Движение шашки на промежуточном шаге серийного взятия, сделанном щелчком.
+/// Travel of the piece at an intermediate step of a multi-capture made with a click.
 struct Glide {
     from: Square,
     to: Square,
@@ -65,13 +66,13 @@ struct Scene {
     highlighted: Option<Move>,
 }
 
-/// Содержимое диалога новой партии.
+/// Contents of the new game dialog.
 struct NewGameDraft {
     human: Color,
     level: u8,
 }
 
-/// Спецэффект, который можно включить или выключить отдельно.
+/// A special effect that can be switched on or off on its own.
 #[derive(Clone, Copy)]
 enum EffectKind {
     Lightning,
@@ -79,7 +80,7 @@ enum EffectKind {
     Flashes,
 }
 
-/// Действие, выбранное в интерфейсе; выполняется после отрисовки кадра.
+/// An action chosen in the interface; it is carried out after the frame is drawn.
 #[derive(Clone, Copy)]
 enum Action {
     AskNewGame,
@@ -92,9 +93,9 @@ enum Action {
     OpenSettings,
     CloseSettings,
     SetLang(Lang),
-    /// Общий выключатель спецэффектов.
+    /// The main switch of the special effects.
     ToggleEffects,
-    /// Отдельный спецэффект.
+    /// A single special effect.
     ToggleEffect(EffectKind),
     SetLevel(u8),
     Navigate(Nav),
@@ -103,7 +104,7 @@ enum Action {
     CloseMessage,
 }
 
-/// Приложение.
+/// The application.
 #[expect(
     clippy::struct_excessive_bools,
     reason = "the flags are independent facts about the window, not states of one machine"
@@ -112,17 +113,17 @@ pub struct CheckersApp {
     settings: Settings,
     settings_path: Option<PathBuf>,
     session: Session,
-    /// Партия начата (до первого подтверждения диалога компьютер не ходит).
+    /// The game has started (the computer does not move until the first dialog is confirmed).
     started: bool,
     audio: Audio,
     anims: VecDeque<Playing>,
     glide: Option<Glide>,
     dragging: Option<Square>,
-    /// Сколько прыжков хода человека уже показано на доске к моменту его завершения.
+    /// How many jumps of the human's move were already shown on the board when it was completed.
     human_first_step: Option<usize>,
-    /// Электрические разряды, которые сейчас видны на доске.
+    /// The electric discharges visible on the board now.
     effects: Vec<Discharge>,
-    /// Отложенные звуки: время и сигнал.
+    /// Delayed sounds: the time and the signal.
     sounds: Vec<(f64, Sound)>,
     new_game: Option<NewGameDraft>,
     settings_open: bool,
@@ -133,12 +134,12 @@ pub struct CheckersApp {
     file_job: Option<FileJob>,
     dismissed_result: Option<NodeId>,
     scroll_to_current: bool,
-    /// Изображения шашек для текущего размера клетки.
+    /// Images of the pieces for the current cell size.
     sprites: Option<board::PieceSprites>,
 }
 
 impl CheckersApp {
-    /// Создаёт приложение. `initial_file` — партия, переданная в командной строке.
+    /// Creates the application. `initial_file` is a game given on the command line.
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         settings: Settings,
@@ -159,7 +160,7 @@ impl CheckersApp {
             human_first_step: None,
             effects: Vec::new(),
             sounds: Vec::new(),
-            // Перед первой партией игрок выбирает цвет и уровень.
+            // Before the first game the player chooses a colour and a level.
             new_game: Some(NewGameDraft {
                 human: settings.human,
                 level: settings.level,
@@ -226,7 +227,7 @@ impl CheckersApp {
     }
 
     // -----------------------------------------------------------------------
-    // События сессии: анимация и звук
+    // Session events: animation and sound
     // -----------------------------------------------------------------------
 
     fn process_events(&mut self, now: f64) {
@@ -252,9 +253,9 @@ impl CheckersApp {
         let outcome = played.outcome();
         let human = self.session.human();
 
-        // Ход компьютера показывается целиком. У хода человека показываются только
-        // прыжки, которых ещё не было на доске: все оставшиеся, если конечное поле
-        // указано щелчком, и ни одного, если шашку на него перетащили.
+        // A computer move is shown in full. Of a human move only the jumps not yet seen
+        // on the board are shown: all the remaining ones if the final square was
+        // clicked, and none if the piece was dragged there.
         let steps = mv.path().len();
         let shown = self.human_first_step.take();
         let first_step = if by_computer {
@@ -276,7 +277,7 @@ impl CheckersApp {
             self.sounds.push((time, step_sound(&mv, first_step + i)));
             last_landing = time;
         }
-        // Несколько побитых шашек: за летящей шашкой тянется молния и бьёт по ним.
+        // Several pieces are captured: lightning trails the flying piece and strikes them.
         if let Some(effect) = anim.discharge(human == Color::Black, entropy_seed()) {
             if let (true, Some(time)) = (effects.lightning, anim.first_strike_time()) {
                 self.sounds.push((time, Sound::Discharge));
@@ -289,7 +290,7 @@ impl CheckersApp {
                 Some(_) => Sound::Loss,
                 None => Sound::Draw,
             };
-            // Звук окончания партии не накладывается на разряд.
+            // The sound of the end of the game does not overlap the discharge.
             let after_move = start + anim.total_seconds() + 0.15;
             self.sounds
                 .push(((last_landing + END_SOUND_DELAY).max(after_move), sound));
@@ -317,7 +318,7 @@ impl CheckersApp {
     }
 
     // -----------------------------------------------------------------------
-    // Действия
+    // Actions
     // -----------------------------------------------------------------------
 
     fn apply(&mut self, action: Action, ctx: &Context, now: f64) {
@@ -339,7 +340,7 @@ impl CheckersApp {
             }
             Action::CancelNewGame => {
                 self.new_game = None;
-                // Отказ от выбора перед первой партией: играем с сохранёнными настройками.
+                // The choice before the first game is declined: play with the saved settings.
                 self.started = true;
             }
             Action::Open => {
@@ -437,8 +438,8 @@ impl CheckersApp {
         }
     }
 
-    /// Загружает партию из файла PDN. Нечитаемый или повреждённый файл не меняет
-    /// текущую партию: показывается сообщение с причиной.
+    /// Loads a game from a PDN file. An unreadable or damaged file does not change the
+    /// current game: a message with the reason is shown.
     fn open_file(&mut self, path: &std::path::Path, now: f64) {
         let lang = self.lang();
         match std::fs::read(path) {
@@ -465,7 +466,7 @@ impl CheckersApp {
     }
 
     // -----------------------------------------------------------------------
-    // Клавиатура
+    // Keyboard
     // -----------------------------------------------------------------------
 
     fn handle_keys(&mut self, ctx: &Context, actions: &mut Vec<Action>) {
@@ -513,7 +514,7 @@ impl CheckersApp {
     }
 
     // -----------------------------------------------------------------------
-    // Доска
+    // The board
     // -----------------------------------------------------------------------
 
     fn board_panel(&mut self, ctx: &Context, now: f64, actions: &mut Vec<Action>) {
@@ -573,7 +574,8 @@ impl CheckersApp {
                     self.after_input(event, false, promoted_before, steps_before, now);
                 }
                 None => {
-                    // Щелчок мимо игровых полей снимает выбор, но не прерывает начатое взятие.
+                    // A click off the playing squares clears the selection but does not
+                    // break off a capture in progress.
                     if !self.session.input().in_progress() {
                         self.session.cancel_input();
                     }
@@ -618,8 +620,8 @@ impl CheckersApp {
                 ));
             }
             InputEvent::Move(mv) => {
-                // Перетащенная шашка уже стоит на конечном поле; после щелчка остаётся
-                // показать прыжки, которые ещё не были сделаны по шагам.
+                // A dragged piece already stands on the final square; after a click the
+                // jumps not yet made step by step remain to be shown.
                 self.human_first_step = Some(if via_drop { mv.path().len() } else { steps_before });
                 self.process_events(now);
             }
@@ -869,7 +871,7 @@ impl CheckersApp {
         board::draw_turn_marker(painter, center, frame_width, side, thinking, now, ppp);
     }
 
-    /// Результат партии поверх доски: итог и причина, включая правило ничьей.
+    /// The result of the game over the board: the outcome and the reason, the draw rule included.
     fn result_banner(&self, ctx: &Context, layout: &BoardLayout, actions: &mut Vec<Action>) {
         let node = self.session.tree().current();
         let Some(outcome) = self.session.outcome() else {
@@ -922,11 +924,11 @@ impl CheckersApp {
     }
 
     // -----------------------------------------------------------------------
-    // Панель ходов
+    // The move panel
     // -----------------------------------------------------------------------
 
     fn side_panel(&mut self, ctx: &Context, actions: &mut Vec<Action>) {
-        // В узком окне панель сужается, уступая место доске.
+        // In a narrow window the panel shrinks to leave room for the board.
         let screen = ctx.screen_rect();
         let width = (screen.width() - screen.height())
             .clamp(PANEL_MIN_WIDTH, PANEL_WIDTH)
@@ -1000,7 +1002,8 @@ impl CheckersApp {
                 if ui.button(icon).on_hover_text(tr(lang, hint)).clicked() {
                     actions.push(Action::ToggleSound);
                 }
-                // Подпись занимает оставшееся место слева и при нехватке ширины обрезается.
+                // The caption takes the remaining room on the left and is cut off when it
+                // does not fit.
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     let who = if self.session.human() == Color::White {
                         Text::YouPlayWhite
@@ -1062,8 +1065,8 @@ impl CheckersApp {
         }
     }
 
-    /// Список ходов активной ветки с вариантами. Возвращает `true`, если текущий ход
-    /// был показан и к нему выполнена прокрутка.
+    /// The list of moves of the active branch with variations. Returns `true` if the
+    /// current move was shown and scrolled into view.
     fn move_list(&self, ui: &mut Ui, actions: &mut Vec<Action>) -> bool {
         let lang = self.lang();
         let tree = self.session.tree();
@@ -1122,14 +1125,14 @@ impl CheckersApp {
                     cell(ui, id, actions, &mut scrolled);
                 }
             });
-            // Варианты ходов этой строки.
+            // The variations of the moves of this row.
             for &id in &row {
                 let siblings = tree.siblings(id);
                 if siblings.len() < 2 {
                     continue;
                 }
                 let is_white = tree.get(id).is_some_and(|n| (n.ply() - 1 + first_index) % 2 == 0);
-                // Отступ сохраняется и при переносе длинного списка вариантов на новую строку.
+                // The indent is kept when a long list of variations wraps to a new line.
                 ui.indent(("variations", id), |ui| {
                     ui.horizontal_wrapped(|ui| {
                         let prefix = if is_white {
@@ -1153,7 +1156,7 @@ impl CheckersApp {
             }
             index += row.len();
         }
-        // Текущая позиция — начало партии: прокручивать не к чему.
+        // The current position is the start of the game: there is nothing to scroll to.
         scrolled || current == GameTree::ROOT
     }
 
@@ -1184,7 +1187,7 @@ impl CheckersApp {
         });
     }
 
-    /// Кнопка показа панели, когда панель скрыта и доска занимает всё окно.
+    /// The button that shows the panel when it is hidden and the board takes the whole window.
     fn panel_toggle(&self, ctx: &Context, actions: &mut Vec<Action>) {
         egui::Area::new(Id::new("panel_toggle"))
             .order(Order::Foreground)
@@ -1199,7 +1202,7 @@ impl CheckersApp {
     }
 
     // -----------------------------------------------------------------------
-    // Диалоги
+    // Dialogs
     // -----------------------------------------------------------------------
 
     /// Shows the dialog that is open, if any. An error message comes first, then the
@@ -1340,7 +1343,7 @@ impl CheckersApp {
     }
 }
 
-/// Диалог поверх окна с затемнением остального интерфейса.
+/// A dialog over the window that dims the rest of the interface.
 fn modal_window(id: &str) -> egui::Modal {
     let frame = egui::Frame::new()
         .fill(theme::PAPER)
@@ -1358,7 +1361,7 @@ fn modal_window(id: &str) -> egui::Modal {
         .backdrop_color(Color32::from_black_alpha(90))
 }
 
-/// Звук шага хода: превращение, взятие или тихий ход.
+/// The sound of a step of a move: a promotion, a capture or a quiet move.
 fn step_sound(mv: &Move, step: usize) -> Sound {
     if mv.promotion_step() == Some(step) {
         Sound::Promotion
@@ -1395,8 +1398,8 @@ impl eframe::App for CheckersApp {
         }
         self.flush_sounds(now);
 
-        // Перерисовка: непрерывно во время анимации и перетаскивания, реже — пока
-        // компьютер думает или открыт системный диалог.
+        // Repainting: continuous during animation and dragging, less frequent while the
+        // computer is thinking or a system dialog is open.
         let animating = !self.anims.is_empty()
             || !self.effects.is_empty()
             || self.glide.is_some()
@@ -1412,7 +1415,7 @@ impl eframe::App for CheckersApp {
             && !self.session.human_to_move()
             && self.session.outcome().is_none()
         {
-            // Очередь компьютера: следующий кадр запустит расчёт.
+            // It is the computer's turn: the next frame starts the calculation.
             ctx.request_repaint();
         }
     }

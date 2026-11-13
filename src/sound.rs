@@ -1,35 +1,35 @@
-//! Синтез звуков: все сигналы создаются программно, без файлов ресурсов.
+//! Sound synthesis: every signal is made by the program, without resource files.
 //!
-//! Модуль только вычисляет отсчёты (моно, [`SAMPLE_RATE`] Гц, диапазон −1…1).
-//! Воспроизведение находится в исполняемом файле.
+//! The module only computes samples (mono, [`SAMPLE_RATE`] Hz, range −1…1).
+//! Playback is in the executable.
 
 use crate::rng::Rng;
 use std::f32::consts::TAU;
 
-/// Частота дискретизации синтезируемых звуков, Гц.
+/// Sample rate of the synthesized sounds, Hz.
 pub const SAMPLE_RATE: u32 = 44_100;
 
-/// Звуковые сигналы игры.
+/// Sound signals of the game.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Sound {
-    /// Тихий ход.
+    /// A quiet move.
     Move,
-    /// Взятие.
+    /// A capture.
     Capture,
-    /// Превращение в дамку.
+    /// Promotion to a king.
     Promotion,
-    /// Электрический разряд при взятии нескольких шашек.
+    /// Electric discharge when several pieces are captured.
     Discharge,
-    /// Партия выиграна человеком.
+    /// The human has won the game.
     Win,
-    /// Партия проиграна человеком.
+    /// The human has lost the game.
     Loss,
-    /// Ничья.
+    /// A draw.
     Draw,
 }
 
 impl Sound {
-    /// Все сигналы.
+    /// All signals.
     pub const ALL: [Self; 7] = [
         Self::Move,
         Self::Capture,
@@ -45,11 +45,11 @@ fn samples(seconds: f32) -> usize {
     (seconds * SAMPLE_RATE as f32) as usize
 }
 
-/// Добавляет в буфер короткий «деревянный» стук, начиная с момента `at` секунд.
+/// Adds a short "wooden" knock to the buffer, starting `at` seconds in.
 fn knock(buffer: &mut [f32], at: f32, pitch: f32, gain: f32, rng: &mut Rng) {
     let start = samples(at);
     let length = samples(0.09);
-    // Собственные частоты удара по дереву и скорости их затухания.
+    // Natural frequencies of a knock on wood and their decay rates.
     let partials: [(f32, f32, f32); 4] = [
         (190.0, 0.55, 38.0),
         (760.0, 0.50, 85.0),
@@ -66,7 +66,7 @@ fn knock(buffer: &mut [f32], at: f32, pitch: f32, gain: f32, rng: &mut Rng) {
         for (frequency, amplitude, decay) in partials {
             value += amplitude * (TAU * frequency * pitch * t).sin() * (-decay * t).exp();
         }
-        // Шумовой щелчок в первые миллисекунды: момент касания.
+        // A noise click in the first milliseconds: the moment of contact.
         let white = rng.unit() as f32 * 2.0 - 1.0;
         noise_state += 0.35 * (white - noise_state);
         value += 0.5 * noise_state * (-420.0 * t).exp();
@@ -75,7 +75,7 @@ fn knock(buffer: &mut [f32], at: f32, pitch: f32, gain: f32, rng: &mut Rng) {
     }
 }
 
-/// Добавляет в буфер мягкую ноту колокольчика.
+/// Adds a soft bell note to the buffer.
 fn note(buffer: &mut [f32], at: f32, frequency: f32, seconds: f32, gain: f32) {
     let start = samples(at);
     let length = samples(seconds);
@@ -92,22 +92,22 @@ fn note(buffer: &mut [f32], at: f32, frequency: f32, seconds: f32, gain: f32) {
     }
 }
 
-/// Добавляет в буфер треск электрического разряда: частые шумовые щелчки, которые
-/// редеют и затихают, и короткое низкое гудение.
+/// Adds the crackle of an electric discharge to the buffer: frequent noise clicks that
+/// thin out and die away, and a short low hum.
 fn crackle(buffer: &mut [f32], seconds: f32, rng: &mut Rng) {
     let length = samples(seconds).min(buffer.len());
-    let mut pulse = 0.0f32; // текущая громкость щелчка
+    let mut pulse = 0.0f32; // current loudness of the click
     let mut previous = 0.0f32;
     for (i, slot) in buffer.iter_mut().enumerate().take(length) {
         let t = i as f32 / SAMPLE_RATE as f32;
         let progress = t / seconds;
-        // Новые щелчки возникают случайно; к концу — всё реже.
+        // New clicks appear at random; towards the end, less and less often.
         let rate = 900.0 * (1.0 - progress).powi(2) + 40.0;
         if rng.unit() < f64::from(rate / SAMPLE_RATE as f32) {
             pulse = 0.5 + 0.5 * rng.unit() as f32;
         }
         pulse *= 0.9965;
-        // Шум с подавленными низкими частотами звучит как сухой треск.
+        // Noise with the low frequencies suppressed sounds like a dry crackle.
         let white = rng.unit() as f32 * 2.0 - 1.0;
         let crisp = white - 0.85 * previous;
         previous = white;
@@ -117,7 +117,8 @@ fn crackle(buffer: &mut [f32], seconds: f32, rng: &mut Rng) {
     }
 }
 
-/// Сглаживает края и ограничивает пик, чтобы звук не щёлкал и не перегружал выход.
+/// Smooths the edges and limits the peak, so that the sound neither clicks nor overloads
+/// the output.
 fn finish(mut buffer: Vec<f32>, peak: f32) -> Vec<f32> {
     let fade = samples(0.004).min(buffer.len() / 2);
     let len = buffer.len();
@@ -136,7 +137,7 @@ fn finish(mut buffer: Vec<f32>, peak: f32) -> Vec<f32> {
     buffer
 }
 
-/// Отсчёты сигнала (моно, [`SAMPLE_RATE`] Гц). Результат детерминирован.
+/// Samples of a signal (mono, [`SAMPLE_RATE`] Hz). The result is deterministic.
 #[must_use]
 pub fn synthesize(sound: Sound) -> Vec<f32> {
     let mut rng = Rng::new(0x5EED_0000 + sound as u64);
@@ -147,7 +148,7 @@ pub fn synthesize(sound: Sound) -> Vec<f32> {
             finish(buffer, 0.55)
         }
         Sound::Capture => {
-            // Удар по доске и следом — более высокий стук снятой шашки.
+            // A knock on the board followed by the higher knock of the piece taken off.
             let mut buffer = vec![0.0; samples(0.19)];
             knock(&mut buffer, 0.0, 0.92, 1.0, &mut rng);
             knock(&mut buffer, 0.075, 1.35, 0.6, &mut rng);
@@ -197,16 +198,16 @@ mod tests {
         for sound in Sound::ALL {
             let data = synthesize(sound);
             let seconds = data.len() as f32 / SAMPLE_RATE as f32;
-            assert!(seconds > 0.05 && seconds < 1.2, "{sound:?}: {seconds} с");
+            assert!(seconds > 0.05 && seconds < 1.2, "{sound:?}: {seconds} s");
             assert!(data.iter().all(|v| v.is_finite()), "{sound:?}");
             let peak = data.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-            assert!(peak > 0.2 && peak <= 0.7, "{sound:?}: пик {peak}");
+            assert!(peak > 0.2 && peak <= 0.7, "{sound:?}: peak {peak}");
             assert!(
                 data[0].abs() < 0.01 && data[data.len() - 1].abs() < 0.01,
-                "{sound:?}: края"
+                "{sound:?}: edges"
             );
             let energy: f32 = data.iter().map(|v| v * v).sum::<f32>() / data.len() as f32;
-            assert!(energy > 1e-4, "{sound:?}: звук слышен");
+            assert!(energy > 1e-4, "{sound:?}: the sound is audible");
         }
     }
 
@@ -217,7 +218,7 @@ mod tests {
         }
         for (i, a) in Sound::ALL.iter().enumerate() {
             for b in &Sound::ALL[i + 1..] {
-                assert_ne!(synthesize(*a), synthesize(*b), "{a:?} и {b:?}");
+                assert_ne!(synthesize(*a), synthesize(*b), "{a:?} and {b:?}");
             }
         }
         assert!(synthesize(Sound::Move).len() < synthesize(Sound::Capture).len());

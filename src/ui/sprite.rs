@@ -1,29 +1,30 @@
-//! Изображение шашки: вид строго сверху, попиксельный расчёт со сглаживанием.
+//! The picture of a piece: seen straight from above, computed pixel by pixel with anti-aliasing.
 //!
-//! Шашка — круг, центр которого совпадает с центром клетки. Объём передан светотенью
-//! (скруглённая кромка, бортик, проточки), а не смещением частей, поэтому силуэт
-//! симметричен относительно обеих осей. Край круга сглажен по площади покрытия пикселя,
-//! рельеф и корона — усреднением нескольких отсчётов на пиксель.
+//! A piece is a circle whose centre coincides with the centre of its cell. Its volume is
+//! rendered by light and shade (a rounded edge, a rim, grooves), not by shifting parts,
+//! so the silhouette is symmetric about both axes. The edge of the circle is smoothed by
+//! the area of a pixel it covers; the relief and the crown, by averaging several
+//! samples per pixel.
 //!
-//! Модуль только вычисляет пиксели; текстуры из них создаёт графическая часть.
+//! The module only computes pixels; the graphical part makes textures from them.
 
 use crate::board::{Color, Piece};
 use std::f32::consts::{FRAC_PI_2, PI};
 
-/// Радиус шашки в долях стороны клетки.
+/// Radius of a piece as a fraction of the cell side.
 pub const PIECE_RADIUS: f32 = 0.40;
 
-/// Квадратное изображение: RGBA с предумноженной прозрачностью, построчно сверху вниз.
+/// A square image: RGBA with premultiplied alpha, row by row from the top.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PieceImage {
-    /// Сторона изображения в пикселях.
+    /// Side of the image in pixels.
     pub size: usize,
-    /// Пиксели: по четыре байта (R, G, B, A).
+    /// The pixels: four bytes each (R, G, B, A).
     pub rgba: Vec<u8>,
 }
 
 impl PieceImage {
-    /// Пиксель в столбце `x` и строке `y`; вне изображения — прозрачный.
+    /// The pixel in the column `x` and the row `y`; transparent outside the image.
     #[must_use]
     pub fn pixel(&self, x: usize, y: usize) -> [u8; 4] {
         if x >= self.size || y >= self.size {
@@ -33,26 +34,26 @@ impl PieceImage {
         [self.rgba[i], self.rgba[i + 1], self.rgba[i + 2], self.rgba[i + 3]]
     }
 
-    /// Непрозрачность пикселя (0…255).
+    /// Opacity of a pixel (0…255).
     #[must_use]
     pub fn alpha(&self, x: usize, y: usize) -> u8 {
         self.pixel(x, y)[3]
     }
 }
 
-/// Цвета шашки одного цвета.
+/// The colours of pieces of one colour.
 struct Palette {
-    /// Основной тон верхней грани.
+    /// Main tone of the top face.
     base: [f32; 3],
-    /// Тон освещённых склонов.
+    /// Tone of the lit slopes.
     light: [f32; 3],
-    /// Тон затенённых склонов.
+    /// Tone of the shaded slopes.
     dark: [f32; 3],
-    /// Тонкая кайма по краю.
+    /// A thin outline along the edge.
     outline: [f32; 3],
-    /// Корона и кольцо дамки.
+    /// The crown and the ring of a king.
     crown: [f32; 3],
-    /// Блик на короне.
+    /// Highlight on the crown.
     crown_light: [f32; 3],
 }
 
@@ -74,23 +75,24 @@ const BLACK: Palette = Palette {
     crown_light: [0.960, 0.850, 0.560],
 };
 
-/// Направление на источник света: слева сверху (ось Y направлена вниз).
+/// Direction to the light source: from the top left (the Y axis points down).
 const LIGHT: (f32, f32) = (-0.555, -0.832);
 
-/// Доли радиуса, задающие рельеф верхней грани.
-const EDGE_START: f32 = 0.875; // начало скруглённой кромки
-const RIM_INNER: f32 = 0.780; // внутренний край плоского бортика
-const STEP_WIDTH: f32 = 0.050; // ширина ступеньки от бортика к утопленной середине
-/// Проточки простой шашки: радиус середины и полуширина.
+/// Fractions of the radius that define the relief of the top face.
+const EDGE_START: f32 = 0.875; // start of the rounded edge
+const RIM_INNER: f32 = 0.780; // inner border of the flat rim
+const STEP_WIDTH: f32 = 0.050; // width of the step from the rim down to the sunken middle
+/// Grooves of a man: the radius of the middle and the half-width.
 const GROOVES: [(f32, f32); 2] = [(0.560, 0.040), (0.330, 0.036)];
-/// Кольцо дамки: внутренний и внешний радиусы.
+/// Ring of a king: the inner and outer radii.
 const KING_RING: (f32, f32) = (0.655, 0.715);
-/// Размер короны в долях радиуса шашки.
+/// Size of the crown as a fraction of the radius of the piece.
 const CROWN_SCALE: f32 = 0.98;
-/// Корона несимметрична по высоте; сдвиг ставит её середину в центр шашки.
+/// The crown is not symmetric in height; the shift puts its middle at the centre of the piece.
 const CROWN_SHIFT: f32 = 0.0475;
 
-/// Тень лежащей шашки: смещение центра и ширина размытия в долях клетки, плотность.
+/// Shadow of a piece lying on the board: offset of the centre and width of the blur in
+/// fractions of a cell, density.
 const SHADOW_OFFSET: (f32, f32) = (0.008, 0.014);
 const SHADOW_BLUR: f32 = 0.070;
 const SHADOW_ALPHA: f32 = 0.42;
@@ -109,30 +111,32 @@ fn smoothstep(x: f32) -> f32 {
     x * x * (3.0 - 2.0 * x)
 }
 
-/// Освещённость точки верхней грани: от −1 (тень) до +1 (блик).
+/// Lighting of a point of the top face: from −1 (shade) to +1 (highlight).
 ///
-/// `r` — расстояние от центра в долях радиуса, `toward_light` — косинус угла между
-/// направлением от центра к точке и направлением на свет.
+/// `r` is the distance from the centre as a fraction of the radius; `toward_light` is the
+/// cosine of the angle between the direction from the centre to the point and the direction
+/// to the light.
 fn relief(r: f32, toward_light: f32, king: bool) -> f32 {
     let r = r.clamp(0.0, 1.0);
-    // Едва заметный общий перепад: сторона, обращённая к свету, чуть светлее.
+    // A barely noticeable overall gradient: the side facing the light is slightly lighter.
     let mut shade = 0.10 * toward_light * r;
     if r > EDGE_START {
-        // Скруглённая кромка: склон наружу; к самому краю поверхность уходит от зрителя.
+        // The rounded edge: a slope outwards; at the very edge the surface turns away from
+        // the viewer.
         let e = (r - EDGE_START) / (1.0 - EDGE_START);
         shade += 0.80 * toward_light * (e * FRAC_PI_2).sin() - 0.20 * e * e;
     } else if r > RIM_INNER {
-        // Плоский бортик.
+        // The flat rim.
         shade += 0.04;
     } else if r > RIM_INNER - STEP_WIDTH {
-        // Ступенька вниз к середине: склон обращён к центру.
+        // The step down to the middle: the slope faces the centre.
         let q = (r - (RIM_INNER - STEP_WIDTH)) / STEP_WIDTH;
         shade -= 0.55 * toward_light * (PI * q).sin();
     } else if !king {
         for (middle, half_width) in GROOVES {
             let q = (r - middle) / half_width;
             if q.abs() < 1.0 {
-                // Проточка: внутренний склон обращён наружу, внешний — к центру.
+                // A groove: the inner slope faces outwards, the outer one faces the centre.
                 let depth = (FRAC_PI_2 * q).cos();
                 shade -= 0.50 * toward_light * (PI * q).sin() + 0.17 * depth * depth;
             }
@@ -141,10 +145,11 @@ fn relief(r: f32, toward_light: f32, king: bool) -> f32 {
     shade.clamp(-1.0, 1.0)
 }
 
-/// Принадлежит ли точка короне. Координаты — в долях размера короны, центр в нуле.
+/// Whether a point belongs to the crown. Coordinates are fractions of the crown size,
+/// centred at zero.
 ///
-/// Корона задана правой половиной и отражается относительно вертикальной оси,
-/// поэтому она симметрична точно, а не с точностью до округления.
+/// The crown is defined by its right half and mirrored about the vertical axis, so it
+/// is symmetric exactly, not just to within rounding.
 fn crown_contains(x: f32, y: f32) -> bool {
     fn in_triangle(p: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> bool {
         let side = |u: (f32, f32), v: (f32, f32)| (p.0 - v.0) * (u.1 - v.1) - (u.0 - v.0) * (p.1 - v.1);
@@ -157,22 +162,22 @@ fn crown_contains(x: f32, y: f32) -> bool {
     if x > 0.575 {
         return false;
     }
-    // Обод и подставка.
+    // The band and the base.
     if x <= 0.50 && ((0.08..=0.26).contains(&y) || (0.33..=0.42).contains(&y)) {
         return true;
     }
-    // Половина среднего зубца и боковой зубец.
+    // Half of the middle tooth and a side tooth.
     let p = (x, y);
     if in_triangle(p, (0.00, 0.10), (0.00, -0.44), (0.28, 0.10))
         || in_triangle(p, (0.10, 0.10), (0.50, -0.34), (0.50, 0.10))
     {
         return true;
     }
-    // Шарики на вершинах зубцов.
+    // The balls on the tips of the teeth.
     x.hypot(y + 0.44) <= 0.075 || (x - 0.50).hypot(y + 0.34) <= 0.075
 }
 
-/// Доля пикселя с центром в `(px, py)`, покрытая короной (16 отсчётов).
+/// Fraction of the pixel centred at `(px, py)` that the crown covers (16 samples).
 fn crown_coverage(px: f32, py: f32, center: f32, size: f32) -> f32 {
     const N: usize = 4;
     let mut inside = 0;
@@ -188,8 +193,8 @@ fn crown_coverage(px: f32, py: f32, center: f32, size: f32) -> f32 {
     inside as f32 / (N * N) as f32
 }
 
-/// Число отсчётов рельефа на пиксель по каждой оси: мелкие шашки считаются точнее,
-/// у крупных детали рельефа и так шире пикселя.
+/// Number of relief samples per pixel along each axis: small pieces are computed more
+/// precisely; on large ones the details of the relief are wider than a pixel anyway.
 const fn relief_samples(size: usize) -> usize {
     match size {
         0..=63 => 3,
@@ -198,10 +203,10 @@ const fn relief_samples(size: usize) -> usize {
     }
 }
 
-/// Рисует шашку в квадрате `size × size` пикселей (сторона клетки доски).
+/// Draws a piece in a square of `size × size` pixels (the side of a board cell).
 ///
-/// Центр шашки — в центре изображения. `shadow` добавляет мягкую тень под шашкой;
-/// сама шашка от этого не меняется.
+/// The centre of the piece is at the centre of the image. `shadow` adds a soft shadow
+/// under the piece; the piece itself does not change.
 #[must_use]
 pub fn render_piece(piece: Piece, size: usize, shadow: bool) -> PieceImage {
     let mut rgba = vec![0u8; size * size * 4];
@@ -228,7 +233,7 @@ pub fn render_piece(piece: Piece, size: usize, shadow: bool) -> PieceImage {
             let py = y as f32 + 0.5;
             let (dx, dy) = (px - center, py - center);
             let distance = dx.hypot(dy);
-            // Сглаживание края: доля пикселя, покрытая кругом.
+            // Anti-aliasing of the edge: the fraction of the pixel covered by the circle.
             let coverage = (radius - distance + 0.5).clamp(0.0, 1.0);
 
             let shadow_alpha = if shadow {
@@ -241,7 +246,7 @@ pub fn render_piece(piece: Piece, size: usize, shadow: bool) -> PieceImage {
 
             let mut color = [0.0f32; 3];
             if coverage > 0.0 {
-                // Рельеф усредняется по нескольким отсчётам внутри пикселя.
+                // The relief is averaged over several samples inside the pixel.
                 let mut sum = [0.0f32; 3];
                 for sy in 0..samples {
                     for sx in 0..samples {
@@ -268,11 +273,11 @@ pub fn render_piece(piece: Piece, size: usize, shadow: bool) -> PieceImage {
                 color = [sum[0] / count, sum[1] / count, sum[2] / count];
 
                 if king {
-                    // Кольцо цвета короны.
+                    // The ring in the colour of the crown.
                     let ring = (distance - KING_RING.0 * radius + 0.5).clamp(0.0, 1.0)
                         * (KING_RING.1 * radius - distance + 0.5).clamp(0.0, 1.0);
                     color = mix(color, palette.crown, ring);
-                    // Корона с лёгкой тенью под ней.
+                    // The crown with a light shadow under it.
                     if distance < 0.64 * radius {
                         let lift = 0.035 * crown_size;
                         let under = crown_coverage(px - lift * 0.6, py - lift, center, crown_size);
@@ -284,7 +289,7 @@ pub fn render_piece(piece: Piece, size: usize, shadow: bool) -> PieceImage {
                     }
                 }
 
-                // Тонкая тёмная кайма отделяет шашку от поля.
+                // A thin dark outline separates the piece from the square.
                 let edge = (distance - (radius - outline_width) + 0.5).clamp(0.0, 1.0);
                 color = mix(color, palette.outline, 0.55 * edge);
             }
@@ -300,7 +305,7 @@ pub fn render_piece(piece: Piece, size: usize, shadow: bool) -> PieceImage {
     PieceImage { size, rgba }
 }
 
-/// Мягкая тень под шашкой, которую держат мышью: размытый тёмный круг без самой шашки.
+/// The soft shadow under a piece held with the mouse: a blurred dark circle without the piece.
 #[must_use]
 pub fn render_lift_shadow(size: usize) -> PieceImage {
     let mut rgba = vec![0u8; size * size * 4];
@@ -335,16 +340,16 @@ mod tests {
 
     #[test]
     fn silhouette_is_symmetric_about_both_axes() {
-        // Шашка не «скошена»: её очертание одинаково слева и справа, сверху и снизу.
+        // The piece is not "skewed": its outline is the same left and right, top and bottom.
         for piece in pieces() {
             for size in SIZES {
                 let image = render_piece(piece, size, false);
                 for y in 0..size {
                     for x in 0..size {
                         let a = image.alpha(x, y);
-                        assert_eq!(a, image.alpha(size - 1 - x, y), "{piece:?} {size}: лево-право");
-                        assert_eq!(a, image.alpha(x, size - 1 - y), "{piece:?} {size}: верх-низ");
-                        assert_eq!(a, image.alpha(y, x), "{piece:?} {size}: диагональ");
+                        assert_eq!(a, image.alpha(size - 1 - x, y), "{piece:?} {size}: left-right");
+                        assert_eq!(a, image.alpha(x, size - 1 - y), "{piece:?} {size}: top-bottom");
+                        assert_eq!(a, image.alpha(y, x), "{piece:?} {size}: diagonal");
                     }
                 }
             }
@@ -375,17 +380,17 @@ mod tests {
                 let middle = size as f64 / 2.0;
                 assert!(
                     (sum_x / sum - middle).abs() < 1e-6,
-                    "{piece:?} {size}: центр по X"
+                    "{piece:?} {size}: centre along X"
                 );
                 assert!(
                     (sum_y / sum - middle).abs() < 1e-6,
-                    "{piece:?} {size}: центр по Y"
+                    "{piece:?} {size}: centre along Y"
                 );
-                // Поля до краёв клетки одинаковы со всех сторон.
+                // The margins to the cell borders are the same on all sides.
                 assert_eq!(min_x, size - 1 - max_x, "{piece:?} {size}");
                 assert_eq!(min_y, size - 1 - max_y, "{piece:?} {size}");
                 assert_eq!(min_x, min_y, "{piece:?} {size}");
-                // Диаметр соответствует заданному радиусу.
+                // The diameter matches the given radius.
                 let diameter = (max_x - min_x + 1) as f32;
                 assert!(
                     (diameter - 2.0 * PIECE_RADIUS * size as f32).abs() <= 2.0,
@@ -423,22 +428,22 @@ mod tests {
                         }
                     }
                 }
-                // По всей окружности идёт полоса полупрозрачных пикселей…
+                // A band of semi-transparent pixels runs along the whole circle…
                 assert!(
                     partial as f32 > 0.8 * 2.0 * PI * radius,
-                    "{piece:?} {size}: {partial} полупрозрачных"
+                    "{piece:?} {size}: {partial} semi-transparent"
                 );
-                // …и непрозрачный пиксель не соседствует с пустым (без сглаживания таких
-                // переходов было бы порядка восьми радиусов).
-                assert!(hard_steps <= 8, "{piece:?} {size}: {hard_steps} резких переходов");
+                // …and an opaque pixel is never next to an empty one (without anti-aliasing
+                // there would be about eight radii of such transitions).
+                assert!(hard_steps <= 8, "{piece:?} {size}: {hard_steps} hard transitions");
             }
         }
     }
 
     #[test]
     fn shading_has_no_hard_steps_inside_the_piece() {
-        // Соседние пиксели верхней грани простой шашки близки по яркости:
-        // проточки и бортик прорисованы плавно, без «лесенок».
+        // Neighbouring pixels of the top face of a man are close in brightness: the
+        // grooves and the rim are drawn smoothly, without "stair steps".
         for color in [Color::White, Color::Black] {
             for size in [48usize, 64, 100, 166] {
                 let image = render_piece(Piece::new(color, Kind::Man), size, false);
@@ -457,7 +462,7 @@ mod tests {
                         }
                     }
                 }
-                assert!(worst <= 70, "{color:?} {size}: перепад {worst}");
+                assert!(worst <= 70, "{color:?} {size}: difference {worst}");
             }
         }
     }
@@ -472,22 +477,29 @@ mod tests {
             for y in 0..size {
                 for x in 0..size {
                     let (p, s) = (plain.pixel(x, y), shaded.pixel(x, y));
-                    assert_eq!(&p[..3], &s[..3], "тень не меняет цвет шашки");
+                    assert_eq!(
+                        &p[..3],
+                        &s[..3],
+                        "the shadow does not change the colour of the piece"
+                    );
                     assert!(s[3] >= p[3]);
                     if p[3] == 255 {
                         assert_eq!(p, s);
                     }
                     if p[3] == 0 && s[3] > 0 {
                         shadow_pixels += 1;
-                        assert!(s[3] < 128, "тень полупрозрачна");
+                        assert!(s[3] < 128, "the shadow is semi-transparent");
                     }
                 }
             }
-            assert!(shadow_pixels > 100, "{piece:?}: тень видна вокруг шашки");
-            // Изображение не обрезано краем клетки.
+            assert!(
+                shadow_pixels > 100,
+                "{piece:?}: the shadow is visible around the piece"
+            );
+            // The image is not cut off by the border of the cell.
             for i in 0..size {
                 for (x, y) in [(i, 0), (i, size - 1), (0, i), (size - 1, i)] {
-                    assert_eq!(shaded.alpha(x, y), 0, "{piece:?}: край ({x}, {y})");
+                    assert_eq!(shaded.alpha(x, y), 0, "{piece:?}: border ({x}, {y})");
                 }
             }
         }
@@ -497,7 +509,7 @@ mod tests {
         assert!(lift.rgba.chunks(4).all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0));
     }
 
-    /// Число золотистых пикселей (цвет короны и кольца дамки).
+    /// Number of golden pixels (the colour of the crown and the ring of a king).
     fn golden_pixels(image: &PieceImage) -> usize {
         image
             .rgba
@@ -512,7 +524,7 @@ mod tests {
             for size in [32usize, 64, 100] {
                 let man = render_piece(Piece::new(color, Kind::Man), size, false);
                 let king = render_piece(Piece::new(color, Kind::King), size, false);
-                // Очертание одно и то же, отличается рисунок.
+                // The outline is the same; the drawing differs.
                 let alphas = |i: &PieceImage| i.rgba.chunks(4).map(|p| p[3]).collect::<Vec<u8>>();
                 assert_eq!(alphas(&man), alphas(&king));
                 let differing = man
@@ -524,12 +536,12 @@ mod tests {
                 let area = PI * (PIECE_RADIUS * size as f32).powi(2);
                 assert!(
                     differing as f32 > 0.25 * area,
-                    "{color:?} {size}: отличается {differing} пикселей"
+                    "{color:?} {size}: {differing} pixels differ"
                 );
                 assert_eq!(golden_pixels(&man), 0, "{color:?} {size}");
                 assert!(
                     golden_pixels(&king) as f32 > 0.08 * area,
-                    "{color:?} {size}: корона заметна"
+                    "{color:?} {size}: the crown is noticeable"
                 );
             }
         }
@@ -544,12 +556,12 @@ mod tests {
         };
         let white = brightness(Piece::new(Color::White, Kind::Man));
         let black = brightness(Piece::new(Color::Black, Kind::Man));
-        assert!(white > 600 && black < 300, "{white} и {black}");
+        assert!(white > 600 && black < 300, "{white} and {black}");
     }
 
     #[test]
     fn crown_is_centered_on_the_piece() {
-        // Корона симметрична слева направо и стоит посередине шашки по высоте.
+        // The crown is symmetric left to right and sits in the middle of the piece in height.
         let size = 200;
         let half = CROWN_SCALE * PIECE_RADIUS * size as f32;
         let (mut top, mut bottom) = (f32::MAX, f32::MIN);
@@ -568,7 +580,7 @@ mod tests {
         let middle = f32::midpoint(top, bottom) + CROWN_SHIFT;
         assert!(
             (middle * half).abs() < 0.5,
-            "середина короны смещена на {} пикс.",
+            "the middle of the crown is off by {} px",
             middle * half
         );
     }
@@ -598,7 +610,7 @@ mod tests {
             assert_eq!(
                 render_piece(piece, 40, true),
                 render_piece(piece, 40, true),
-                "расчёт детерминирован"
+                "the computation is deterministic"
             );
         }
         assert_eq!(render_lift_shadow(0).rgba.len(), 0);

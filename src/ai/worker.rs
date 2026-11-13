@@ -1,4 +1,5 @@
-//! Расчёт хода в фоновом потоке: интерфейс не ждёт компьютер и может прервать его.
+//! Move calculation in a background thread: the interface does not wait for the computer
+//! and can interrupt it.
 
 use super::{choose_move, Choice};
 use crate::board::Position;
@@ -8,18 +9,18 @@ use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 
-/// Состояние фонового расчёта.
+/// State of a background calculation.
 #[derive(Debug)]
 pub enum JobStatus {
-    /// Компьютер ещё думает.
+    /// The computer is still thinking.
     Running,
-    /// Расчёт закончен. `None` — допустимых ходов нет.
+    /// The calculation is finished. `None` means there are no legal moves.
     Done(Option<Choice>),
-    /// Поток расчёта завершился, не прислав ответа.
+    /// The calculation thread ended without sending an answer.
     Failed,
 }
 
-/// Фоновый расчёт одного хода. При уничтожении расчёт прерывается.
+/// Background calculation of one move. Dropping it interrupts the calculation.
 #[derive(Debug)]
 pub struct SearchJob {
     receiver: Receiver<Option<Choice>>,
@@ -27,7 +28,7 @@ pub struct SearchJob {
 }
 
 impl SearchJob {
-    /// Запускает расчёт хода в отдельном потоке.
+    /// Starts calculating a move in a separate thread.
     #[must_use]
     pub fn start(state: GameState, history: Vec<Position>, level: u8, seed: u64) -> Self {
         let (sender, receiver) = channel();
@@ -35,17 +36,17 @@ impl SearchJob {
         let flag = Arc::clone(&stop);
         let work = move || {
             let choice = choose_move(&state, &history, level, seed, &flag);
-            // Получателя может уже не быть: расчёт отменён.
+            // The receiver may be gone already: the calculation was cancelled.
             let _ = sender.send(choice);
         };
-        // Если поток создать не удалось, канал закрывается, и расчёт считается сорвавшимся.
+        // If the thread cannot be created, the channel closes and the calculation counts as failed.
         let _ = thread::Builder::new()
             .name("rucheckers-ai".to_string())
             .spawn(work);
         Self { receiver, stop }
     }
 
-    /// Проверяет, готов ли ответ, не блокируя вызывающий поток.
+    /// Checks whether the answer is ready, without blocking the calling thread.
     #[must_use]
     pub fn poll(&self) -> JobStatus {
         match self.receiver.try_recv() {
@@ -55,7 +56,7 @@ impl SearchJob {
         }
     }
 
-    /// Просит расчёт остановиться как можно скорее.
+    /// Asks the calculation to stop as soon as possible.
     pub fn cancel(&self) {
         self.stop.store(true, Ordering::Relaxed);
     }

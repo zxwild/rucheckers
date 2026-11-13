@@ -1,8 +1,8 @@
-//! Компьютерный соперник: десять уровней силы.
+//! The computer opponent: ten levels of strength.
 //!
-//! Слабые уровни считают неглубоко, оценивают ходы со случайной погрешностью и время
-//! от времени делают случайный ход. Сильные уровни считают глубже, а десятый использует
-//! почти весь отведённый на ход лимит времени.
+//! The weak levels search shallowly, judge moves with a random error and now and then
+//! play a random move. The strong levels search deeper, and the tenth uses almost all
+//! of the time allowed for a move.
 
 pub mod eval;
 pub mod search;
@@ -16,36 +16,36 @@ use search::{search, SearchParams};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-/// Самый слабый уровень.
+/// The weakest level.
 pub const MIN_LEVEL: u8 = 1;
-/// Самый сильный уровень.
+/// The strongest level.
 pub const MAX_LEVEL: u8 = 10;
-/// Лимит времени на ход компьютера на любом уровне, мс.
+/// Time limit for a computer move on any level, ms.
 pub const MOVE_TIME_LIMIT_MS: u64 = 5_000;
 
-/// Настройки уровня.
+/// Settings of a level.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Level {
-    /// Глубина поиска в тихих полуходах.
+    /// Search depth in quiet plies.
     pub depth: i32,
-    /// Жёсткий лимит времени поиска, мс.
+    /// Hard limit of the search time, ms.
     pub hard_time_ms: u64,
-    /// Мягкий лимит: после него новая итерация не начинается, мс.
+    /// Soft limit: no new iteration starts after it, ms.
     pub soft_time_ms: u64,
-    /// Вероятность сделать случайный ход вместо найденного.
+    /// Probability of playing a random move instead of the one found.
     pub blunder: f64,
-    /// Амплитуда случайной погрешности оценки ходов в корне (в сотых простой).
+    /// Amplitude of the random error in the scores of root moves (in hundredths of a man).
     pub noise: i32,
-    /// Амплитуда малой добавки к статической оценке: разнообразит игру сильных уровней.
+    /// Amplitude of a small addition to the static score: it varies the play of strong levels.
     pub jitter: i32,
-    /// Вероятность «невнимательного» хода: расчёт на один полуход без проверки
-    /// ответных взятий, из-за чего уровень подставляет шашки.
+    /// Probability of a "careless" move: a one-ply calculation that does not check the
+    /// opponent's captures in reply, so the level leaves pieces en prise.
     pub careless: f64,
-    /// Размер таблицы перестановок (двоичный логарифм числа записей).
+    /// Size of the transposition table (binary logarithm of the number of entries).
     pub table_bits: u32,
 }
 
-/// Таблица уровней: от новичка до максимальной силы.
+/// Table of levels: from a beginner to full strength.
 #[rustfmt::skip]
 const LEVELS: [Level; 10] = [
     Level { depth: 1, hard_time_ms: 1_000, soft_time_ms: 1_000, blunder: 0.25, careless: 1.00, noise: 80, jitter: 0, table_bits: 12 },
@@ -60,35 +60,36 @@ const LEVELS: [Level; 10] = [
     Level { depth: 99, hard_time_ms: 4_500, soft_time_ms: 2_700, blunder: 0.0, careless: 0.0, noise: 0, jitter: 1, table_bits: 22 },
 ];
 
-/// Приводит номер уровня к допустимому диапазону.
+/// Brings a level number into the allowed range.
 #[must_use]
 pub fn clamp_level(level: u8) -> u8 {
     level.clamp(MIN_LEVEL, MAX_LEVEL)
 }
 
-/// Настройки уровня `level` (номер приводится к диапазону 1–10).
+/// Settings of the level `level` (the number is brought into the range 1–10).
 #[must_use]
 pub fn level_settings(level: u8) -> Level {
     LEVELS[(clamp_level(level) - MIN_LEVEL) as usize]
 }
 
-/// Выбранный компьютером ход.
+/// The move chosen by the computer.
 #[derive(Clone, Debug)]
 pub struct Choice {
     pub mv: Move,
-    /// Оценка хода с точки зрения компьютера; `None`, если ход выбран без поиска.
+    /// Score of the move from the computer's point of view; `None` if it was chosen without
+    /// a search.
     pub score: Option<i32>,
-    /// Глубина завершённого поиска.
+    /// Depth of the completed search.
     pub depth: i32,
-    /// Число просмотренных узлов.
+    /// Number of nodes visited.
     pub nodes: u64,
 }
 
-/// Выбирает ход на заданном уровне.
+/// Chooses a move on the given level.
 ///
-/// `history` — позиции ветки партии перед текущей (для учёта повторений),
-/// `seed` определяет все случайные решения, `stop` позволяет прервать расчёт.
-/// Возвращает `None`, только если допустимых ходов нет.
+/// `history` holds the positions of the game branch before the current one (to account
+/// for repetitions), `seed` determines every random decision, `stop` allows the
+/// calculation to be interrupted. Returns `None` only if there are no legal moves.
 pub fn choose_move(
     state: &GameState,
     history: &[Position],
@@ -134,7 +135,7 @@ pub fn choose_move(
         nodes: result.nodes,
     };
     if settings.noise > 0 && !result.root_scores.is_empty() {
-        // Погрешность — сумма двух равномерных величин: малые ошибки чаще больших.
+        // The error is a sum of two uniform values: small mistakes are more frequent than big ones.
         let mut best_noisy = i32::MIN;
         for (mv, score) in &result.root_scores {
             let noisy = score + rng.symmetric(settings.noise) + rng.symmetric(settings.noise);
@@ -163,12 +164,12 @@ mod tests {
         }
         for level in MIN_LEVEL..=MAX_LEVEL {
             let s = level_settings(level);
-            assert!(s.hard_time_ms < MOVE_TIME_LIMIT_MS, "уровень {level}");
+            assert!(s.hard_time_ms < MOVE_TIME_LIMIT_MS, "level {level}");
             assert!(s.soft_time_ms <= s.hard_time_ms);
         }
         assert!(
             LEVELS[0].careless >= 1.0 && LEVELS[0].blunder > 0.2,
-            "первый уровень заметно ошибается"
+            "the first level makes noticeable mistakes"
         );
         assert_eq!(level_settings(0), level_settings(1));
         assert_eq!(level_settings(200), level_settings(10));

@@ -1,4 +1,4 @@
-//! Графический интерфейс: окно, отрисовка доски, панель ходов, диалоги и звук.
+//! Graphical interface: the window, board drawing, move panel, dialogs and sound.
 
 mod app;
 mod audio;
@@ -14,7 +14,7 @@ use rucheckers::settings::{default_settings_path, system_locale, Settings};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Запускает приложение и возвращается после закрытия окна.
+/// Runs the application and returns after the window is closed.
 pub fn run() -> eframe::Result<()> {
     let settings_path = default_settings_path();
     let base = Settings::for_locale(system_locale().as_deref());
@@ -23,7 +23,7 @@ pub fn run() -> eframe::Result<()> {
         None => base,
     };
 
-    // Необязательный аргумент командной строки — файл партии, который нужно открыть.
+    // An optional command line argument is a game file to open.
     let initial_file = std::env::args_os().nth(1).map(PathBuf::from);
 
     let options = eframe::NativeOptions {

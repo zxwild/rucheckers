@@ -1,4 +1,4 @@
-//! Дерево партии, нотация и файлы PDN.
+//! The game tree, notation and PDN files.
 
 mod common;
 
@@ -15,10 +15,10 @@ use rucheckers::rules::{DrawReason, Outcome};
 use rucheckers::tree::{GameTree, NodeId, TreeError};
 
 // ---------------------------------------------------------------------------
-// Дерево партии
+// The game tree
 // ---------------------------------------------------------------------------
 
-/// Основная линия из четырёх полуходов; возвращает идентификаторы узлов.
+/// A main line of four plies; returns the identifiers of the nodes.
 fn sample_line(tree: &mut GameTree) -> Vec<NodeId> {
     ["c3-d4", "f6-e5", "d4:f6", "g7:e5"]
         .iter()
@@ -54,7 +54,7 @@ fn moves_form_a_line_with_positions_and_ply_numbers() {
 fn a_different_move_creates_a_variation_and_keeps_the_old_continuation() {
     let mut tree = GameTree::new();
     let ids = sample_line(&mut tree);
-    // Возвращаемся к позиции после первого хода и отвечаем иначе.
+    // Go back to the position after the first move and reply differently.
     assert!(tree.go_to(ids[0]));
     let alt = play(&mut tree, "b6-a5");
     assert_ne!(alt, ids[1]);
@@ -62,18 +62,18 @@ fn a_different_move_creates_a_variation_and_keeps_the_old_continuation() {
     assert_eq!(
         parent.children(),
         [ids[1], alt],
-        "прежнее продолжение осталось первым"
+        "the earlier continuation is still the first"
     );
     assert_eq!(tree.len(), 6);
-    // Прежнее продолжение сохранено целиком.
+    // The earlier continuation is kept in full.
     assert_eq!(tree.get(ids[1]).unwrap().children(), [ids[2]]);
     assert_eq!(tree.get(ids[2]).unwrap().children(), [ids[3]]);
-    assert_eq!(tree.main_line_end(), ids[3], "основная линия не изменилась");
-    // Тот же ход повторно варианта не создаёт.
+    assert_eq!(tree.main_line_end(), ids[3], "the main line has not changed");
+    // The same move again does not create a variation.
     tree.go_to(ids[0]);
     assert_eq!(play(&mut tree, "b6-a5"), alt);
     assert_eq!(tree.len(), 6);
-    // Третий вариант в той же позиции и вариант в самом начале партии.
+    // A third variation in the same position and a variation at the very start of the game.
     tree.go_to(ids[0]);
     let third = play(&mut tree, "h6-g5");
     assert_eq!(tree.siblings(third), [ids[1], alt, third]);
@@ -92,7 +92,7 @@ fn navigation_follows_the_active_branch() {
     let alt = play(&mut tree, "b6-a5");
     let alt_reply = play(&mut tree, "d4-c5");
 
-    // Назад и вперёд: «вперёд» идёт по той ветке, по которой пришли.
+    // Back and forward: "forward" follows the branch we came along.
     assert!(tree.back());
     assert!(tree.back());
     assert_eq!(tree.current(), ids[0]);
@@ -100,36 +100,36 @@ fn navigation_follows_the_active_branch() {
     assert_eq!(tree.current(), alt);
     assert!(tree.go_end());
     assert_eq!(tree.current(), alt_reply);
-    assert!(!tree.forward(), "дальше ходов нет");
+    assert!(!tree.forward(), "there are no further moves");
     assert!(!tree.go_end());
     assert_eq!(tree.active_line(), [GameTree::ROOT, ids[0], alt, alt_reply]);
 
-    // Переключение между вариантами.
+    // Switching between variations.
     tree.go_to(alt);
     assert!(tree.switch_variation(1));
     assert_eq!(
         tree.current(),
         ids[1],
-        "по кругу: за последним вариантом идёт первый"
+        "round the circle: the first variation follows the last"
     );
     assert!(tree.switch_variation(-1));
     assert_eq!(tree.current(), alt);
     assert!(tree.switch_variation(-1));
     assert_eq!(tree.current(), ids[1]);
-    // Теперь активна основная линия.
+    // Now the main line is active.
     assert_eq!(
         tree.active_line(),
         [GameTree::ROOT, ids[0], ids[1], ids[2], ids[3]]
     );
     tree.go_to(ids[0]);
-    assert!(!tree.switch_variation(1), "у первого хода нет вариантов");
+    assert!(!tree.switch_variation(1), "the first move has no variations");
     assert_eq!(
         tree.active_line().last(),
         Some(&ids[3]),
-        "переход назад не меняет активную ветку"
+        "stepping back does not change the active branch"
     );
 
-    // К началу и переход к произвольному узлу.
+    // To the start, and to an arbitrary node.
     assert!(tree.go_start());
     assert_eq!(tree.current(), GameTree::ROOT);
     assert!(!tree.go_start());
@@ -139,18 +139,22 @@ fn navigation_follows_the_active_branch() {
     assert_eq!(tree.active_line(), [GameTree::ROOT, ids[0], alt, alt_reply]);
     tree.go_start();
     assert!(tree.go_end());
-    assert_eq!(tree.current(), alt_reply, "конец активной, а не основной ветки");
+    assert_eq!(
+        tree.current(),
+        alt_reply,
+        "the end of the active branch, not of the main one"
+    );
 }
 
 #[test]
 fn play_continues_from_the_middle_of_the_game() {
     let mut tree = GameTree::new();
     let ids = sample_line(&mut tree);
-    // Продолжение с середины записанным ходом: идём по существующей ветке.
+    // Continuing from the middle with the recorded move: we follow the existing branch.
     tree.go_to(ids[0]);
     assert_eq!(play(&mut tree, "f6-e5"), ids[1]);
     assert_eq!(tree.len(), 5);
-    // Продолжение новым ходом: новая ветка, счётчик полуходов считается от корня.
+    // Continuing with a new move: a new branch; the ply counter counts from the root.
     tree.go_to(ids[0]);
     let alt = play(&mut tree, "b6-a5");
     assert_eq!(tree.get(alt).unwrap().ply(), 2);
@@ -165,10 +169,10 @@ fn illegal_moves_are_rejected_and_the_tree_is_unchanged() {
     let mut tree = GameTree::new();
     let ids = sample_line(&mut tree);
     let before = tree.len();
-    // Ход из другой позиции (сейчас очередь белых, взятия нет).
+    // A move from another position (it is White's turn now, and there is no capture).
     let foreign = mv(&Position::initial(), "c3-d4");
     assert_eq!(tree.play(&foreign), Err(TreeError::IllegalMove));
-    // Тихий ход при обязательном взятии.
+    // A quiet move when a capture is mandatory.
     let quiet = mv(&pos("W:Wa1:Bh8"), "a1-b2");
     assert_eq!(tree.add_move(ids[1], &quiet), Err(TreeError::IllegalMove));
     assert_eq!(tree.add_move(12345, &quiet), Err(TreeError::NoSuchNode));
@@ -184,7 +188,7 @@ fn no_moves_can_be_added_after_the_game_is_over() {
     let any = mv(&Position::initial(), "c3-d4");
     assert_eq!(tree.add_move(end, &any), Err(TreeError::GameOver));
 
-    // После ничьей по правилам ходы тоже не принимаются.
+    // After a draw by the rules moves are not accepted either.
     let mut tree = GameTree::from_position(pos("W:WKg1,a1,c1,e1:BKb8,d8,f8,h8"));
     for _ in 0..2 {
         play_all(&mut tree, &["g1-h2", "b8-a7", "h2-g1", "a7-b8"]);
@@ -195,7 +199,7 @@ fn no_moves_can_be_added_after_the_game_is_over() {
     );
     let next = mv(tree.current_node().position(), "g1-h2");
     assert_eq!(tree.play(&next), Err(TreeError::GameOver));
-    // Но из более ранней позиции той же ветки партию можно продолжить иначе.
+    // But from an earlier position of the same branch the game can be continued differently.
     assert!(tree.back());
     let other = play(&mut tree, "a7-b6");
     assert_eq!(tree.get(other).unwrap().outcome(), None);
@@ -203,7 +207,7 @@ fn no_moves_can_be_added_after_the_game_is_over() {
 
 #[test]
 fn draw_counters_follow_the_branch_leading_to_the_node() {
-    // Основная ветка: дамки ходят туда-обратно, счётчик правила 3 растёт.
+    // The main branch: the kings shuttle back and forth, the counter of rule 3 grows.
     let mut tree = GameTree::from_position(pos("W:WKg1,a1,c1,e1:BKb8,d8,f8,h8"));
     play_all(&mut tree, &["g1-h2", "b8-a7", "h2-g1"]);
     let node = tree.current();
@@ -212,25 +216,25 @@ fn draw_counters_follow_the_branch_leading_to_the_node() {
     assert_eq!(tree.get(main).unwrap().state().counters.kings_only, 4);
     assert_eq!(tree.get(main).unwrap().occurrences(), 2);
     assert_eq!(tree.history_before(main).len(), 4);
-    // Вариант: вместо хода дамкой — ход простой; счётчик на этой ветке обнулён.
+    // A variation: a man moves instead of a king; the counter on this branch is reset.
     tree.go_to(node);
     let side = play(&mut tree, "h8-g7");
     assert_eq!(tree.get(side).unwrap().state().counters.kings_only, 0);
     assert_eq!(tree.get(side).unwrap().occurrences(), 1);
     assert!(
         tree.history_before(side).is_empty(),
-        "после хода простой повторения невозможны"
+        "after a man's move repetitions are impossible"
     );
-    // Основная ветка при этом не изменилась.
+    // The main branch has not changed.
     assert_eq!(tree.get(main).unwrap().state().counters.kings_only, 4);
 }
 
 // ---------------------------------------------------------------------------
-// Случайные деревья
+// Random trees
 // ---------------------------------------------------------------------------
 
-/// Случайное дерево: в основном линии продолжаются, изредка от случайного узла
-/// ответвляется вариант.
+/// A random tree: mostly lines are continued; now and then a variation branches off a
+/// random node.
 fn random_tree(rng: &mut Rng, start: Position, steps: usize) -> GameTree {
     let mut tree = GameTree::from_position(start);
     let mut last = GameTree::ROOT;
@@ -264,7 +268,7 @@ fn same_structure_detects_differences() {
     let mut rng = Rng::new(5);
     let tree = random_tree(&mut rng, Position::initial(), 120);
     assert!(tree.same_structure(&tree.clone()));
-    // Лишний ход.
+    // An extra move.
     let mut longer = tree.clone();
     let leaf = longer.main_line_end();
     if longer.get(leaf).unwrap().outcome().is_none() {
@@ -272,17 +276,17 @@ fn same_structure_detects_differences() {
         longer.add_move(leaf, &m).unwrap();
         assert!(!tree.same_structure(&longer));
     }
-    // Другая начальная позиция.
+    // Another starting position.
     let other = GameTree::from_position(pos("W:Wa1:Bh8"));
     assert!(!GameTree::new().same_structure(&other));
-    // Положение указателя не влияет на сравнение.
+    // The position of the pointer does not affect the comparison.
     let mut moved = tree.clone();
     moved.go_to(moved.len() - 1);
     assert!(tree.same_structure(&moved));
 }
 
 // ---------------------------------------------------------------------------
-// PDN: запись
+// PDN: writing
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -294,17 +298,17 @@ fn pdn_text_has_russian_game_type_and_variations_in_parentheses() {
     tree.go_to(ids[2]);
     play(&mut tree, "e7:g5");
 
-    let tags = standard_tags(Color::White, "Игрок", "Компьютер, уровень 4");
+    let tags = standard_tags(Color::White, "Zoë", "Computer, level 4");
     let text = to_pdn(&tree, &tags);
     assert!(text.contains("[GameType \"25,W,8,8,A0,0\"]"), "{text}");
     assert_eq!(GAME_TYPE, "25,W,8,8,A0,0");
-    assert!(text.contains("[White \"Игрок\"]"));
-    assert!(text.contains("[Black \"Компьютер, уровень 4\"]"));
+    assert!(text.contains("[White \"Zoë\"]"));
+    assert!(text.contains("[Black \"Computer, level 4\"]"));
     assert!(text.contains("[WhiteType \"human\"]") && text.contains("[BlackType \"program\"]"));
     assert!(text.contains("[Result \"*\"]"));
     assert!(
         !text.contains("[FEN"),
-        "стандартная начальная позиция не записывается"
+        "the standard starting position is not written"
     );
     let movetext = text.split("\n\n").nth(1).unwrap().trim();
     assert_eq!(
@@ -315,8 +319,8 @@ fn pdn_text_has_russian_game_type_and_variations_in_parentheses() {
     let game = from_pdn(&text).unwrap();
     assert!(game.tree.same_structure(&tree));
     assert_eq!(game.human_color(), Some(Color::White));
-    assert_eq!(game.tag("White"), Some("Игрок"));
-    let black = to_pdn(&tree, &standard_tags(Color::Black, "Игрок", "Компьютер"));
+    assert_eq!(game.tag("White"), Some("Zoë"));
+    let black = to_pdn(&tree, &standard_tags(Color::Black, "Zoë", "Computer"));
     assert_eq!(from_pdn(&black).unwrap().human_color(), Some(Color::Black));
     assert_eq!(from_pdn("1. c3-d4 *").unwrap().human_color(), None);
 }
@@ -330,7 +334,7 @@ fn pdn_result_matches_the_end_of_the_main_line() {
     assert!(text.trim_end().ends_with("1. c3:e5 1-0"), "{text}");
     assert!(
         text.contains("[FEN \"W:Wc3:Bd4\"]"),
-        "нестандартная начальная позиция записана"
+        "a non-standard starting position is written"
     );
     assert!(from_pdn(&text).unwrap().tree.same_structure(&tree));
 
@@ -340,7 +344,7 @@ fn pdn_result_matches_the_end_of_the_main_line() {
     assert!(text.contains("[Result \"0-1\"]"));
     assert!(
         text.contains("1... e5:c3 0-1"),
-        "первый ход чёрных записан с многоточием: {text}"
+        "Black's first move is written with an ellipsis: {text}"
     );
     assert!(from_pdn(&text).unwrap().tree.same_structure(&tree));
 
@@ -358,13 +362,13 @@ fn long_games_are_wrapped_into_lines() {
     let text = to_pdn(&tree, &[]);
     assert!(
         text.lines().all(|line| line.chars().count() <= 80),
-        "строки не длиннее 80 знаков"
+        "lines are no longer than 80 characters"
     );
     assert!(text.lines().count() > 8);
 }
 
 // ---------------------------------------------------------------------------
-// PDN: сохранение и загрузка дают идентичное дерево
+// PDN: saving and loading give an identical tree
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -385,22 +389,22 @@ fn pdn_round_trip_preserves_random_trees_with_variations() {
             with_variations += 1;
         }
         let text = to_pdn(&tree, &standard_tags(Color::White, "A", "B"));
-        let game = from_pdn(&text).unwrap_or_else(|e| panic!("раунд {round}: {e}\n{text}"));
+        let game = from_pdn(&text).unwrap_or_else(|e| panic!("round {round}: {e}\n{text}"));
         assert!(
             game.tree.same_structure(&tree),
-            "раунд {round}: дерево изменилось\n{text}"
+            "round {round}: the tree has changed\n{text}"
         );
         assert_eq!(game.tree.len(), tree.len());
-        // Повторное сохранение даёт тот же текст.
-        assert_eq!(to_pdn(&game.tree, &game.tags), text, "раунд {round}");
-        // Загрузка из байтов с BOM и переводами строк Windows.
+        // Saving again gives the same text.
+        assert_eq!(to_pdn(&game.tree, &game.tags), text, "round {round}");
+        // Loading from bytes with a BOM and Windows line endings.
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(text.replace('\n', "\r\n").as_bytes());
         assert!(from_bytes(&bytes).unwrap().tree.same_structure(&tree));
     }
     assert!(
         with_variations > 150,
-        "в большинстве деревьев есть варианты: {with_variations}"
+        "most trees have variations: {with_variations}"
     );
 }
 
@@ -411,7 +415,7 @@ fn pdn_round_trip_through_a_file() {
     let path = std::env::temp_dir().join(format!("rucheckers-test-{}.pdn", std::process::id()));
     std::fs::write(
         &path,
-        to_pdn(&tree, &standard_tags(Color::Black, "Игрок", "Компьютер")),
+        to_pdn(&tree, &standard_tags(Color::Black, "Zoë", "Computer")),
     )
     .unwrap();
     let game = from_bytes(&std::fs::read(&path).unwrap()).unwrap();
@@ -421,14 +425,14 @@ fn pdn_round_trip_through_a_file() {
 }
 
 // ---------------------------------------------------------------------------
-// PDN: чтение записей других программ
+// PDN: reading the records of other programs
 // ---------------------------------------------------------------------------
 
 #[test]
 fn pdn_reader_accepts_common_dialects() {
-    let text = "\u{feff}[Event \"Турнир\"]\r\n[GameType \"25\"]\r\n% служебная строка\r\n\r\n\
-        1.c3-d4 {комментарий (со скобками)} f6-e5! 2. d4xf6 $1 g7xe5 ; до конца строки ( x )\r\n\
-        3. b2-c3 ?! 3... h8-g7 1/2-1/2\r\n\r\n[Event \"вторая партия\"]\r\n1. e3-f4 *";
+    let text = "\u{feff}[Event \"Tournoi d'été\"]\r\n[GameType \"25\"]\r\n% an escape line\r\n\r\n\
+        1.c3-d4 {a comment (with parentheses) — naïve} f6-e5! 2. d4xf6 $1 g7xe5 ; to the end of the line ( x )\r\n\
+        3. b2-c3 ?! 3... h8-g7 1/2-1/2\r\n\r\n[Event \"the second game\"]\r\n1. e3-f4 *";
     let game = from_pdn(text.trim_start_matches('\u{feff}')).unwrap();
     let line: Vec<String> = game
         .tree
@@ -437,10 +441,10 @@ fn pdn_reader_accepts_common_dialects() {
         .filter_map(|&id| game.tree.get(id).unwrap().mv().map(format_move))
         .collect();
     assert_eq!(line, ["c3-d4", "f6-e5", "d4:f6", "g7:e5", "b2-c3", "h8-g7"]);
-    assert_eq!(game.tree.len(), 7, "вторая партия файла не читается");
-    assert_eq!(game.tag("event"), Some("Турнир"));
+    assert_eq!(game.tree.len(), 7, "the second game of the file is not read");
+    assert_eq!(game.tag("event"), Some("Tournoi d'été"));
 
-    // Сокращённая запись взятия (только начало и конец) и многоточие отдельным словом.
+    // A shortened capture (only the start and the end) and an ellipsis as a separate word.
     let error = from_pdn("[FEN \"B:Wd4:Be5\"]\n1. ... e5:g7 *").unwrap_err();
     assert!(
         matches!(
@@ -456,13 +460,13 @@ fn pdn_reader_accepts_common_dialects() {
     assert_eq!(game.tree.len(), 2);
     let game = from_pdn("[FEN \"B:Wd4:Be5\"]\n1. ... e5xc3 0-1").unwrap();
     assert_eq!(game.tree.len(), 2);
-    // Пустая партия с одним заголовком допустима.
+    // An empty game with a header only is acceptable.
     let game = from_pdn("[White \"A\"]\n[Black \"B\"]\n*").unwrap();
     assert!(game.tree.is_empty());
 }
 
 // ---------------------------------------------------------------------------
-// PDN: повреждённые и посторонние файлы
+// PDN: damaged and foreign files
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -475,13 +479,13 @@ fn damaged_and_foreign_files_give_errors_not_panics() {
     let cases: Vec<(&str, PdnError)> = vec![
         ("", PdnError::Empty),
         ("  \n\t\r\n ", PdnError::Empty),
-        ("Привет, это не партия", PdnError::NotPdn),
+        ("Grüße, this is not a game", PdnError::NotPdn),
         ("<html><body>1-0</body></html>", PdnError::NotPdn),
         ("{\"json\": true}", PdnError::NotPdn),
         ("[Event \"x\"", PdnError::BadTag { line: 1 }),
         ("[Event x]", PdnError::BadTag { line: 1 }),
         (
-            "[Event \"x\"]\n[Site \"незакрытая строка]\n1. c3-d4",
+            "[Event \"x\"]\n[Site \"an unterminated string]\n1. c3-d4",
             PdnError::BadTag { line: 2 },
         ),
         ("[]", PdnError::BadTag { line: 1 }),
@@ -489,13 +493,13 @@ fn damaged_and_foreign_files_give_errors_not_panics() {
             "[GameType \"20,W,10,10,N2,0\"]\n1. 32-28 19-23 *",
             PdnError::WrongGameType("20,W,10,10,N2,0".into()),
         ),
-        ("[GameType \"шашки\"]\n*", PdnError::WrongGameType("шашки".into())),
+        ("[GameType \"dámy\"]\n*", PdnError::WrongGameType("dámy".into())),
         ("[FEN \"W:Wz9:Bh8\"]\n*", PdnError::BadFen("W:Wz9:Bh8".into())),
         ("[FEN \"\"]\n*", PdnError::BadFen(String::new())),
         ("1. c3-d4 f6-e5 2. a1-a2 *", line1(MoveProblem::Syntax)),
         ("1. c3-d4 f6-e5 2. a1-b2 *", line1(MoveProblem::Illegal)),
         ("1. c3-d4 c3-d4 *", line1(MoveProblem::Illegal)),
-        ("1. c3-d4 ход *", line1(MoveProblem::Syntax)),
+        ("1. c3-d4 déplacement *", line1(MoveProblem::Syntax)),
         ("1. c3-d4 ( 1. e3-f4", PdnError::UnbalancedVariation { line: 1 }),
         ("1. c3-d4 ) f6-e5", PdnError::UnbalancedVariation { line: 1 }),
         ("( 1. c3-d4 )", PdnError::VariationWithoutMove { line: 1 }),
@@ -504,7 +508,7 @@ fn damaged_and_foreign_files_give_errors_not_panics() {
             PdnError::VariationWithoutMove { line: 1 },
         ),
         (
-            "1. c3-d4 { незакрытый комментарий",
+            "1. c3-d4 { an unterminated comment",
             PdnError::UnterminatedComment { line: 1 },
         ),
         (
@@ -533,7 +537,7 @@ fn damaged_and_foreign_files_give_errors_not_panics() {
             ) => assert_eq!((l1, p1), (l2, p2), "{text:?}"),
             _ => assert_eq!(error, expected, "{text:?}"),
         }
-        // Сообщение об ошибке формируется без сбоя.
+        // The error message is built without a failure.
         assert!(!error.to_string().is_empty());
     }
 }
@@ -553,7 +557,7 @@ fn moves_after_an_automatic_draw_are_reported() {
         ),
         "{error:?}"
     );
-    // Та же запись без лишнего хода загружается.
+    // The same record without the extra move loads.
     let text = format!("[FEN \"W:WKg1,a1,c1,e1:BKb8,d8,f8,h8\"]\n{cycle}{cycle}1/2-1/2");
     let game = from_pdn(&text).unwrap();
     assert_eq!(
@@ -564,7 +568,7 @@ fn moves_after_an_automatic_draw_are_reported() {
 
 #[test]
 fn binary_and_oversized_files_are_rejected() {
-    // Заголовок PNG и случайные байты.
+    // A PNG header and random bytes.
     let png = [
         0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, b'I', b'H', b'D', b'R',
     ];
@@ -584,7 +588,7 @@ fn binary_and_oversized_files_are_rejected() {
 
     let huge = vec![b' '; MAX_FILE_SIZE + 1];
     assert_eq!(from_bytes(&huge).unwrap_err(), PdnError::TooLarge);
-    // Глубокая вложенность скобок и очень длинные слова не приводят к сбою.
+    // Deep nesting of parentheses and very long words cause no failure.
     let nested = format!("1. c3-d4 {}", "(".repeat(50_000));
     assert!(from_pdn(&nested).is_err());
     let long_word = "c".repeat(200_000);
@@ -600,7 +604,7 @@ fn randomly_corrupted_pdn_never_panics() {
     for _ in 0..12 {
         let steps = 20 + rng.below(200);
         let tree = random_tree(&mut rng, Position::initial(), steps);
-        sources.push(to_pdn(&tree, &standard_tags(Color::White, "Игрок", "Компьютер")).into_bytes());
+        sources.push(to_pdn(&tree, &standard_tags(Color::White, "Zoë", "Computer")).into_bytes());
     }
     let alphabet = b"()[]{}\";.:-x*$!?%\n\r\t 0123456789abcdefghKWB\\\xFF\x00";
     let (mut accepted, mut rejected) = (0u32, 0u32);
@@ -629,7 +633,7 @@ fn randomly_corrupted_pdn_never_panics() {
         match from_bytes(&bytes) {
             Ok(game) => {
                 accepted += 1;
-                // Принятое дерево самосогласованно: его можно сохранить и прочитать снова.
+                // An accepted tree is self-consistent: it can be saved and read again.
                 let again = from_pdn(&to_pdn(&game.tree, &game.tags)).unwrap();
                 assert!(again.tree.same_structure(&game.tree));
             }
@@ -641,6 +645,6 @@ fn randomly_corrupted_pdn_never_panics() {
     }
     assert!(
         accepted > 0 && rejected > 1_000,
-        "принято {accepted}, отклонено {rejected}"
+        "accepted {accepted}, rejected {rejected}"
     );
 }

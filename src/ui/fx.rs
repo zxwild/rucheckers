@@ -1,115 +1,119 @@
-//! Электрический разряд при взятии нескольких шашек: молния, вспышки и искры.
+//! The electric discharge of a multi-capture: lightning, flashes and sparks.
 //!
-//! Молния тянется за бьющей шашкой по её пути и появляется одновременно с движением:
-//! шашка летит, разряд следует за ней и постепенно гаснет позади. Пролетая над побитой
-//! шашкой, разряд поражает её: шашка вспыхивает, рассыпается искрами и исчезает.
+//! The lightning trails the capturing piece along its route and appears together with
+//! the movement: the piece flies, the discharge follows it and gradually dies out
+//! behind. Flying over a captured piece, the discharge strikes it: the piece flashes,
+//! bursts into sparks and disappears.
 //!
-//! Модуль только считает кадр: ломаные молнии, вспышки и положения искр. Он не знает
-//! об окне и не хранит состояния между кадрами — кадр полностью определяется временем
-//! и зерном, поэтому эффект воспроизводим и проверяется тестами. На экран его выводит
-//! графическая часть средствами той же аппаратно ускоренной отрисовки, что и всю доску.
+//! The module only computes a frame: the polylines of the lightning, the flashes and
+//! the positions of the sparks. It knows nothing about the window and keeps no state
+//! between frames: a frame is fully determined by the time and the seed, so the effect
+//! is reproducible and covered by tests. The graphical part puts it on the screen with
+//! the same hardware-accelerated drawing as the whole board.
 //!
-//! Координаты — экранные, в клетках: единица равна стороне клетки, ось Y направлена
-//! вниз, начало — левый верхний угол игрового поля.
+//! Coordinates are screen coordinates in cells: the unit is the side of a cell, the Y
+//! axis points down, the origin is the top left corner of the playing field.
 
 use crate::rng::Rng;
 use std::f32::consts::TAU;
 
-/// Наименьшее число побитых за ход шашек, при котором показывается разряд.
+/// Smallest number of pieces captured in a move for the discharge to be shown.
 pub const MIN_CAPTURES: u32 = 2;
-/// Через сколько секунд после пролёта шашки молния на этом участке пути гаснет.
+/// How many seconds after the piece has passed the lightning on that part of the route goes out.
 pub const TRAIL_SECONDS: f64 = 0.45;
-/// Сколько секунд после пролёта шашки участок молнии светится в полную силу.
+/// How many seconds after the piece has passed a part of the lightning glows at full strength.
 pub const TRAIL_FULL_SECONDS: f64 = 0.10;
-/// Время исчезновения шашки после удара, с.
+/// Time a piece takes to disappear after being struck, s.
 pub const VANISH_SECONDS: f64 = 0.12;
-/// Длина самого мелкого звена ломаной молнии, клеток (приблизительно).
+/// Length of the finest link of the lightning polyline, cells (approximately).
 pub const BOLT_FINE_SEGMENT: f32 = 0.16;
-/// Размах самых мелких зубцов в долях длины мелкого звена.
+/// Swing of the finest teeth, as a fraction of the length of a fine link.
 pub const BOLT_FINE_BEND: f32 = 0.34;
-/// Во сколько раз размах зубцов меньше размаха изгибов предыдущего, более крупного уровня.
+/// How many times the swing of the teeth is smaller than that of the bends of the previous,
+/// coarser level.
 pub const BOLT_ROUGHNESS: f32 = 0.62;
-/// Предел размаха крупных изгибов, клеток: молния не уходит далеко от пути шашки.
+/// Limit on the swing of the coarse bends, cells: the lightning does not stray far from the route.
 pub const BOLT_MAX_BEND: f32 = 0.16;
-/// Период, с которым молния меняет форму (мерцание), с.
+/// Period at which the lightning changes its shape (flicker), s.
 pub const FLICKER_SECONDS: f64 = 0.045;
-/// Длительность вспышки на месте удара, с.
+/// Duration of a flash at the place of a strike, s.
 pub const FLASH_SECONDS: f64 = 0.18;
-/// Время, за которое гаснет свечение вокруг шашки после её остановки, с.
+/// Time the glow around the piece takes to go out after the piece has stopped, s.
 pub const HEAD_GLOW_FADE_SECONDS: f64 = 0.12;
-/// Внешний радиус свечения вокруг летящей шашки, клеток (сама шашка — 0,40).
+/// Outer radius of the glow around the flying piece, cells (the piece itself is 0.40).
 pub const HALO_RADIUS: f32 = 0.66;
-/// Число искр от одной побитой шашки.
+/// Number of sparks from one captured piece.
 pub const SPARKS_PER_PIECE: usize = 28;
-/// Время жизни искры, с: от и до.
+/// Lifetime of a spark, s: from and to.
 pub const SPARK_LIFE: (f32, f32) = (0.35, 0.90);
-/// Начальная скорость искры, клеток в секунду: от и до.
+/// Initial speed of a spark, cells per second: from and to.
 pub const SPARK_SPEED: (f32, f32) = (1.4, 5.6);
-/// Добавка к скорости искр в направлении полёта шашки, клеток в секунду.
+/// Addition to the speed of sparks in the direction the piece is flying, cells per second.
 pub const SPARK_CARRY: f32 = 1.3;
-/// Сопротивление воздуха: скорость искры убывает в e раз за `1 / SPARK_DRAG` секунд.
+/// Air drag: the speed of a spark falls e times in `1 / SPARK_DRAG` seconds.
 pub const SPARK_DRAG: f32 = 3.2;
-/// Ускорение, с которым искры падают вниз по экрану, клеток/с².
+/// Acceleration at which sparks fall down the screen, cells/s².
 pub const SPARK_GRAVITY: f32 = 5.5;
-/// Длина светящегося следа искры во времени, с.
+/// Length of the glowing trail of a spark in time, s.
 pub const SPARK_TRAIL_SECONDS: f32 = 0.045;
 
-/// Цвет сердцевины молнии: почти белый с зеленовато-жёлтым оттенком.
+/// Colour of the core of the lightning: almost white with a greenish-yellow tint.
 pub const BOLT_CORE: [f32; 3] = [0.93, 1.00, 0.70];
-/// Цвет свечения молнии и искр: зеленовато-жёлтый.
+/// Colour of the glow of the lightning and sparks: greenish yellow.
 pub const GLOW: [f32; 3] = [0.66, 0.95, 0.08];
 
-/// Точка в экранных координатах доски (в клетках).
+/// A point in screen coordinates of the board (in cells).
 pub type Point = (f32, f32);
 
-/// Какие части эффекта показывать.
+/// Which parts of the effect are shown.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct EffectSet {
-    /// Молния за шашкой.
+    /// Lightning behind the piece.
     pub lightning: bool,
-    /// Искры от побитых шашек.
+    /// Sparks from captured pieces.
     pub sparks: bool,
-    /// Вспышки на месте удара и свечение вокруг летящей шашки.
+    /// Flashes at the places of strikes and the glow around the flying piece.
     pub flashes: bool,
 }
 
 impl EffectSet {
-    /// Все части включены.
+    /// All parts are on.
     pub const ALL: Self = Self {
         lightning: true,
         sparks: true,
         flashes: true,
     };
-    /// Все части выключены.
+    /// All parts are off.
     pub const NONE: Self = Self {
         lightning: false,
         sparks: false,
         flashes: false,
     };
 
-    /// Включена ли хотя бы одна часть.
+    /// Whether at least one part is on.
     #[must_use]
     pub const fn any(self) -> bool {
         self.lightning || self.sparks || self.flashes
     }
 }
 
-/// Плавный разгон и торможение шашки на отрезке пути: доля пройденного расстояния
-/// по доле прошедшего времени.
+/// Smooth acceleration and braking of the piece on a leg of the route: the fraction of
+/// the distance covered for a fraction of the time elapsed.
 #[must_use]
 pub fn ease(x: f64) -> f64 {
     let x = x.clamp(0.0, 1.0);
     x * x * (3.0 - 2.0 * x)
 }
 
-/// Обратная функция к [`ease`]: доля времени, за которую пройдена доля пути `u`.
+/// The inverse of [`ease`]: the fraction of the time in which the fraction `u` of the
+/// distance is covered.
 #[must_use]
 pub fn ease_inverse(u: f64) -> f64 {
     let u = u.clamp(0.0, 1.0);
     0.5 - ((1.0 - 2.0 * u).asin() / 3.0).sin()
 }
 
-/// Яркость участка молнии через `age` секунд после того, как над ним пролетела шашка.
+/// Brightness of a part of the lightning `age` seconds after the piece has flown over it.
 #[must_use]
 pub fn trail_intensity(age: f64) -> f32 {
     if !(0.0..TRAIL_SECONDS).contains(&age) {
@@ -121,8 +125,8 @@ pub fn trail_intensity(age: f64) -> f32 {
     }
 }
 
-/// Цвет искры по её «температуре»: 1 — только что вылетела (почти белая),
-/// 0 — догорает (тёмно-жёлтая). В середине жизни искра зеленовато-жёлтая.
+/// Colour of a spark by its "temperature": 1 is a spark that has just flown out (almost
+/// white), 0 is one burning out (dark yellow). In mid-life a spark is greenish yellow.
 #[must_use]
 pub fn spark_color(heat: f32) -> [f32; 3] {
     const HOT: [f32; 3] = [0.95, 1.00, 0.74];
@@ -140,12 +144,11 @@ pub fn spark_color(heat: f32) -> [f32; 3] {
     ]
 }
 
-/// Положение искры через `age` секунд после вылета из точки `origin` со скоростью
-/// `velocity` (клеток/с).
+/// Position of a spark `age` seconds after it left the point `origin` at the velocity
+/// `velocity` (cells/s).
 ///
-/// На искру действуют сопротивление воздуха и сила тяжести: `dv/dt = −k·v + g`.
-/// Используется точное решение этого уравнения, поэтому кадр не зависит от частоты
-/// обновления экрана.
+/// Air drag and gravity act on a spark: `dv/dt = −k·v + g`. The exact solution of this
+/// equation is used, so a frame does not depend on the refresh rate of the screen.
 #[must_use]
 pub fn spark_position(origin: Point, velocity: Point, age: f32) -> Point {
     let age = age.max(0.0);
@@ -158,7 +161,7 @@ pub fn spark_position(origin: Point, velocity: Point, age: f32) -> Point {
     )
 }
 
-/// Скорость искры через `age` секунд после вылета.
+/// Velocity of a spark `age` seconds after it flew out.
 #[must_use]
 pub fn spark_velocity(velocity: Point, age: f32) -> Point {
     let fade = (-SPARK_DRAG * age.max(0.0)).exp();
@@ -168,10 +171,10 @@ pub fn spark_velocity(velocity: Point, age: f32) -> Point {
     )
 }
 
-/// Размахи сдвига середин для молнии длины `length`: от самого крупного изгиба
-/// к самым мелким зубцам. Число уровней подбирается так, чтобы мелкое звено было
-/// длиной около [`BOLT_FINE_SEGMENT`], поэтому короткие и длинные молнии изломаны
-/// одинаково мелко.
+/// Swings of the midpoint displacement for a lightning of the length `length`: from
+/// the coarsest bend to the finest teeth. The number of levels is chosen so that a fine
+/// link is about [`BOLT_FINE_SEGMENT`] long, so short and long bolts are jagged equally
+/// finely.
 fn bolt_amplitudes(length: f32) -> Vec<f32> {
     let levels = ((length / BOLT_FINE_SEGMENT).max(1.0).log2().ceil() as usize).clamp(1, 7);
     let fine = BOLT_FINE_BEND * length / (1u32 << levels) as f32;
@@ -180,12 +183,11 @@ fn bolt_amplitudes(length: f32) -> Vec<f32> {
         .collect()
 }
 
-/// Ломаная молнии от `a` до `b`: отрезок, изломанный смещением середин.
+/// The lightning polyline from `a` to `b`: a segment broken by midpoint displacement.
 ///
-/// Каждый проход делит все звенья пополам и сдвигает середины поперёк общего
-/// направления; размах сдвига от прохода к проходу уменьшается. Концы остаются
-/// на месте, вершины идут вдоль отрезка равномерно. Одинаковое зерно даёт одинаковую
-/// ломаную.
+/// Each pass halves every link and shifts the midpoints across the overall direction;
+/// the swing of the shift decreases from pass to pass. The ends stay in place, and the
+/// vertices are spread evenly along the segment. The same seed gives the same polyline.
 #[must_use]
 pub fn bolt_path(a: Point, b: Point, seed: u64) -> Vec<Point> {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
@@ -193,7 +195,7 @@ pub fn bolt_path(a: Point, b: Point, seed: u64) -> Vec<Point> {
     if !length.is_finite() || length < 1e-4 {
         return vec![a, b];
     }
-    // Единичная нормаль к направлению молнии.
+    // Unit normal to the direction of the lightning.
     let normal = (-dy / length, dx / length);
     let mut rng = Rng::new(seed);
     let mut points = vec![a, b];
@@ -214,8 +216,8 @@ pub fn bolt_path(a: Point, b: Point, seed: u64) -> Vec<Point> {
     points
 }
 
-/// Наибольшее отклонение точек ломаной от прямой, которое может дать [`bolt_path`]
-/// для отрезка длины `length`.
+/// The greatest deviation of the polyline points from the straight line that
+/// [`bolt_path`] can produce for a segment of the length `length`.
 #[must_use]
 pub fn max_bolt_deviation(length: f32) -> f32 {
     if !length.is_finite() || length < 1e-4 {
@@ -224,72 +226,72 @@ pub fn max_bolt_deviation(length: f32) -> f32 {
     bolt_amplitudes(length).iter().sum()
 }
 
-/// Участок молнии на кадре.
+/// A part of the lightning in a frame.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Bolt {
-    /// Вершины ломаной.
+    /// Vertices of the polyline.
     pub points: Vec<Point>,
-    /// Яркость 0…1.
+    /// Brightness 0…1.
     pub intensity: f32,
-    /// Относительная толщина: 1 — основной канал, меньше — боковое ответвление.
+    /// Relative thickness: 1 is the main channel, less is a side branch.
     pub width: f32,
 }
 
-/// Вспышка или свечение.
+/// A flash or a glow.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Flash {
     pub center: Point,
-    /// Радиус в клетках.
+    /// Radius in cells.
     pub radius: f32,
-    /// Яркость 0…1.
+    /// Brightness 0…1.
     pub intensity: f32,
 }
 
-/// Искра на кадре: короткий светящийся штрих от хвоста к голове.
+/// A spark in a frame: a short glowing stroke from the tail to the head.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Spark {
     pub head: Point,
     pub tail: Point,
-    /// Яркость 0…1.
+    /// Brightness 0…1.
     pub intensity: f32,
-    /// «Температура» 1…0 — см. [`spark_color`].
+    /// "Temperature" 1…0, see [`spark_color`].
     pub heat: f32,
-    /// Относительная толщина штриха.
+    /// Relative thickness of the stroke.
     pub size: f32,
 }
 
-/// Кадр разряда.
+/// A frame of the discharge.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct DischargeFrame {
-    /// Молния за шашкой.
+    /// Lightning behind the piece.
     pub bolts: Vec<Bolt>,
-    /// Свечение вокруг летящей шашки: ореол, выступающий из-под неё.
+    /// Glow around the flying piece: a halo that shows from under it.
     pub halo: Option<Flash>,
-    /// Вспышки на побитых шашках.
+    /// Flashes on the captured pieces.
     pub flashes: Vec<Flash>,
     pub sparks: Vec<Spark>,
 }
 
 impl DischargeFrame {
-    /// Нечего рисовать.
+    /// Whether there is nothing to draw.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bolts.is_empty() && self.halo.is_none() && self.flashes.is_empty() && self.sparks.is_empty()
     }
 }
 
-/// Удар разряда по побитой шашке.
+/// A strike of the discharge on a captured piece.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Strike {
-    /// Где стоит побитая шашка.
+    /// Where the captured piece stands.
     pub center: Point,
-    /// Момент удара: бьющая шашка пролетает над побитой.
+    /// The moment of the strike: the capturing piece flies over the captured one.
     pub time: f64,
-    /// Единичный вектор направления полёта бьющей шашки в этот момент.
+    /// Unit vector of the direction the capturing piece is flying in at that moment.
     pub direction: Point,
 }
 
-/// Параметры одной искры, вычисленные из зерна.
+/// Parameters of one spark, computed from the seed.
 struct SparkSeed {
     origin: Point,
     velocity: Point,
@@ -298,70 +300,70 @@ struct SparkSeed {
     size: f32,
 }
 
-/// Число звеньев ломаной в одном участке молнии с общей яркостью.
+/// Number of polyline links in one part of the lightning with a common brightness.
 const CHUNK: usize = 4;
 
-/// Разряд, сопровождающий один ход.
+/// The discharge that comes with one move.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Discharge {
-    /// Поля пути бьющей шашки и моменты, когда она на них находится.
+    /// The squares of the route of the capturing piece and the moments it is on them.
     knots: Vec<(Point, f64)>,
     strikes: Vec<Strike>,
     seed: u64,
 }
 
 impl Discharge {
-    /// Разряд по пути `knots` (точки и моменты времени, по порядку) с ударами `strikes`.
-    /// `seed` определяет форму молний и разлёт искр.
+    /// A discharge along the route `knots` (points and moments, in order) with the
+    /// strikes `strikes`. `seed` determines the shape of the lightning and the scatter of sparks.
     #[must_use]
     pub const fn new(knots: Vec<(Point, f64)>, strikes: Vec<Strike>, seed: u64) -> Self {
         Self { knots, strikes, seed }
     }
 
-    /// Момент начала: шашка трогается с места.
+    /// The moment it starts: the piece sets off.
     #[must_use]
     pub fn start(&self) -> f64 {
         self.knots.first().map_or(0.0, |k| k.1)
     }
 
-    /// Момент, когда шашка встаёт на конечное поле.
+    /// The moment the piece lands on its final square.
     #[must_use]
     pub fn arrival(&self) -> f64 {
         self.knots.last().map_or(0.0, |k| k.1)
     }
 
-    /// Удары по побитым шашкам.
+    /// The strikes on the captured pieces.
     #[must_use]
     pub fn strikes(&self) -> &[Strike] {
         &self.strikes
     }
 
-    /// Момент, когда гаснет молния.
+    /// The moment the lightning goes out.
     #[must_use]
     pub fn bolt_end(&self) -> f64 {
         self.arrival() + TRAIL_SECONDS
     }
 
-    /// Момент, когда гаснет последняя искра и эффект заканчивается.
+    /// The moment the last spark goes out and the effect ends.
     pub fn end(&self) -> f64 {
         let last_strike = self.strikes.iter().map(|s| s.time).fold(self.start(), f64::max);
         (last_strike + f64::from(SPARK_LIFE.1) + 0.05).max(self.bolt_end())
     }
 
-    /// Закончился ли эффект к моменту `now`.
+    /// Whether the effect is over by the moment `now`.
     #[must_use]
     pub fn is_finished(&self, now: f64) -> bool {
         self.knots.len() < 2 || now >= self.end()
     }
 
-    /// Положение бьющей шашки в момент `now`.
+    /// Position of the capturing piece at the moment `now`.
     #[must_use]
     pub fn head(&self, now: f64) -> Point {
         let Some(&(first, start)) = self.knots.first() else {
             return (0.0, 0.0);
         };
         if now <= start {
-            // Отрезки, пройденные мгновенно (уже показанные прыжки), пропускаются.
+            // Legs passed in no time (jumps already shown) are skipped.
             return self
                 .knots
                 .iter()
@@ -379,7 +381,7 @@ impl Discharge {
         self.knots[self.knots.len() - 1].0
     }
 
-    /// Зерно для части эффекта: не зависит от порядка вычислений.
+    /// A seed for a part of the effect: it does not depend on the order of computation.
     const fn sub_seed(&self, a: u64, b: u64, c: u64) -> u64 {
         let mut rng = Rng::new(
             self.seed
@@ -398,9 +400,10 @@ impl Discharge {
         let (sin, cos) = angle.sin_cos();
         let hit = &self.strikes[strike];
         SparkSeed {
-            // Искры вылетают не из одной точки, а с небольшого круга внутри шашки.
+            // Sparks fly out not from one point but from a small circle inside the piece.
             origin: (hit.center.0 + cos * 0.10, hit.center.1 + sin * 0.10),
-            // Разлёт во все стороны, с лёгким сносом по ходу шашки и вверх.
+            // They scatter in all directions, drifting slightly along the piece's flight
+            // and upwards.
             velocity: (
                 cos * speed + hit.direction.0 * SPARK_CARRY,
                 sin * speed + hit.direction.1 * SPARK_CARRY - 0.9,
@@ -411,8 +414,8 @@ impl Discharge {
         }
     }
 
-    /// Молния на отрезке пути с номером `hop`: от его начала до шашки (или до конца
-    /// отрезка, если шашка уже улетела дальше), разбитая на участки по давности.
+    /// The lightning on the leg number `hop` of the route: from its start to the piece (or
+    /// to the end of the leg if the piece has flown on), split into parts by age.
     fn hop_bolts(&self, hop: usize, now: f64, phase: u64, flicker: f32, bolts: &mut Vec<Bolt>) {
         let ((a, ta), (b, tb)) = (self.knots[hop], self.knots[hop + 1]);
         if now < ta || now - tb >= TRAIL_SECONDS {
@@ -429,14 +432,14 @@ impl Discharge {
         let whole = ((reached * links as f64).floor() as usize).min(links);
         let mut visible: Vec<Point> = full[..=whole].to_vec();
         if reached < 1.0 {
-            // Молния кончается точно у шашки.
+            // The lightning ends exactly at the piece.
             let u = reached as f32;
             visible.push((a.0 + (b.0 - a.0) * u, a.1 + (b.1 - a.1) * u));
         }
         if visible.len() < 2 {
             return;
         }
-        // Когда шашка пролетела точку, лежащую на доле `along` отрезка.
+        // When the piece flew past the point at the fraction `along` of the leg.
         let passed = |along: f64| {
             if instant {
                 ta
@@ -462,12 +465,12 @@ impl Discharge {
             index = last;
         }
 
-        // Боковое ответвление у самого свежего участка.
+        // A side branch near the freshest part.
         if newest > 0.25 && visible.len() > 3 {
             let mut rng = Rng::new(self.sub_seed(3, hop as u64, phase));
             let vertex = visible[visible.len() - 2 - rng.below((visible.len() - 2).min(4))];
             let along = (b.1 - a.1).atan2(b.0 - a.0);
-            // Ответвление отходит назад и вбок от направления полёта.
+            // The branch goes backwards and sideways from the direction of flight.
             let turn = (2.2 + 0.6 * rng.unit() as f32) * if rng.chance(0.5) { 1.0 } else { -1.0 };
             let length = 0.20 + 0.34 * rng.unit() as f32;
             let tip = (
@@ -482,7 +485,7 @@ impl Discharge {
         }
     }
 
-    /// Кадр эффекта в момент `now`; показываются только части из `parts`.
+    /// The frame of the effect at the moment `now`; only the parts in `parts` are shown.
     #[must_use]
     pub fn frame(&self, now: f64, parts: EffectSet) -> DischargeFrame {
         let mut frame = DischargeFrame::default();
@@ -490,7 +493,7 @@ impl Discharge {
             return frame;
         }
 
-        // Молния: тянется за шашкой, мерцает и гаснет позади неё.
+        // The lightning: it trails the piece, flickers and dies out behind it.
         let phase = ((now - self.start()) / FLICKER_SECONDS).floor() as u64;
         let flicker = 0.72 + 0.28 * Rng::new(self.sub_seed(4, 0, phase)).unit() as f32;
         if parts.lightning && now < self.bolt_end() {
@@ -500,7 +503,7 @@ impl Discharge {
         }
 
         if parts.flashes {
-            // Свечение вокруг летящей шашки.
+            // The glow around the flying piece.
             let arrival = self.arrival();
             let glow = if now < arrival {
                 1.0
@@ -514,7 +517,7 @@ impl Discharge {
                     intensity: glow as f32 * flicker,
                 });
             }
-            // Вспышки на побитых шашках в момент удара.
+            // Flashes on the captured pieces at the moment of the strike.
             for strike in &self.strikes {
                 let age = now - strike.time;
                 if (0.0..FLASH_SECONDS).contains(&age) {
@@ -566,13 +569,13 @@ mod tests {
         (a.0 - b.0).hypot(a.1 - b.1)
     }
 
-    /// Расстояние от точки до прямой, проходящей через `a` и `b`.
+    /// Distance from a point to the straight line through `a` and `b`.
     fn deviation(p: Point, a: Point, b: Point) -> f32 {
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);
         ((p.0 - a.0) * dy - (p.1 - a.1) * dx).abs() / dx.hypot(dy)
     }
 
-    /// Положение точки вдоль отрезка `a`–`b`: 0 в начале, 1 в конце.
+    /// Position of a point along the segment `a`–`b`: 0 at the start, 1 at the end.
     fn along(p: Point, a: Point, b: Point) -> f32 {
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);
         ((p.0 - a.0) * dx + (p.1 - a.1) * dy) / (dx * dx + dy * dy)
@@ -582,7 +585,7 @@ mod tests {
     const FIRST: Point = (0.5, 7.5);
     const LAST: Point = (6.5, 1.5);
 
-    /// Шашка летит по диагонали через три побитые шашки: a1 → c3 → e5 → g7.
+    /// The piece flies along a diagonal over three captured pieces: a1 → c3 → e5 → g7.
     fn sample() -> Discharge {
         let knots = vec![
             (FIRST, 10.0),
@@ -617,7 +620,7 @@ mod tests {
 
     #[test]
     fn bolt_connects_its_ends_and_stays_near_the_straight_line() {
-        // Короткая, средняя и длинная молнии, в том числе по диагонали через всю доску.
+        // A short, a medium and a long bolt, one of them along the diagonal of the whole board.
         let ends = [
             ((1.5, 6.5), (2.5, 5.5)),
             ((1.5, 6.5), (4.5, 3.5)),
@@ -627,7 +630,10 @@ mod tests {
         for (a, b) in ends {
             let straight = distance(a, b);
             let limit = max_bolt_deviation(straight) + 1e-4;
-            assert!(limit < 0.9, "молния не уходит от прямой дальше клетки: {limit}");
+            assert!(
+                limit < 0.9,
+                "the lightning strays less than a cell from the line: {limit}"
+            );
             for seed in 0..200u64 {
                 let path = bolt_path(a, b, seed);
                 assert_eq!(path[0], a);
@@ -637,29 +643,29 @@ mod tests {
                     assert!(p.0.is_finite() && p.1.is_finite());
                     assert!(
                         deviation(p, a, b) <= limit,
-                        "зерно {seed}: точка {p:?} ушла далеко"
+                        "seed {seed}: the point {p:?} went far"
                     );
-                    // Вершины идут вдоль отрезка равномерно.
+                    // The vertices are spread evenly along the segment.
                     let expected = i as f32 / (path.len() - 1) as f32;
                     assert!(
                         (along(p, a, b) - expected).abs() < 1e-3,
-                        "зерно {seed}: вершина {i}"
+                        "seed {seed}: vertex {i}"
                     );
                 }
-                // Звенья мелкие, а сама молния изломана, а не прямая. Короткое боковое
-                // ответвление из двух-четырёх звеньев может случайно выйти почти прямым,
-                // поэтому излом проверяется у молний не короче клетки.
+                // The links are fine, and the bolt itself is jagged, not straight. A short
+                // side branch of two to four links can come out almost straight by chance,
+                // so jaggedness is checked for bolts at least a cell long.
                 let length: f32 = path.windows(2).map(|w| distance(w[0], w[1])).sum();
                 assert!(length >= straight);
                 if straight >= 1.0 {
                     assert!(
                         length > straight * 1.015,
-                        "зерно {seed}: {} от {straight}",
+                        "seed {seed}: {} of {straight}",
                         length / straight
                     );
                 }
                 let longest = path.windows(2).map(|w| distance(w[0], w[1])).fold(0.0, f32::max);
-                assert!(longest < 2.5 * BOLT_FINE_SEGMENT, "зерно {seed}: звено {longest}");
+                assert!(longest < 2.5 * BOLT_FINE_SEGMENT, "seed {seed}: link {longest}");
             }
         }
     }
@@ -669,11 +675,11 @@ mod tests {
         let (a, b) = ((0.5, 0.5), (3.5, 3.5));
         assert_eq!(bolt_path(a, b, 7), bolt_path(a, b, 7));
         assert_ne!(bolt_path(a, b, 7), bolt_path(a, b, 8));
-        // Число звеньев растёт с длиной, но ограничено.
+        // The number of links grows with the length but is limited.
         assert_eq!(bolt_path(a, b, 1).len(), 33);
         assert_eq!(bolt_path((0.0, 0.0), (0.1, 0.0), 1).len(), 3);
         assert_eq!(bolt_path((0.0, 0.0), (1000.0, 0.0), 1).len(), 129);
-        // Вырожденные случаи не дают ни сбоя, ни NaN.
+        // Degenerate cases give neither a failure nor NaN.
         assert_eq!(bolt_path(a, a, 1), vec![a, a]);
         assert_eq!(bolt_path((f32::NAN, 0.0), b, 1).len(), 2);
         assert_eq!(bolt_path(a, (f32::INFINITY, 0.0), 1).len(), 2);
@@ -714,37 +720,41 @@ mod tests {
     fn lightning_follows_the_path_of_the_piece_while_it_moves() {
         let fx = sample();
         let (start, a, b) = (10.0, FIRST, (2.5, 5.5));
-        // До начала движения ничего нет.
+        // Nothing before the movement starts.
         assert!(fx.frame(start - 0.01, EffectSet::ALL).is_empty());
         assert_eq!(fx.head(start - 1.0), a);
         assert_eq!(fx.start(), start);
         assert!((fx.arrival() - (start + 3.0 * HOP)).abs() < 1e-12);
 
-        // Шашка летит по первому отрезку: молния идёт от начала пути до самой шашки.
+        // The piece flies along the first leg: the lightning runs from the start of the
+        // route to the piece.
         for step in 1..20 {
             let now = start + HOP * f64::from(step) / 20.0;
             let head = fx.head(now);
             assert!(
                 deviation(head, a, b) < 1e-4,
-                "шашка движется по прямой между полями"
+                "the piece moves in a straight line between squares"
             );
             let frame = fx.frame(now, EffectSet::ALL);
             let main = mains(&frame);
             assert!(
                 !main.is_empty(),
-                "шаг {step}: молния есть с самого начала движения"
+                "step {step}: the lightning is there from the very start of the movement"
             );
             let limit = max_bolt_deviation(distance(a, b)) + 1e-3;
             for bolt in &main {
                 for &p in &bolt.points {
-                    assert!(deviation(p, a, b) <= limit, "молния лежит на пути шашки");
+                    assert!(
+                        deviation(p, a, b) <= limit,
+                        "the lightning lies on the route of the piece"
+                    );
                     assert!(
                         along(p, a, b) <= along(head, a, b) + 1e-3,
-                        "молния не обгоняет шашку"
+                        "the lightning does not overtake the piece"
                     );
                 }
             }
-            // Участки идут подряд: от начала пути до шашки без разрывов.
+            // The parts follow one another: from the start of the route to the piece without gaps.
             assert_eq!(main[0].points[0], a);
             for pair in main.windows(2) {
                 assert_eq!(pair[0].points[pair[0].points.len() - 1], pair[1].points[0]);
@@ -752,11 +762,11 @@ mod tests {
             let tail_end = *main[main.len() - 1].points.last().unwrap();
             assert!(
                 distance(tail_end, head) < 1e-4,
-                "шаг {step}: молния кончается у шашки"
+                "step {step}: the lightning ends at the piece"
             );
         }
 
-        // На втором отрезке молния тянется уже через оба и по-прежнему кончается у шашки.
+        // On the second leg the lightning runs through both and still ends at the piece.
         let now = start + 1.5 * HOP;
         let frame = fx.frame(now, EffectSet::ALL);
         let reach = mains(&frame)
@@ -771,7 +781,8 @@ mod tests {
     #[test]
     fn lightning_fades_behind_the_piece_and_goes_out_after_arrival() {
         let fx = sample();
-        // В конце третьего отрезка начало пути уже погасло, а у шашки молния яркая.
+        // At the end of the third leg the start of the route has gone out, and at the piece
+        // the lightning is bright.
         let now = fx.arrival() - 0.005;
         let frame = fx.frame(now, EffectSet::ALL);
         let main = mains(&frame);
@@ -779,15 +790,19 @@ mod tests {
             .iter()
             .map(|b| along(b.points[0], FIRST, LAST))
             .fold(1.0, f32::min);
-        assert!(tail > 0.15, "хвост молнии погас: она начинается с {tail}");
+        assert!(
+            tail > 0.15,
+            "the tail of the lightning has gone out: it starts at {tail}"
+        );
         let brightest = main.iter().map(|b| b.intensity).fold(0.0, f32::max);
         let dimmest = main.iter().map(|b| b.intensity).fold(1.0, f32::min);
-        assert!(brightest > 0.7 && dimmest < 0.5, "{brightest} и {dimmest}");
-        // Яркость растёт от хвоста к шашке.
+        assert!(brightest > 0.7 && dimmest < 0.5, "{brightest} and {dimmest}");
+        // The brightness grows from the tail to the piece.
         for pair in main.windows(2) {
             assert!(pair[0].intensity <= pair[1].intensity + 1e-4);
         }
-        // Форма молнии меняется от такта к такту (мерцание), но внутри такта постоянна.
+        // The shape of the lightning changes from tick to tick (flicker) but is constant
+        // within a tick.
         let shapes = |t: f64| -> Vec<Vec<Point>> {
             let frame = fx.frame(t, EffectSet::ALL);
             frame
@@ -797,7 +812,7 @@ mod tests {
                 .map(|b| b.points)
                 .collect()
         };
-        // Начало шестнадцатого такта: шашка уже стоит (она приходит через 0,63 с).
+        // The start of the sixteenth tick: the piece already stands (it arrives after 0.63 s).
         let tick = 10.0 + 16.0 * FLICKER_SECONDS;
         assert!(tick > fx.arrival());
         assert_eq!(
@@ -808,7 +823,7 @@ mod tests {
             shapes(tick + 0.1 * FLICKER_SECONDS),
             shapes(tick + 1.1 * FLICKER_SECONDS)
         );
-        // После остановки шашки молния гаснет, искры ещё летят, потом эффект заканчивается.
+        // After the piece stops the lightning goes out, sparks still fly, then the effect ends.
         assert!((fx.bolt_end() - (fx.arrival() + TRAIL_SECONDS)).abs() < 1e-12);
         assert!(!fx.frame(fx.bolt_end() - 0.1, EffectSet::ALL).bolts.is_empty());
         let after = fx.frame(fx.bolt_end() + 0.001, EffectSet::ALL);
@@ -834,24 +849,24 @@ mod tests {
             frame.flashes.iter().filter(|f| f.center == center).count()
         };
         for (index, strike) in fx.strikes().iter().enumerate() {
-            // До пролёта — ни вспышки, ни искр у этой шашки.
+            // Before the fly-over: neither a flash nor sparks at this piece.
             let before = fx.frame(strike.time - 0.005, EffectSet::ALL);
-            assert_eq!(flashes_at(&before, strike.center), 0, "удар {index}");
-            assert_eq!(near(&before, strike.center), 0, "удар {index}");
-            // В момент пролёта шашка находится над побитой.
+            assert_eq!(flashes_at(&before, strike.center), 0, "strike {index}");
+            assert_eq!(near(&before, strike.center), 0, "strike {index}");
+            // At the moment of the fly-over the piece is above the captured one.
             assert!(
                 distance(fx.head(strike.time), strike.center) < 1e-3,
-                "удар {index}"
+                "strike {index}"
             );
-            // Сразу после — вспышка и искры.
+            // Right after it: a flash and sparks.
             let after = fx.frame(strike.time + 0.05, EffectSet::ALL);
-            assert_eq!(flashes_at(&after, strike.center), 1, "удар {index}");
+            assert_eq!(flashes_at(&after, strike.center), 1, "strike {index}");
             assert!(
                 near(&after, strike.center) >= SPARKS_PER_PIECE / 2,
-                "удар {index}"
+                "strike {index}"
             );
         }
-        // Искры разлетаются во все стороны, а не в одну.
+        // The sparks scatter in all directions, not in one.
         let last = fx.strikes()[2];
         let frame = fx.frame(last.time + 0.06, EffectSet::ALL);
         let (mut left, mut right, mut up, mut down) = (0, 0, 0, 0);
@@ -869,7 +884,7 @@ mod tests {
             left >= 4 && right >= 4 && up >= 4 && down >= 4,
             "{left} {right} {up} {down}"
         );
-        // Яркости в допустимых пределах, искры не улетают далеко, след короткий.
+        // Brightness stays within bounds, sparks do not fly far, the trail is short.
         for step in 0..220 {
             let frame = fx.frame(10.0 + f64::from(step) * 0.008, EffectSet::ALL);
             for bolt in &frame.bolts {
@@ -885,8 +900,11 @@ mod tests {
                     .iter()
                     .map(|s| distance(spark.head, s.center))
                     .fold(f32::MAX, f32::min);
-                assert!(nearest < 3.5, "искра улетела на {nearest} клеток");
-                assert!(distance(spark.head, spark.tail) < 0.45, "след искры короткий");
+                assert!(nearest < 3.5, "a spark flew {nearest} cells away");
+                assert!(
+                    distance(spark.head, spark.tail) < 0.45,
+                    "the trail of a spark is short"
+                );
             }
         }
     }
@@ -895,19 +913,19 @@ mod tests {
     fn piece_glows_while_it_flies() {
         let fx = sample();
         let glow = |now: f64| fx.frame(now, EffectSet::ALL).halo;
-        // Ореол держится на шашке всё время полёта и выступает из-под неё.
+        // The halo stays on the piece for the whole flight and shows from under it.
         for step in 0..=30 {
             let now = 10.0 + 3.0 * HOP * f64::from(step) / 30.0 - 1e-6;
-            let halo = glow(now.max(10.0)).expect("ореол есть во время полёта");
+            let halo = glow(now.max(10.0)).expect("the halo is there during the flight");
             assert_eq!(halo.center, fx.head(now.max(10.0)));
             assert!(halo.radius > 0.40 && halo.radius < 1.0);
             assert!(halo.intensity > 0.5 && halo.intensity <= 1.0);
         }
-        // После остановки он быстро гаснет.
+        // After the stop it goes out quickly.
         let fading = glow(fx.arrival() + HEAD_GLOW_FADE_SECONDS * 0.75).unwrap();
         assert!(fading.intensity < 0.3, "{}", fading.intensity);
         assert!(glow(fx.arrival() + HEAD_GLOW_FADE_SECONDS + 0.01).is_none());
-        // Без вспышек и свечения ореола нет.
+        // Without flashes and glow there is no halo.
         let plain = EffectSet {
             flashes: false,
             ..EffectSet::ALL
@@ -920,7 +938,7 @@ mod tests {
         let fx = sample();
         let now = 10.0 + 1.6 * HOP;
         let all = fx.frame(now, EffectSet::ALL);
-        // Момент сразу после удара по второй шашке: на кадре есть всё.
+        // The moment right after the strike on the second piece: the frame has everything.
         assert!(!all.bolts.is_empty() && !all.flashes.is_empty() && !all.sparks.is_empty());
         assert!(fx.frame(now, EffectSet::NONE).is_empty());
         assert!(EffectSet::ALL.any() && !EffectSet::NONE.any());
@@ -977,8 +995,8 @@ mod tests {
 
     #[test]
     fn hops_already_shown_flash_at_once() {
-        // Первые два отрезка игрок прошёл по шагам: их моменты совпадают с началом.
-        // Молния вспыхивает на них сразу, а дальше тянется за шашкой.
+        // The player made the first two legs step by step: their moments coincide with
+        // the start. The lightning flashes on them at once and then trails the piece.
         let knots = vec![
             (FIRST, 5.0),
             ((2.5, 5.5), 5.0),
@@ -1004,7 +1022,11 @@ mod tests {
             },
         ];
         let fx = Discharge::new(knots, strikes, 9);
-        assert_eq!(fx.head(5.0), (4.5, 3.5), "шашка уже стоит на третьем поле");
+        assert_eq!(
+            fx.head(5.0),
+            (4.5, 3.5),
+            "the piece already stands on the third square"
+        );
         assert_eq!(fx.head(4.0), (4.5, 3.5));
         let frame = fx.frame(5.0 + 0.01, EffectSet::ALL);
         let reach: Vec<f32> = mains(&frame)
@@ -1014,9 +1036,9 @@ mod tests {
             .collect();
         let low = reach.iter().copied().fold(1.0, f32::min);
         let high = reach.iter().copied().fold(0.0, f32::max);
-        assert!(low < 0.01, "молния начинается от исходного поля: {low}");
-        assert!(high > 0.66 && high < 0.75, "и доходит до шашки: {high}");
-        // Две первые шашки поражены сразу, третья — при пролёте.
+        assert!(low < 0.01, "the lightning starts from the starting square: {low}");
+        assert!(high > 0.66 && high < 0.75, "and reaches the piece: {high}");
+        // The first two pieces are struck at once, the third at the fly-over.
         let struck = |frame: &DischargeFrame, center: Point| frame.flashes.iter().any(|f| f.center == center);
         assert!(struck(&frame, (1.5, 6.5)) && struck(&frame, (3.5, 4.5)));
         assert!(!struck(&frame, (5.5, 2.5)));
@@ -1032,10 +1054,10 @@ mod tests {
         assert_eq!(
             spark_position(origin, velocity, -1.0),
             origin,
-            "до вылета искра на месте"
+            "before flying out the spark is in place"
         );
 
-        // Точное решение совпадает с пошаговым интегрированием dv/dt = −k·v + g.
+        // The exact solution agrees with step-by-step integration of dv/dt = −k·v + g.
         let (mut p, mut v) = (origin, velocity);
         let dt = 1e-4f32;
         for step in 1..=10_000 {
@@ -1046,15 +1068,15 @@ mod tests {
                 let age = step as f32 * dt;
                 let exact = spark_position(origin, velocity, age);
                 let exact_v = spark_velocity(velocity, age);
-                assert!(distance(p, exact) < 2e-3, "t = {age}: {p:?} и {exact:?}");
-                assert!(distance(v, exact_v) < 2e-3, "t = {age}: {v:?} и {exact_v:?}");
+                assert!(distance(p, exact) < 2e-3, "t = {age}: {p:?} and {exact:?}");
+                assert!(distance(v, exact_v) < 2e-3, "t = {age}: {v:?} and {exact_v:?}");
             }
         }
-        // Горизонтальная скорость гаснет, вертикальная стремится к установившейся скорости падения.
+        // The horizontal speed dies out; the vertical one tends to the terminal falling speed.
         let late = spark_velocity(velocity, 5.0);
         assert!(late.0.abs() < 1e-3);
         assert!((late.1 - SPARK_GRAVITY / SPARK_DRAG).abs() < 1e-3);
-        // Искра, вылетевшая вверх, сначала поднимается, потом падает ниже точки вылета.
+        // A spark that flew upwards first rises, then falls below the point it left.
         let up = (0.0, -3.0);
         assert!(spark_position(origin, up, 0.15).1 < origin.1);
         assert!(spark_position(origin, up, 2.0).1 > origin.1);
@@ -1062,11 +1084,11 @@ mod tests {
 
     #[test]
     fn colours_are_greenish_yellow() {
-        /// Цветовой тон в градусах: 60 — жёлтый, 120 — зелёный.
+        /// Hue in degrees: 60 is yellow, 120 is green.
         fn hue(c: [f32; 3]) -> f32 {
             let max = c[0].max(c[1]).max(c[2]);
             let min = c[0].min(c[1]).min(c[2]);
-            assert!(max - min > 0.05, "цвет не серый: {c:?}");
+            assert!(max - min > 0.05, "the colour is not grey: {c:?}");
             let h = if max == c[0] {
                 (c[1] - c[2]) / (max - min)
             } else if max == c[1] {
@@ -1076,7 +1098,7 @@ mod tests {
             };
             (60.0 * h).rem_euclid(360.0)
         }
-        // Свечение: жёлтый с зелёным оттенком — между жёлтым (60°) и жёлто-зелёным (90°).
+        // The glow: yellow with a green tint, between yellow (60°) and yellow-green (90°).
         assert!((66.0..=85.0).contains(&hue(GLOW)), "{}", hue(GLOW));
         for step in 0..=20 {
             let heat = step as f32 / 20.0;
@@ -1084,15 +1106,15 @@ mod tests {
             assert!(c.iter().all(|v| (0.0..=1.0).contains(v)));
             assert!(
                 (64.0..=85.0).contains(&hue(c)),
-                "температура {heat}: тон {}",
+                "temperature {heat}: hue {}",
                 hue(c)
             );
             assert!(
                 c[1] >= c[0] && c[0] > c[2],
-                "зелёная составляющая не меньше красной: {c:?}"
+                "the green component is not less than the red one: {c:?}"
             );
         }
-        // Горячая искра светлее остывшей.
+        // A hot spark is lighter than a cooled one.
         let brightness = |c: [f32; 3]| c[0] + c[1] + c[2];
         assert!(brightness(spark_color(1.0)) > brightness(spark_color(0.5)));
         assert!(brightness(spark_color(0.5)) > brightness(spark_color(0.0)));
@@ -1112,7 +1134,7 @@ mod tests {
             assert_eq!(a.frame(t, EffectSet::ALL), b.frame(t, EffectSet::ALL));
         }
         assert_ne!(a.frame(10.1, EffectSet::ALL), c.frame(10.1, EffectSet::ALL));
-        // Пустой и вырожденный пути не вызывают сбоя.
+        // An empty and a degenerate route cause no failure.
         let empty = Discharge::new(Vec::new(), Vec::new(), 1);
         assert!(empty.is_finished(0.0) && empty.frame(0.1, EffectSet::ALL).is_empty());
         assert_eq!(empty.head(1.0), (0.0, 0.0));

@@ -1,8 +1,8 @@
-//! Настройки, сохраняемые между запусками: язык, уровень, цвет игрока, звук,
-//! видимость панели ходов и спецэффекты.
+//! Settings kept between runs: language, level, the player's colour, sound, visibility
+//! of the move panel and special effects.
 //!
-//! Файл — простой текст вида `ключ=значение`. Неизвестные ключи и испорченные
-//! значения игнорируются: вместо них берутся значения по умолчанию.
+//! The file is plain text of the form `key=value`. Unknown keys and damaged values are
+//! ignored: the default values are used instead.
 
 use crate::ai::{clamp_level, MAX_LEVEL, MIN_LEVEL};
 use crate::board::Color;
@@ -13,14 +13,14 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Уровень по умолчанию.
+/// The default level.
 pub const DEFAULT_LEVEL: u8 = 4;
-/// Имя каталога настроек.
+/// Name of the settings directory.
 const APP_DIR: &str = "rucheckers";
-/// Имя файла настроек.
+/// Name of the settings file.
 const FILE_NAME: &str = "settings.conf";
 
-/// Пользовательские настройки.
+/// User settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Settings {
     pub lang: Lang,
@@ -28,9 +28,9 @@ pub struct Settings {
     pub human: Color,
     pub sound: bool,
     pub panel: bool,
-    /// Общий выключатель спецэффектов: при `false` не показывается ни один.
+    /// The main switch of the special effects: with `false` none of them is shown.
     pub effects_enabled: bool,
-    /// Какие спецэффекты выбраны по отдельности.
+    /// Which special effects are chosen one by one.
     pub effects: EffectSet,
 }
 
@@ -65,7 +65,7 @@ const fn switch(value: bool) -> &'static str {
 }
 
 impl Settings {
-    /// Настройки по умолчанию с языком, выбранным по локали системы.
+    /// Default settings with the language chosen by the system locale.
     #[must_use]
     pub fn for_locale(locale: Option<&str>) -> Self {
         Self {
@@ -74,8 +74,8 @@ impl Settings {
         }
     }
 
-    /// Спецэффекты, которые нужно показывать: выбранные по отдельности, если включён
-    /// общий выключатель, иначе никакие.
+    /// The special effects to show: those chosen one by one if the main switch is on,
+    /// none otherwise.
     #[must_use]
     pub const fn active_effects(&self) -> EffectSet {
         if self.effects_enabled {
@@ -85,7 +85,7 @@ impl Settings {
         }
     }
 
-    /// Текст файла настроек.
+    /// Text of the settings file.
     #[must_use]
     pub fn to_text(&self) -> String {
         format!(
@@ -106,7 +106,7 @@ impl Settings {
         )
     }
 
-    /// Разбор текста файла настроек поверх значений `base`.
+    /// Parses the text of a settings file on top of the values of `base`.
     #[must_use]
     pub fn from_text(text: &str, base: Self) -> Self {
         let mut settings = base;
@@ -173,7 +173,7 @@ impl Settings {
         settings
     }
 
-    /// Читает настройки из файла. Если файла нет или он не читается, возвращает `base`.
+    /// Reads the settings from a file. If there is no file or it cannot be read, returns `base`.
     #[must_use]
     pub fn load(path: &Path, base: Self) -> Self {
         match fs::read(path) {
@@ -207,11 +207,11 @@ impl Settings {
     }
 }
 
-/// Путь к файлу настроек по значениям переменных окружения.
+/// Path of the settings file for the given values of the environment variables.
 ///
 /// * macOS: `~/Library/Application Support/rucheckers/settings.conf`;
-/// * прочие системы: `$XDG_CONFIG_HOME/rucheckers/settings.conf`
-///   или `~/.config/rucheckers/settings.conf`.
+/// * other systems: `$XDG_CONFIG_HOME/rucheckers/settings.conf`
+///   or `~/.config/rucheckers/settings.conf`.
 #[must_use]
 pub fn settings_path_from(home: Option<&str>, xdg_config_home: Option<&str>, macos: bool) -> Option<PathBuf> {
     let non_empty = |value: Option<&str>| value.filter(|v| !v.trim().is_empty()).map(PathBuf::from);
@@ -226,7 +226,7 @@ pub fn settings_path_from(home: Option<&str>, xdg_config_home: Option<&str>, mac
     Some(base.join(APP_DIR).join(FILE_NAME))
 }
 
-/// Путь к файлу настроек в текущей системе; `None`, если домашний каталог неизвестен.
+/// Path of the settings file on this system; `None` if the home directory is unknown.
 #[must_use]
 pub fn default_settings_path() -> Option<PathBuf> {
     let home = env::var("HOME").ok();
@@ -234,7 +234,7 @@ pub fn default_settings_path() -> Option<PathBuf> {
     settings_path_from(home.as_deref(), xdg.as_deref(), cfg!(target_os = "macos"))
 }
 
-/// Локаль сообщений из переменных окружения.
+/// Message locale from the environment variables.
 #[must_use]
 pub fn system_locale() -> Option<String> {
     ["LC_ALL", "LC_MESSAGES", "LANG"]
@@ -368,10 +368,10 @@ mod tests {
             "",
             "\0\0\0",
             "level=abc\nlanguage=xx\ncolor=green\nsound=maybe\npanel=",
-            "effects=sometimes\neffect_lightning=\neffect_sparks=2\neffect_flashes=да",
+            "effects=sometimes\neffect_lightning=\neffect_sparks=2\neffect_flashes=はい",
             "level=0\nlevel=11\nlevel=-3\nlevel=999999999999",
             "====\n=\nlevel\n# comment",
-            "уровень=5",
+            "レベル=5",
         ] {
             assert_eq!(Settings::from_text(text, base), base, "{text:?}");
         }
