@@ -339,12 +339,8 @@ pub fn draw_lightning(
 }
 
 /// The promotion sign goes under every piece, so the new king naturally covers its
-/// centre. The playing-field scissor clips equally sized rays at the board's edge.
+/// centre. Rays may cover the coordinate frame, stopping at the board's outer edge.
 pub fn draw_promotion(painter: &Painter, layout: &BoardLayout, frame: &PromotionFrame) {
-    let field = Rect::from_min_size(
-        pos2(layout.field_x, layout.field_y),
-        vec2(layout.field_size(), layout.field_size()),
-    );
     let mut mesh = egui::Mesh::default();
     mesh.indices.clone_from(&frame.indices);
     mesh.vertices.reserve(frame.vertices.len());
@@ -356,7 +352,7 @@ pub fn draw_promotion(painter: &Painter, layout: &BoardLayout, frame: &Promotion
             Color32::from_rgba_premultiplied(red, green, blue, alpha),
         );
     }
-    painter.with_clip_rect(field).add(Shape::mesh(mesh));
+    painter.with_clip_rect(outer_rect(layout)).add(Shape::mesh(mesh));
 }
 
 /// The upper layer of the discharge: the sparks. They are drawn over all pieces.
@@ -549,7 +545,7 @@ mod tests {
     use rucheckers::ui::promotion::Promotion;
 
     #[test]
-    fn promotion_mesh_at_board_edges_has_a_playing_field_scissor() {
+    fn promotion_covers_the_coordinate_frame_but_stops_at_the_outer_board_edge() {
         for name in ["a1", "h8", "d8", "e1"] {
             for flipped in [false, true] {
                 let layout = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, flipped, 1.0);
@@ -569,13 +565,17 @@ mod tests {
                     .iter()
                     .find(|shape| matches!(&shape.shape, Shape::Mesh(mesh) if mesh.is_valid()))
                     .expect("the rose is a valid OpenGL triangle mesh");
-                assert_eq!(clipped.clip_rect, field);
+                assert_eq!(clipped.clip_rect, outer_rect(&layout));
                 let Shape::Mesh(mesh) = &clipped.shape else {
                     unreachable!()
                 };
                 assert!(
-                    mesh.vertices.iter().any(|vertex| !field.contains(vertex.pos)),
-                    "the scissor, rather than a smaller or distorted rose, handles the edge"
+                    mesh.vertices.iter().any(|vertex| {
+                        !field.contains(vertex.pos)
+                            && clipped.clip_rect.contains(vertex.pos)
+                            && vertex.color.a() > 0
+                    }),
+                    "the rose remains visible over the coordinate frame"
                 );
             }
         }

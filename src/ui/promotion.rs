@@ -33,7 +33,7 @@ pub struct Vertex {
     pub rgba: [f32; 4],
 }
 
-/// A complete frame, drawn beneath every piece and clipped to the playing field.
+/// A complete frame, drawn beneath every piece and clipped to the board's outer edge.
 #[derive(Clone, PartialEq, Debug)]
 pub struct PromotionFrame {
     pub center: Point,
