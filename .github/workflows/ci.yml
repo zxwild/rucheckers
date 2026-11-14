@@ -71,7 +71,14 @@ jobs:
         run: |
           gh release download --repo pal1000/mesa-dist-win --pattern "mesa3d-*-release-msvc.7z" --dir mesa
           7z x (Get-ChildItem mesa\*.7z).FullName -omesa -y | Out-Null
-          Copy-Item mesa\x64\opengl32.dll, mesa\x64\libgallium_wgl.dll target\release\
+          $library = Get-ChildItem mesa -Recurse -Filter opengl32.dll |
+            Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1
+          if (-not $library) {
+            Get-ChildItem mesa -Recurse -Depth 2 | ForEach-Object { $_.FullName }
+            throw "the archive has no opengl32.dll for x64"
+          }
+          Write-Host "Mesa libraries from $($library.DirectoryName)"
+          Copy-Item (Join-Path $library.DirectoryName '*.dll') target\release\
       - name: Start the program
         shell: pwsh
         run: tools/smoke-test.ps1 -Binary target\release\rucheckers.exe -Screenshot window.png

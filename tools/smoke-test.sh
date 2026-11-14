@@ -43,6 +43,10 @@ fail() {
         echo "--- program" >&2
         grep -v '^\[' "$work/app.log" | tail -n 40 | sed 's/^/    /' >&2
     fi
+    if [ "$mode" = wayland ] && [ -s "$work/app.log" ]; then
+        echo "--- last protocol messages" >&2
+        grep '^\[' "$work/app.log" | tail -n 25 | sed 's/^/    /' >&2
+    fi
     if [ -s "$work/server.log" ]; then
         echo "--- display server" >&2
         tail -n 40 "$work/server.log" | sed 's/^/    /' >&2
@@ -96,11 +100,12 @@ else
         done
         return 1
     }
-    # The kiosk shell shows the only window full-screen, without decorations; the pixman
-    # renderer composes the screen in memory, so that it can be captured. Weston before
-    # version 12 spells the same options differently.
+    # The pixman renderer composes the screen in memory, so that it can be captured; the
+    # kiosk shell shows the only window full-screen, without decorations. Weston before
+    # version 12 spells the options differently, and the window gets its frames
+    # reliably only under the ordinary desktop shell there.
     start_weston --backend=headless --renderer=pixman --shell=kiosk ||
-        start_weston --backend=headless-backend.so --use-pixman --shell=kiosk-shell.so ||
+        start_weston --backend=headless-backend.so --use-pixman ||
         fail "the compositor did not start"
     unset DISPLAY
     export WAYLAND_DISPLAY="$socket"
