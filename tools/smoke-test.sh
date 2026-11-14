@@ -9,10 +9,10 @@
 # Both modes need the Mesa software renderer and ImageMagick. `x11` also needs Xvfb and
 # xdotool; `wayland` needs the Weston compositor.
 #
-# Under X11 the test looks at the screen: an empty window is one flat colour, the board
-# with its pieces has thousands. Under Wayland it first watches the program hand
-# finished frames to the compositor, and looks at the screen as well where Weston can
-# capture it in this set-up (version 12 and newer).
+# The test looks at the screen: an empty window is one flat colour, the board with its
+# pieces has thousands. Under Wayland it first watches the program hand finished frames
+# to the compositor. A Weston older than version 12 is not always able to capture the
+# screen without a monitor; there the frames decide alone.
 set -eu
 
 mode=${1:-x11}
@@ -42,6 +42,10 @@ fail() {
         # Lines in square brackets are the Wayland protocol trace.
         echo "--- program" >&2
         grep -v '^\[' "$work/app.log" | tail -n 40 | sed 's/^/    /' >&2
+    fi
+    if [ "$mode" = wayland ] && [ -s "$work/app.log" ]; then
+        echo "--- last protocol messages" >&2
+        grep '^\[' "$work/app.log" | tail -n 25 | sed 's/^/    /' >&2
     fi
     if [ -s "$work/server.log" ]; then
         echo "--- display server" >&2
@@ -96,11 +100,12 @@ else
         done
         return 1
     }
-    # The kiosk shell shows the only window full-screen, without decorations; the pixman
-    # renderer composes the screen in memory, so that it can be captured. Weston before
-    # version 12 spells the same options differently.
+    # The pixman renderer composes the screen in memory, so that it can be captured; the
+    # kiosk shell shows the only window full-screen, without decorations. Weston before
+    # version 12 spells the options differently, and the window gets its frames
+    # reliably only under the ordinary desktop shell there.
     start_weston --backend=headless --renderer=pixman --shell=kiosk ||
-        start_weston --backend=headless-backend.so --use-pixman --shell=kiosk-shell.so ||
+        start_weston --backend=headless-backend.so --use-pixman ||
         fail "the compositor did not start"
     unset DISPLAY
     export WAYLAND_DISPLAY="$socket"

@@ -61,7 +61,7 @@ The same move from its first jump to the last one:
 
 | System | Versions | How it is checked |
 | --- | --- | --- |
-| Windows | 10 and 11, x64 and ARM64 | CI builds the program and runs all tests on Windows (x64 and ARM64) |
+| Windows | 10 and 11, x64 and ARM64 | CI builds the program and runs all tests on Windows (x64 and ARM64), and starts the program on Windows x64 |
 | macOS | Apple Silicon and Intel | CI builds the program and runs all tests on both |
 | Linux | Ubuntu 22.04, 24.04 and 26.04; Debian 12 and 13; Fedora; Arch Linux; openSUSE Tumbleweed | CI builds the program inside each distribution from the packages listed below, runs all tests and starts the program on a virtual display |
 
@@ -223,12 +223,15 @@ for in the right place on each system, and that the icon files match the drawing
   ARM64) and macOS (Apple Silicon and Intel);
 - formatting, lints and the tests with Rust 1.85, the oldest supported version, on
   Linux, Windows and macOS;
+- on Windows: a check that the release executable depends on system libraries only,
+  and a start of the program;
 - inside Debian, Ubuntu, Fedora, Arch Linux and openSUSE containers: a build from the
   packages listed above, the tests, and a start of the program on a virtual display
   under X11 and under Wayland.
 
-The last step is a script that can be run by hand. It starts the program, waits for
-its window and checks that the board has been drawn:
+The machines of CI have no graphics card, so there the program draws with the Mesa
+software renderer. A start is a script that can be run by hand. It starts the
+program, waits for its window and checks that the board has been drawn:
 
 ```bash
 tools/smoke-test.sh x11
@@ -238,7 +241,8 @@ tools/smoke-test.sh x11
 tools/smoke-test.sh wayland
 ```
 
-It needs Xvfb and xdotool for X11, Weston for Wayland, and ImageMagick.
+It needs Xvfb and xdotool for X11, Weston for Wayland, and ImageMagick. On Windows
+the same check is `tools/smoke-test.ps1`.
 
 ### Code quality
 
@@ -360,7 +364,7 @@ Around the code:
 | `assets/icons/` | the icon as `.ico` (Windows) and `.png` (Linux), written by the program |
 | `assets/windows/` | the application manifest: Windows 10 and 11, sharp drawing on dense screens |
 | `assets/linux/` | the desktop entry with the name of the program in every language |
-| `tools/` | installation into the Linux application menu, the smoke test, the font subsetting script |
+| `tools/` | installation into the Linux application menu, the smoke tests, the font subsetting script |
 | `examples/icons.rs` | writes the icon files |
 | `docs/screenshots/` | the pictures of this file |
 
