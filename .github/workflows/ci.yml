@@ -51,6 +51,33 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
+      # Not every Mesa release for Windows carries the OpenGL libraries in every one of
+      # its packages: the newest release and package that has them is taken.
+      - name: Get the software OpenGL renderer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $source = "pal1000/mesa-dist-win"
+          $library = $null
+          foreach ($tag in (gh release list --repo $source --limit 10 --json tagName --jq '.[].tagName')) {
+            foreach ($kind in "msvc", "mingw") {
+              $folder = "mesa-$tag-$kind"
+              gh release download $tag --repo $source --pattern "mesa3d-*-release-$kind.7z" --dir $folder 2>$null
+              if ($LASTEXITCODE -ne 0) { continue }
+              7z x (Get-ChildItem "$folder\*.7z").FullName "-o$folder" -y | Out-Null
+              $library = Get-ChildItem $folder -Recurse -Filter opengl32.dll |
+                Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1
+              Write-Host "$tag ($kind): $(if ($library) { 'has the OpenGL libraries' } else { 'no OpenGL libraries' })"
+              if ($library) { break }
+            }
+            if ($library) { break }
+          }
+          if (-not $library) { throw "no recent Mesa release has opengl32.dll for x64" }
+          New-Item -ItemType Directory -Force mesa | Out-Null
+          Copy-Item (Join-Path $library.DirectoryName "*.dll") mesa
+          Get-ChildItem mesa | ForEach-Object { $_.Name }
+          $global:LASTEXITCODE = 0
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Release build
@@ -64,24 +91,11 @@ jobs:
             echo "the executable must not depend on a redistributable library" >&2
             exit 1
           fi
-      - name: Get the software OpenGL renderer
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download --repo pal1000/mesa-dist-win --pattern "mesa3d-*-release-msvc.7z" --dir mesa
-          7z x (Get-ChildItem mesa\*.7z).FullName -omesa -y | Out-Null
-          $library = Get-ChildItem mesa -Recurse -Filter opengl32.dll |
-            Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1
-          if (-not $library) {
-            Get-ChildItem mesa -Recurse -Depth 2 | ForEach-Object { $_.FullName }
-            throw "the archive has no opengl32.dll for x64"
-          }
-          Write-Host "Mesa libraries from $($library.DirectoryName)"
-          Copy-Item (Join-Path $library.DirectoryName '*.dll') target\release\
       - name: Start the program
         shell: pwsh
-        run: tools/smoke-test.ps1 -Binary target\release\rucheckers.exe -Screenshot window.png
+        run: |
+          Copy-Item mesa\*.dll target\release\
+          tools/smoke-test.ps1 -Binary target\release\rucheckers.exe -Screenshot window.png
       - name: Keep the screenshot
         if: always()
         uses: actions/upload-artifact@v5

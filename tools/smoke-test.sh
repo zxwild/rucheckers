@@ -9,10 +9,10 @@
 # Both modes need the Mesa software renderer and ImageMagick. `x11` also needs Xvfb and
 # xdotool; `wayland` needs the Weston compositor.
 #
-# Under X11 the test looks at the screen: an empty window is one flat colour, the board
-# with its pieces has thousands. Under Wayland it first watches the program hand
-# finished frames to the compositor, and looks at the screen as well where Weston can
-# capture it in this set-up (version 12 and newer).
+# The test looks at the screen: an empty window is one flat colour, the board with its
+# pieces has thousands. Under Wayland it first watches the program hand finished frames
+# to the compositor. A Weston older than version 12 is not always able to capture the
+# screen without a monitor; there the frames decide alone.
 set -eu
 
 mode=${1:-x11}
