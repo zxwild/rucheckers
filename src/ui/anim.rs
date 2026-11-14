@@ -453,7 +453,7 @@ mod tests {
             let direction = strikes[0].direction;
             assert_eq!((direction.0 > 0.0, direction.1 < 0.0), (!flipped, !flipped));
             // The lightning is visible while the piece is still moving.
-            assert!(!fx.frame(5.0 + 0.3 * HOP, EffectSet::ALL).bolts.is_empty());
+            assert_ne!(fx.frame(5.0 + 0.3 * HOP, EffectSet::ALL).bolts, []);
         }
     }
 

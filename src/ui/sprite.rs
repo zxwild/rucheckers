@@ -283,7 +283,8 @@ pub fn render_piece(piece: Piece, size: usize, shadow: bool) -> PieceImage {
                         let under = crown_coverage(px - lift * 0.6, py - lift, center, crown_size);
                         let crown = crown_coverage(px, py, center, crown_size);
                         color = mix(color, palette.dark, 0.35 * under * (1.0 - crown));
-                        let glow = 0.5 - 0.5 * (dx * LIGHT.0 + dy * LIGHT.1) / (0.6 * radius);
+                        let toward_light = dx * LIGHT.0 + dy * LIGHT.1;
+                        let glow = 0.5 - 0.5 * toward_light / (0.6 * radius);
                         let crown_color = mix(palette.crown_light, palette.crown, glow);
                         color = mix(color, crown_color, crown);
                     }

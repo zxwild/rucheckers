@@ -392,7 +392,7 @@ fn piece_captured_on_the_way_to_promotion_still_blocks_the_new_king() {
 #[test]
 fn side_without_pieces_loses() {
     let state = GameState::new(pos("W:W:Bb2"));
-    assert!(legal_moves(&state.pos).is_empty());
+    assert_eq!(legal_moves(&state.pos), []);
     assert_eq!(
         state.outcome(1),
         Some(Outcome::Win {
@@ -419,7 +419,7 @@ fn side_without_legal_moves_loses() {
     // The white piece on a1 is blocked: b2 is occupied, and it cannot capture because c3
     // stands behind b2.
     let state = GameState::new(pos("W:Wa1:Bb2,c3"));
-    assert!(legal_moves(&state.pos).is_empty());
+    assert_eq!(legal_moves(&state.pos), []);
     assert_eq!(
         state.outcome(1),
         Some(Outcome::Win {
@@ -430,7 +430,7 @@ fn side_without_legal_moves_loses() {
 
     // Several pieces can be blocked, a king among them.
     let state = GameState::new(pos("B:Wg7,f6,e5:BKh8"));
-    assert!(legal_moves(&state.pos).is_empty());
+    assert_eq!(legal_moves(&state.pos), []);
     assert_eq!(
         state.outcome(1),
         Some(Outcome::Win {
@@ -444,7 +444,7 @@ fn side_without_legal_moves_loses() {
     let start = GameState::new(pos("W:Wa3,c3:Ba5"));
     assert_eq!(start.outcome(1), None);
     let end = start.play(&mv(&start.pos, "a3-b4"));
-    assert!(legal_moves(&end.pos).is_empty());
+    assert_eq!(legal_moves(&end.pos), []);
     assert_eq!(
         end.outcome(1),
         Some(Outcome::Win {

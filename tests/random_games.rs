@@ -85,7 +85,7 @@ fn play_random_game(rng: &mut Rng, stats: &mut Stats) -> Outcome {
         }
 
         let moves = legal_moves(&pos);
-        assert!(!moves.is_empty());
+        assert_ne!(moves, []);
         // Capturing is mandatory: if there is a capture, all legal moves are captures.
         let mut captures = Vec::new();
         generate_captures(&pos, &mut captures);

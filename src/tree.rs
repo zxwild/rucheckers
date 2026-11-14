@@ -448,8 +448,8 @@ mod tests {
         assert_eq!(tree.add_move(999, &first), Err(TreeError::NoSuchNode));
         assert!(!tree.go_to(999));
         assert!(tree.get(999).is_none());
-        assert!(tree.siblings(999).is_empty());
-        assert!(tree.path_to(999).is_empty());
-        assert!(tree.history_before(999).is_empty());
+        assert_eq!(tree.siblings(999), []);
+        assert_eq!(tree.path_to(999), []);
+        assert_eq!(tree.history_before(999), []);
     }
 }

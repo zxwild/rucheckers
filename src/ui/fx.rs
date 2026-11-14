@@ -825,7 +825,7 @@ mod tests {
         );
         // After the piece stops the lightning goes out, sparks still fly, then the effect ends.
         assert!((fx.bolt_end() - (fx.arrival() + TRAIL_SECONDS)).abs() < 1e-12);
-        assert!(!fx.frame(fx.bolt_end() - 0.1, EffectSet::ALL).bolts.is_empty());
+        assert_ne!(fx.frame(fx.bolt_end() - 0.1, EffectSet::ALL).bolts, []);
         let after = fx.frame(fx.bolt_end() + 0.001, EffectSet::ALL);
         assert!(after.bolts.is_empty() && !after.sparks.is_empty());
         assert!(fx.bolt_end() < fx.end());
@@ -984,7 +984,7 @@ mod tests {
                 ..EffectSet::ALL
             },
         );
-        assert!(without_sparks.sparks.is_empty());
+        assert_eq!(without_sparks.sparks, []);
         assert_eq!(without_sparks.bolts, all.bolts);
         assert!(EffectSet {
             sparks: true,

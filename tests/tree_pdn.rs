@@ -538,7 +538,7 @@ fn damaged_and_foreign_files_give_errors_not_panics() {
             _ => assert_eq!(error, expected, "{text:?}"),
         }
         // The error message is built without a failure.
-        assert!(!error.to_string().is_empty());
+        assert_ne!(error.to_string(), "");
     }
 }
 
@@ -639,7 +639,7 @@ fn randomly_corrupted_pdn_never_panics() {
             }
             Err(error) => {
                 rejected += 1;
-                assert!(!error.to_string().is_empty());
+                assert_ne!(error.to_string(), "");
             }
         }
     }

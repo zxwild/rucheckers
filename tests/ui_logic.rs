@@ -191,7 +191,7 @@ fn quiet_move_by_two_clicks() {
     input.set_moves(legal_moves(&Position::initial()));
     assert!(input.is_enabled() && !input.must_capture());
     assert_eq!(names(&input.movable()), ["a3", "c3", "e3", "g3"]);
-    assert!(input.targets().is_empty());
+    assert_eq!(input.targets(), []);
 
     assert_eq!(
         input.click(sq("a1")),
@@ -493,10 +493,10 @@ fn final_square_of_a_multi_capture_can_be_chosen_at_once() {
     // A single capture and a quiet move have no separate "final" squares.
     let mut input = input_for("W:Wc3,a1:Bd4");
     input.click(sq("c3"));
-    assert!(input.final_targets().is_empty());
+    assert_eq!(input.final_targets(), []);
     let mut input = input_for("W:Wc3:Bh8");
     input.click(sq("c3"));
-    assert!(input.final_targets().is_empty());
+    assert_eq!(input.final_targets(), []);
 }
 
 #[test]
