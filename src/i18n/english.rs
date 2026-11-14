@@ -76,6 +76,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::ReadFailed => "Could not read the file",
         Text::WriteFailed => "Could not save the file",
         Text::SettingsNotSaved => "Could not save the settings",
+        Text::StartFailed => {
+            "The window could not be opened. The program needs a graphical session and a graphics driver with OpenGL 2.0 or newer."
+        }
         Text::PdnTooLarge => "The file is too large to be a game record.",
         Text::PdnEmpty => "The file is empty: it contains no game.",
         Text::PdnNotPdn => "The file does not look like a PDN game record.",

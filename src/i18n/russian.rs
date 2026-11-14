@@ -76,6 +76,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::ReadFailed => "Не удалось прочитать файл",
         Text::WriteFailed => "Не удалось сохранить файл",
         Text::SettingsNotSaved => "Не удалось сохранить настройки",
+        Text::StartFailed => {
+            "Не удалось открыть окно. Программе нужны графический сеанс и видеодрайвер с поддержкой OpenGL 2.0 или новее."
+        }
         Text::PdnTooLarge => "Файл слишком велик для записи партии.",
         Text::PdnEmpty => "Файл пуст: в нём нет партии.",
         Text::PdnNotPdn => "Файл не похож на запись партии в формате PDN.",

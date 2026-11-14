@@ -9,6 +9,7 @@ use crate::board::Color;
 use crate::i18n::Lang;
 use crate::ui::fx::EffectSet;
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -207,40 +208,90 @@ impl Settings {
     }
 }
 
-/// Path of the settings file for the given values of the environment variables.
-///
-/// * macOS: `~/Library/Application Support/rucheckers/settings.conf`;
-/// * other systems: `$XDG_CONFIG_HOME/rucheckers/settings.conf`
-///   or `~/.config/rucheckers/settings.conf`.
-#[must_use]
-pub fn settings_path_from(home: Option<&str>, xdg_config_home: Option<&str>, macos: bool) -> Option<PathBuf> {
-    let non_empty = |value: Option<&str>| value.filter(|v| !v.trim().is_empty()).map(PathBuf::from);
-    let base = if macos {
-        non_empty(home)?.join("Library").join("Application Support")
+/// The convention an operating system has for the place of per-user settings.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Platform {
+    /// `%APPDATA%\rucheckers\settings.conf`, that is
+    /// `C:\Users\<name>\AppData\Roaming\rucheckers\settings.conf`.
+    Windows,
+    /// `~/Library/Application Support/rucheckers/settings.conf`.
+    MacOs,
+    /// `$XDG_CONFIG_HOME/rucheckers/settings.conf` or `~/.config/rucheckers/settings.conf`
+    /// (Linux and other Unix systems).
+    Unix,
+}
+
+impl Platform {
+    /// The system the program is built for.
+    pub const CURRENT: Self = if cfg!(windows) {
+        Self::Windows
+    } else if cfg!(target_os = "macos") {
+        Self::MacOs
     } else {
-        match non_empty(xdg_config_home).filter(|p| p.is_absolute()) {
-            Some(dir) => dir,
-            None => non_empty(home)?.join(".config"),
-        }
+        Self::Unix
+    };
+}
+
+/// Path of the settings file under the convention of `platform`; `var` reads an
+/// environment variable.
+///
+/// A variable that is unset, empty or holds a relative path does not name a directory:
+/// the next candidate is tried, and without any the result is `None`.
+#[must_use]
+pub fn settings_path_from(platform: Platform, var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let dir = |name: &str| var(name).map(PathBuf::from).filter(|path| path.is_absolute());
+    let base = match platform {
+        Platform::Windows => match dir("APPDATA") {
+            Some(roaming) => roaming,
+            None => dir("USERPROFILE")?.join("AppData").join("Roaming"),
+        },
+        Platform::MacOs => dir("HOME")?.join("Library").join("Application Support"),
+        Platform::Unix => match dir("XDG_CONFIG_HOME") {
+            Some(config) => config,
+            None => dir("HOME")?.join(".config"),
+        },
     };
     Some(base.join(APP_DIR).join(FILE_NAME))
 }
 
-/// Path of the settings file on this system; `None` if the home directory is unknown.
+/// Path of the settings file on this system; `None` if the user's directory is unknown.
 #[must_use]
 pub fn default_settings_path() -> Option<PathBuf> {
-    let home = env::var("HOME").ok();
-    let xdg = env::var("XDG_CONFIG_HOME").ok();
-    settings_path_from(home.as_deref(), xdg.as_deref(), cfg!(target_os = "macos"))
+    settings_path_from(Platform::CURRENT, |name| env::var_os(name))
 }
 
-/// Message locale from the environment variables.
+/// The message locale the environment variables ask for; `var` reads a variable.
+///
+/// The variables are read the way gettext reads them. The locale is the first non-empty
+/// one of `LC_ALL`, `LC_MESSAGES` and `LANG`. Unless it is `C` or `POSIX`, the list in
+/// `LANGUAGE` (`de:en_GB:en`) takes priority: its first entry with a translation of the
+/// interface wins. `None` means that the environment names no language.
+#[must_use]
+pub fn locale_from(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
+    let text = |name: &str| {
+        let value = var(name)?.to_string_lossy().trim().to_string();
+        (!value.is_empty()).then_some(value)
+    };
+    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"].into_iter().find_map(text)?;
+    if Lang::is_neutral_locale(&locale) {
+        return None;
+    }
+    let preferred = text("LANGUAGE").and_then(|list| {
+        list.split(':')
+            .map(str::trim)
+            .find(|entry| Lang::of_locale(entry).is_some())
+            .map(str::to_string)
+    });
+    Some(preferred.unwrap_or(locale))
+}
+
+/// The message locale named by the environment variables of this process.
+///
+/// Linux desktops always set them. On Windows and macOS they are usually unset, and the
+/// executable then asks the system for the user's language.
 #[must_use]
 pub fn system_locale() -> Option<String> {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .filter_map(|name| env::var(name).ok())
-        .find(|value| !value.trim().is_empty())
+    locale_from(|name| env::var_os(name))
 }
 
 #[cfg(test)]
@@ -557,29 +608,221 @@ mod tests {
         assert!(!dir.0.join("occupied.tmp").exists());
     }
 
+    /// An absolute path of the system the tests run on: a path that is absolute on
+    /// Unix is relative on Windows and the other way round.
+    fn absolute(parts: &[&str]) -> PathBuf {
+        let mut path = PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" });
+        path.extend(parts);
+        path
+    }
+
+    /// An environment made of the given variables.
+    fn environment<'a>(vars: &'a [(&'a str, OsString)]) -> impl Fn(&str) -> Option<OsString> + 'a {
+        |name| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    /// Path of the settings file on `platform` for an environment of directories.
+    fn path_on(platform: Platform, vars: &[(&str, &Path)]) -> Option<PathBuf> {
+        let vars: Vec<(&str, OsString)> = vars
+            .iter()
+            .map(|(key, dir)| (*key, dir.as_os_str().to_owned()))
+            .collect();
+        settings_path_from(platform, environment(&vars))
+    }
+
     #[test]
     fn paths_follow_platform_conventions() {
+        let home = absolute(&["home", "u"]);
+        let config = absolute(&["cfg"]);
+        let roaming = absolute(&["Users", "u", "AppData", "Roaming"]);
+        let profile = absolute(&["Users", "u"]);
+        let file = Path::new("rucheckers").join("settings.conf");
+
+        // Linux and other Unix systems: the XDG base directory convention.
         assert_eq!(
-            settings_path_from(Some("/home/u"), None, false),
-            Some(PathBuf::from("/home/u/.config/rucheckers/settings.conf"))
+            path_on(Platform::Unix, &[("HOME", &home)]),
+            Some(home.join(".config").join(&file))
         );
         assert_eq!(
-            settings_path_from(Some("/home/u"), Some("/cfg"), false),
-            Some(PathBuf::from("/cfg/rucheckers/settings.conf"))
+            path_on(Platform::Unix, &[("HOME", &home), ("XDG_CONFIG_HOME", &config)]),
+            Some(config.join(&file))
         );
         assert_eq!(
-            settings_path_from(Some("/home/u"), Some("relative"), false),
-            Some(PathBuf::from("/home/u/.config/rucheckers/settings.conf")),
+            path_on(
+                Platform::Unix,
+                &[("HOME", &home), ("XDG_CONFIG_HOME", Path::new("relative"))]
+            ),
+            Some(home.join(".config").join(&file)),
             "a relative XDG_CONFIG_HOME is ignored"
         );
         assert_eq!(
-            settings_path_from(Some("/Users/u"), Some("/cfg"), true),
-            Some(PathBuf::from(
-                "/Users/u/Library/Application Support/rucheckers/settings.conf"
-            ))
+            path_on(
+                Platform::Unix,
+                &[("HOME", &home), ("XDG_CONFIG_HOME", Path::new(""))]
+            ),
+            Some(home.join(".config").join(&file)),
+            "an empty XDG_CONFIG_HOME is ignored"
         );
-        assert_eq!(settings_path_from(None, None, false), None);
-        assert_eq!(settings_path_from(Some(""), None, true), None);
+        assert_eq!(
+            path_on(Platform::Unix, &[("XDG_CONFIG_HOME", &config)]),
+            Some(config.join(&file))
+        );
+
+        // macOS: the application support directory, whatever XDG_CONFIG_HOME says.
+        assert_eq!(
+            path_on(Platform::MacOs, &[("HOME", &home), ("XDG_CONFIG_HOME", &config)]),
+            Some(home.join("Library").join("Application Support").join(&file))
+        );
+
+        // Windows: the roaming application data of the user.
+        assert_eq!(
+            path_on(
+                Platform::Windows,
+                &[("APPDATA", &roaming), ("USERPROFILE", &home)]
+            ),
+            Some(roaming.join(&file))
+        );
+        assert_eq!(
+            path_on(Platform::Windows, &[("USERPROFILE", &profile)]),
+            Some(roaming.join(&file)),
+            "without APPDATA the directory is found from the profile"
+        );
+        assert_eq!(
+            path_on(
+                Platform::Windows,
+                &[("HOME", &home), ("XDG_CONFIG_HOME", &config)]
+            ),
+            None,
+            "the variables of Unix mean nothing on Windows"
+        );
+
+        // Without a usable directory there is no settings file.
+        for platform in [Platform::Unix, Platform::MacOs, Platform::Windows] {
+            assert_eq!(path_on(platform, &[]), None, "{platform:?}");
+            let useless = [
+                ("HOME", Path::new("")),
+                ("APPDATA", Path::new("relative")),
+                ("USERPROFILE", Path::new("")),
+            ];
+            assert_eq!(path_on(platform, &useless), None, "{platform:?}");
+        }
+    }
+
+    #[test]
+    fn the_path_on_this_system_matches_its_platform() {
+        let expected = match Platform::CURRENT {
+            Platform::Windows => cfg!(windows),
+            Platform::MacOs => cfg!(target_os = "macos"),
+            Platform::Unix => cfg!(all(unix, not(target_os = "macos"))),
+        };
+        assert!(expected, "{:?}", Platform::CURRENT);
+        // The test environment may lack a home directory, but a path that is found is
+        // absolute and ends the same way everywhere.
+        if let Some(path) = default_settings_path() {
+            assert!(path.is_absolute(), "{}", path.display());
+            assert!(
+                path.ends_with(Path::new("rucheckers").join("settings.conf")),
+                "{}",
+                path.display()
+            );
+        }
+    }
+
+    /// The locale an environment of text variables asks for.
+    fn locale_of(vars: &[(&str, &str)]) -> Option<String> {
+        let vars: Vec<(&str, OsString)> = vars
+            .iter()
+            .map(|(key, value)| (*key, OsString::from(value)))
+            .collect();
+        locale_from(environment(&vars))
+    }
+
+    #[test]
+    fn the_environment_names_the_locale_the_way_gettext_reads_it() {
+        // The first non-empty variable of the three wins.
+        assert_eq!(
+            locale_of(&[("LANG", "de_DE.UTF-8")]).as_deref(),
+            Some("de_DE.UTF-8")
+        );
+        assert_eq!(
+            locale_of(&[("LANG", "de_DE.UTF-8"), ("LC_MESSAGES", "fr_FR.UTF-8")]).as_deref(),
+            Some("fr_FR.UTF-8")
+        );
+        assert_eq!(
+            locale_of(&[
+                ("LANG", "de_DE.UTF-8"),
+                ("LC_MESSAGES", "fr_FR"),
+                ("LC_ALL", "it_IT")
+            ])
+            .as_deref(),
+            Some("it_IT")
+        );
+        assert_eq!(
+            locale_of(&[("LC_ALL", ""), ("LC_MESSAGES", "  "), ("LANG", " ja_JP.UTF-8 ")]).as_deref(),
+            Some("ja_JP.UTF-8"),
+            "empty variables are skipped and spaces are trimmed"
+        );
+
+        // No variables, or the locale of no language: the environment names nothing.
+        assert_eq!(locale_of(&[]), None);
+        assert_eq!(locale_of(&[("LANG", "")]), None);
+        for neutral in ["C", "POSIX", "c", "posix", "C.UTF-8", "POSIX.utf8"] {
+            assert_eq!(locale_of(&[("LANG", neutral)]), None, "{neutral}");
+            assert_eq!(
+                locale_of(&[("LC_ALL", neutral), ("LANG", "de_DE.UTF-8")]),
+                None,
+                "{neutral}"
+            );
+            assert_eq!(
+                locale_of(&[("LANG", neutral), ("LANGUAGE", "de:en")]),
+                None,
+                "LANGUAGE means nothing in the {neutral} locale"
+            );
+        }
+
+        // LANGUAGE is a priority list: its first translated entry wins over the locale.
+        assert_eq!(
+            locale_of(&[("LANG", "en_US.UTF-8"), ("LANGUAGE", "de:en_GB:en")]).as_deref(),
+            Some("de")
+        );
+        assert_eq!(
+            locale_of(&[("LC_ALL", "en_US.UTF-8"), ("LANGUAGE", "pl:uk:pt_BR:en")]).as_deref(),
+            Some("pt_BR"),
+            "entries without a translation are skipped"
+        );
+        assert_eq!(
+            locale_of(&[("LANG", "tr_TR.UTF-8"), ("LANGUAGE", "pl:uk")]).as_deref(),
+            Some("tr_TR.UTF-8"),
+            "a list without a translated entry leaves the locale in force"
+        );
+        assert_eq!(
+            locale_of(&[("LANG", "ko_KR.UTF-8"), ("LANGUAGE", "")]).as_deref(),
+            Some("ko_KR.UTF-8")
+        );
+        assert_eq!(
+            locale_of(&[("LANG", "ko_KR.UTF-8"), ("LANGUAGE", "::C: :")]).as_deref(),
+            Some("ko_KR.UTF-8")
+        );
+        assert_eq!(
+            locale_of(&[("LANGUAGE", "de")]),
+            None,
+            "LANGUAGE alone does not set a locale"
+        );
+    }
+
+    #[test]
+    fn the_locale_of_the_environment_selects_the_language() {
+        let lang = |vars: &[(&str, &str)]| Settings::for_locale(locale_of(vars).as_deref()).lang;
+        assert_eq!(lang(&[("LANG", "en_US.UTF-8"), ("LANGUAGE", "ru:en")]), Lang::Ru);
+        assert_eq!(lang(&[("LANG", "es_AR.UTF-8")]), Lang::Es);
+        assert_eq!(lang(&[("LANG", "pl_PL.UTF-8")]), Lang::FALLBACK);
+        assert_eq!(lang(&[("LANG", "C.UTF-8")]), Lang::DEFAULT);
+        assert_eq!(lang(&[("LANG", "C")]), Lang::DEFAULT);
+        assert_eq!(lang(&[]), Lang::DEFAULT);
     }
 
     #[test]

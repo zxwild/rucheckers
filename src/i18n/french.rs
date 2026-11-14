@@ -81,6 +81,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::ReadFailed => "Impossible de lire le fichier",
         Text::WriteFailed => "Impossible d'enregistrer le fichier",
         Text::SettingsNotSaved => "Impossible d'enregistrer les paramètres",
+        Text::StartFailed => {
+            "Impossible d'ouvrir la fenêtre. Le programme a besoin d'une session graphique et d'un pilote graphique prenant en charge OpenGL 2.0 ou une version plus récente."
+        }
         Text::PdnTooLarge => "Le fichier est trop volumineux pour être une partie.",
         Text::PdnEmpty => "Le fichier est vide\u{a0}: il ne contient aucune partie.",
         Text::PdnNotPdn => "Le fichier ne ressemble pas à une partie au format PDN.",

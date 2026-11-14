@@ -128,26 +128,40 @@ impl Lang {
         }
     }
 
-    /// The language for the value of the locale environment variables (`LC_ALL`,
-    /// `LC_MESSAGES`, `LANG`), such as `de_DE.UTF-8`.
-    ///
-    /// An unset, empty or `C`/`POSIX` locale selects [`Lang::DEFAULT`]; a locale of a
-    /// language without a translation selects [`Lang::FALLBACK`].
+    /// The translation for a locale name: `de_DE.UTF-8` as the environment variables of
+    /// Unix spell it, or `pt-BR` and `zh-Hans-CN` as Windows and macOS do. `None` if the
+    /// interface is not translated into the language of the locale.
     #[must_use]
-    pub fn from_locale(locale: Option<&str>) -> Self {
-        let Some(locale) = locale.map(str::trim) else {
-            return Self::DEFAULT;
-        };
-        if locale.is_empty() || locale.eq_ignore_ascii_case("C") || locale.eq_ignore_ascii_case("POSIX") {
-            return Self::DEFAULT;
-        }
-        // The language subtag ends at the territory, encoding or modifier.
-        let language = locale.split(['_', '-', '.', '@']).next().unwrap_or(locale);
+    pub fn of_locale(locale: &str) -> Option<Self> {
+        // The language subtag ends at the script, territory, encoding or modifier.
+        let language = locale.trim().split(['_', '-', '.', '@']).next()?;
         // `in` is the code Indonesian had before ISO 639 renamed it to `id`.
         if language.eq_ignore_ascii_case("in") {
-            return Self::Id;
+            return Some(Self::Id);
         }
-        Self::from_code(language).unwrap_or(Self::FALLBACK)
+        Self::from_code(language)
+    }
+
+    /// Whether a locale name asks for no particular language: an empty one, `C` or
+    /// `POSIX`, with or without an encoding (`C.UTF-8`).
+    #[must_use]
+    pub fn is_neutral_locale(locale: &str) -> bool {
+        let name = locale.trim().split(['.', '@']).next().unwrap_or_default();
+        name.is_empty() || name.eq_ignore_ascii_case("C") || name.eq_ignore_ascii_case("POSIX")
+    }
+
+    /// The language of the first start for the locale of the system.
+    ///
+    /// An unknown or neutral locale selects [`Lang::DEFAULT`]; a locale of a language
+    /// without a translation selects [`Lang::FALLBACK`].
+    #[must_use]
+    pub fn from_locale(locale: Option<&str>) -> Self {
+        match locale {
+            Some(locale) if !Self::is_neutral_locale(locale) => {
+                Self::of_locale(locale).unwrap_or(Self::FALLBACK)
+            }
+            _ => Self::DEFAULT,
+        }
     }
 }
 
@@ -236,6 +250,8 @@ text_keys! {
     ReadFailed,
     WriteFailed,
     SettingsNotSaved,
+    /// Shown when the window cannot be created; the system's own error text follows.
+    StartFailed,
     PdnTooLarge,
     PdnEmpty,
     PdnNotPdn,

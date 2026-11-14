@@ -78,6 +78,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::ReadFailed => "Dosya okunamadı",
         Text::WriteFailed => "Dosya kaydedilemedi",
         Text::SettingsNotSaved => "Ayarlar kaydedilemedi",
+        Text::StartFailed => {
+            "Pencere açılamadı. Program, grafik oturumu ve OpenGL 2.0 veya daha yenisini destekleyen bir ekran kartı sürücüsü gerektirir."
+        }
         Text::PdnTooLarge => "Dosya bir oyun kaydı olamayacak kadar büyük.",
         Text::PdnEmpty => "Dosya boş: içinde oyun yok.",
         Text::PdnNotPdn => "Dosya PDN biçiminde bir oyun kaydına benzemiyor.",

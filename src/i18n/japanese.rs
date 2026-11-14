@@ -77,6 +77,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::ReadFailed => "ファイルを読み込めませんでした",
         Text::WriteFailed => "ファイルを保存できませんでした",
         Text::SettingsNotSaved => "設定を保存できませんでした",
+        Text::StartFailed => {
+            "ウィンドウを開けませんでした。このプログラムには、グラフィカルセッションと OpenGL 2.0 以降に対応したグラフィックドライバーが必要です。"
+        }
         Text::PdnTooLarge => "ファイルが大きすぎて、対局の記録として読み込めません。",
         Text::PdnEmpty => "ファイルは空です：対局が含まれていません。",
         Text::PdnNotPdn => "ファイルは PDN 形式の対局記録ではないようです。",

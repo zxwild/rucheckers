@@ -73,6 +73,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::ReadFailed => "无法读取文件",
         Text::WriteFailed => "无法保存文件",
         Text::SettingsNotSaved => "无法保存设置",
+        Text::StartFailed => "无法打开窗口。程序需要图形会话以及支持 OpenGL 2.0 或更高版本的显卡驱动程序。",
         Text::PdnTooLarge => "文件太大，不是对局记录。",
         Text::PdnEmpty => "文件为空：其中没有对局。",
         Text::PdnNotPdn => "文件不像是 PDN 格式的对局记录。",

@@ -76,6 +76,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::ReadFailed => "파일을 읽을 수 없습니다",
         Text::WriteFailed => "파일을 저장할 수 없습니다",
         Text::SettingsNotSaved => "설정을 저장할 수 없습니다",
+        Text::StartFailed => {
+            "창을 열 수 없습니다. 이 프로그램에는 그래픽 세션과 OpenGL 2.0 이상을 지원하는 그래픽 드라이버가 필요합니다."
+        }
         Text::PdnTooLarge => "파일이 너무 커서 대국 기록으로 읽을 수 없습니다.",
         Text::PdnEmpty => "파일이 비어 있습니다: 대국이 없습니다.",
         Text::PdnNotPdn => "PDN 형식의 대국 기록이 아닌 것 같습니다.",

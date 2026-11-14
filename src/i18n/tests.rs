@@ -222,8 +222,34 @@ fn system_locale_selects_the_language() {
         assert_eq!(Lang::from_locale(Some(locale)), Lang::FALLBACK, "{locale}");
     }
     // No locale at all: the default language.
-    for locale in [None, Some(""), Some("  "), Some("C"), Some("POSIX"), Some("c")] {
+    for locale in [
+        None,
+        Some(""),
+        Some("  "),
+        Some("C"),
+        Some("POSIX"),
+        Some("c"),
+        Some("C.UTF-8"),
+        Some("POSIX.utf8"),
+    ] {
         assert_eq!(Lang::from_locale(locale), Lang::DEFAULT, "{locale:?}");
+    }
+    // The names Windows and macOS give: a script or a territory after a hyphen.
+    for (locale, lang) in [
+        ("ru-RU", Lang::Ru),
+        ("en-US", Lang::En),
+        ("pt-BR", Lang::Pt),
+        ("zh-Hans-CN", Lang::Zh),
+        ("zh-CN", Lang::Zh),
+        ("ja-JP", Lang::Ja),
+        ("ko-KR", Lang::Ko),
+        ("id-ID", Lang::Id),
+        ("tr-TR", Lang::Tr),
+    ] {
+        assert_eq!(Lang::of_locale(locale), Some(lang), "{locale}");
+    }
+    for locale in ["pl-PL", "sv", "", "C", "-", "english"] {
+        assert_eq!(Lang::of_locale(locale), None, "{locale}");
     }
     assert_eq!(Lang::DEFAULT, Lang::Ru);
     assert_eq!(Lang::FALLBACK, Lang::En);
@@ -242,7 +268,7 @@ fn every_outcome_has_a_title_and_a_reason_in_every_language() {
             );
             assert!(reasons.insert(reason), "{lang:?}: two outcomes share a reason");
             for human in [Color::White, Color::Black] {
-                assert!(!outcome_title(lang, outcome, human).is_empty());
+                assert_ne!(outcome_title(lang, outcome, human), "");
             }
         }
         let titles: HashSet<_> = [Text::YouWin, Text::YouLose, Text::Draw]

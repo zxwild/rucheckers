@@ -78,6 +78,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::ReadFailed => "Berkas tidak dapat dibaca",
         Text::WriteFailed => "Berkas tidak dapat disimpan",
         Text::SettingsNotSaved => "Pengaturan tidak dapat disimpan",
+        Text::StartFailed => {
+            "Jendela tidak dapat dibuka. Program memerlukan sesi grafis dan driver grafis yang mendukung OpenGL 2.0 atau yang lebih baru."
+        }
         Text::PdnTooLarge => "Berkas terlalu besar untuk sebuah catatan permainan.",
         Text::PdnEmpty => "Berkas kosong: tidak berisi permainan.",
         Text::PdnNotPdn => "Berkas tidak tampak seperti catatan permainan berformat PDN.",

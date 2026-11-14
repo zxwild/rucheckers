@@ -80,6 +80,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::ReadFailed => "No se pudo leer el archivo",
         Text::WriteFailed => "No se pudo guardar el archivo",
         Text::SettingsNotSaved => "No se pudieron guardar los ajustes",
+        Text::StartFailed => {
+            "No se pudo abrir la ventana. El programa necesita una sesión gráfica y un controlador gráfico compatible con OpenGL 2.0 o posterior."
+        }
         Text::PdnTooLarge => "El archivo es demasiado grande para ser una partida.",
         Text::PdnEmpty => "El archivo está vacío: no contiene ninguna partida.",
         Text::PdnNotPdn => "El archivo no parece una partida en formato PDN.",

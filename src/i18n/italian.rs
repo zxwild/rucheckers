@@ -80,6 +80,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::ReadFailed => "Impossibile leggere il file",
         Text::WriteFailed => "Impossibile salvare il file",
         Text::SettingsNotSaved => "Impossibile salvare le impostazioni",
+        Text::StartFailed => {
+            "Impossibile aprire la finestra. Il programma richiede una sessione grafica e un driver grafico con supporto a OpenGL 2.0 o successivo."
+        }
         Text::PdnTooLarge => "Il file è troppo grande per essere una partita.",
         Text::PdnEmpty => "Il file è vuoto: non contiene alcuna partita.",
         Text::PdnNotPdn => "Il file non sembra una partita in formato PDN.",

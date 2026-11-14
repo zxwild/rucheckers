@@ -82,6 +82,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::ReadFailed => "Die Datei konnte nicht gelesen werden",
         Text::WriteFailed => "Die Datei konnte nicht gespeichert werden",
         Text::SettingsNotSaved => "Die Einstellungen konnten nicht gespeichert werden",
+        Text::StartFailed => {
+            "Das Fenster konnte nicht geöffnet werden. Das Programm benötigt eine grafische Sitzung und einen Grafiktreiber mit OpenGL 2.0 oder neuer."
+        }
         Text::PdnTooLarge => "Die Datei ist zu groß für eine Partieaufzeichnung.",
         Text::PdnEmpty => "Die Datei ist leer: Sie enthält keine Partie.",
         Text::PdnNotPdn => "Die Datei sieht nicht wie eine Partie im PDN-Format aus.",

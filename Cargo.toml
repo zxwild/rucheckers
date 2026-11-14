@@ -24,8 +24,20 @@ eframe = { version = "=0.31.1", default-features = false, features = ["glow", "d
 winit = "=0.30.13"
 # Sound output. The decoders are off: the program synthesizes all its sounds.
 rodio = { version = "=0.20.1", default-features = false }
-# System file dialog (macOS: AppKit; Linux: XDG Desktop Portal, falling back to zenity).
+# System file dialog (Windows: the common item dialog; macOS: AppKit; Linux: XDG Desktop
+# Portal, falling back to zenity).
 rfd = { version = "=0.15.4", default-features = false, features = ["xdg-portal", "async-std"] }
+
+# The language of the user's account, for the language of the first start. Linux names it
+# in environment variables; Windows and macOS have to be asked.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+sys-locale = "=0.3.2"
+
+# Compiles the icon and the manifest into the Windows executable (build.rs). Cargo builds
+# it on every system, because a build script runs on the building machine, which may be
+# cross-compiling; for other targets the script does nothing.
+[build-dependencies]
+winresource = { version = "=0.1.34", default-features = false }
 
 [lints.rust]
 # The program needs no unsafe code, so the compiler rejects any attempt to add it.

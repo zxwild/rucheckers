@@ -1,0 +1,4 @@
+# The Microsoft C runtime is linked into the executable, so the program runs on a
+# Windows installation without the Visual C++ Redistributable.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
