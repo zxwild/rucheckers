@@ -43,6 +43,47 @@ jobs:
       - name: Release build
         run: cargo build --release
 
+  # The start of the program on Windows. The machine has no graphics card, so the Mesa
+  # software renderer is put next to the executable.
+  windows-start:
+    name: Windows · start of the program
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Release build
+        run: cargo build --release
+      - name: The executable needs system libraries only
+        shell: bash
+        run: |
+          libraries=$(llvm-objdump -p target/release/rucheckers.exe | grep 'DLL Name' | sort -u)
+          echo "$libraries"
+          if echo "$libraries" | grep -i -E 'vcruntime|msvcp|ucrtbased|libgcc|libstdc|libwinpthread'; then
+            echo "the executable must not depend on a redistributable library" >&2
+            exit 1
+          fi
+      - name: Get the software OpenGL renderer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo pal1000/mesa-dist-win --pattern "mesa3d-*-release-msvc.7z" --dir mesa
+          7z x (Get-ChildItem mesa\*.7z).FullName -omesa -y | Out-Null
+          Copy-Item mesa\x64\opengl32.dll, mesa\x64\libgallium_wgl.dll target\release\
+      - name: Start the program
+        shell: pwsh
+        run: tools/smoke-test.ps1 -Binary target\release\rucheckers.exe -Screenshot window.png
+      - name: Keep the screenshot
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: screenshot-windows
+          path: window.png
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Formatting and lints with the oldest supported Rust. The version is fixed, so a new
   # compiler release cannot fail the check with lints that did not exist before. Every
   # system has code of its own, so the lints run on each of them.
