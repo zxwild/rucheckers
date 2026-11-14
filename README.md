@@ -285,6 +285,12 @@ off all at once or one by one: lightning, sparks, flashes and glow. With everyth
 a capture of several pieces is shown like an ordinary one: the captured pieces dim and
 disappear at the end of the move.
 
+When a man becomes a king, an eight-point compass rose lights up beneath it. Its
+champagne or smoky-bronze facets reveal from the centre outwards, then fade uniformly;
+the entire effect lasts 0.82 seconds. The king covers the centre, and the playing-field
+edge clips the glow. Like the lightning, the rose is computed as coloured triangles
+and drawn through OpenGL. The main special-effects switch also turns off this effect.
+
 ### Languages
 
 The language is chosen in the settings from a list of native names:
@@ -346,6 +352,7 @@ The library `rucheckers` (`src/lib.rs`) does not depend on a window:
 | `ui::input` | choosing a move with clicks and dragging |
 | `ui::anim` | timing of animation frames |
 | `ui::fx` | the electric discharge of a multi-capture: lightning behind the piece, flashes, sparks |
+| `ui::promotion` | the procedural compass rose beneath a newly crowned king |
 | `ui::sprite` | the picture of a piece: computed pixel by pixel with anti-aliasing |
 | `ui::icon` | the application icon, drawn with the same code, and its `.ico` and `.png` files |
 | `ui::session` | a game against the computer: whose move it is, browsing the history, variations |

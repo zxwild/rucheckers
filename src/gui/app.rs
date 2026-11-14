@@ -24,6 +24,7 @@ use rucheckers::ui::anim::{segment_seconds, MoveAnimation, CAPTURED_ALPHA};
 use rucheckers::ui::fx::{ease, Discharge};
 use rucheckers::ui::geometry::BoardLayout;
 use rucheckers::ui::input::InputEvent;
+use rucheckers::ui::promotion::Promotion;
 use rucheckers::ui::session::{Nav, Session, SessionEvent};
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -50,6 +51,8 @@ struct Glide {
     from: Square,
     to: Square,
     start: f64,
+    /// The piece first becomes a king at the end of this glide.
+    promotes: bool,
 }
 
 /// What the board shows in one frame.
@@ -123,6 +126,8 @@ pub struct CheckersApp {
     human_first_step: Option<usize>,
     /// The electric discharges visible on the board now.
     effects: Vec<Discharge>,
+    /// Compass roses beneath pieces that have just become kings.
+    promotions: Vec<Promotion>,
     /// Delayed sounds: the time and the signal.
     sounds: Vec<(f64, Sound)>,
     new_game: Option<NewGameDraft>,
@@ -159,6 +164,7 @@ impl CheckersApp {
             dragging: None,
             human_first_step: None,
             effects: Vec::new(),
+            promotions: Vec::new(),
             sounds: Vec::new(),
             // Before the first game the player chooses a colour and a level.
             new_game: Some(NewGameDraft {
@@ -219,11 +225,26 @@ impl CheckersApp {
     fn reset_view(&mut self) {
         self.anims.clear();
         self.effects.clear();
+        self.promotions.clear();
         self.glide = None;
         self.dragging = None;
         self.sounds.clear();
         self.dismissed_result = None;
         self.scroll_to_current = true;
+    }
+
+    fn cancel_board_input(&mut self) {
+        // Cancelling an unfinished capture restores the original man. Its provisional
+        // promotion must disappear too, including a rose waiting for a clicked landing.
+        let input = self.session.input();
+        if input.in_progress() {
+            let human = self.session.human();
+            self.promotions
+                .retain(|promotion| promotion.color != human || !input.steps().contains(&promotion.square));
+        }
+        self.session.cancel_input();
+        self.glide = None;
+        self.dragging = None;
     }
 
     // -----------------------------------------------------------------------
@@ -267,6 +288,12 @@ impl CheckersApp {
         let start = queued_end.map_or(now, |end| end.max(now));
         let effects = self.settings.active_effects();
         let anim = MoveAnimation::new(mv, piece, first_step, start).with_discharge(effects.any());
+
+        if self.settings.effects_enabled {
+            if let Some(promotion) = anim.promotion() {
+                self.promotions.push(promotion);
+            }
+        }
 
         let landings = anim.landing_times();
         let mut last_landing = start;
@@ -507,9 +534,7 @@ impl CheckersApp {
             }
         });
         if ctx.input(|input| input.key_pressed(Key::Escape)) {
-            self.session.cancel_input();
-            self.glide = None;
-            self.dragging = None;
+            self.cancel_board_input();
         }
     }
 
@@ -548,6 +573,18 @@ impl CheckersApp {
             self.dragging = None;
             return;
         }
+        // Finish the visible landing before accepting another capture step. Otherwise
+        // a quick second click can crown the piece early and leave the rose behind.
+        if self
+            .glide
+            .as_ref()
+            .is_some_and(|glide| now < glide.start + segment_seconds(glide.from, glide.to))
+        {
+            if response.secondary_clicked() {
+                self.cancel_board_input();
+            }
+            return;
+        }
         let square_at = |point: Option<Pos2>| point.and_then(|p| layout.square_at(p.x, p.y));
         let promoted_before = self.session.input().promoted_so_far();
         let steps_before = self.session.input().steps().len();
@@ -583,9 +620,7 @@ impl CheckersApp {
             }
         }
         if response.secondary_clicked() {
-            self.session.cancel_input();
-            self.glide = None;
-            self.dragging = None;
+            self.cancel_board_input();
         }
     }
 
@@ -604,12 +639,21 @@ impl CheckersApp {
                 } else {
                     now + segment_seconds(from, to)
                 };
+                let promoted = self.session.input().promoted_so_far() && !promoted_before;
                 self.glide = if via_drop {
                     None
                 } else {
-                    Some(Glide { from, to, start: now })
+                    Some(Glide {
+                        from,
+                        to,
+                        start: now,
+                        promotes: promoted,
+                    })
                 };
-                let promoted = self.session.input().promoted_so_far() && !promoted_before;
+                if promoted && self.settings.effects_enabled {
+                    self.promotions
+                        .push(Promotion::new(to, self.session.human(), landing));
+                }
                 self.sounds.push((
                     landing,
                     if promoted {
@@ -623,6 +667,16 @@ impl CheckersApp {
                 // A dragged piece already stands on the final square; after a click the
                 // jumps not yet made step by step remain to be shown.
                 self.human_first_step = Some(if via_drop { mv.path().len() } else { steps_before });
+                // A shortcut drop can skip the promotion landing altogether. Show the
+                // rose under the final king; MoveAnimation omits those skipped steps.
+                if via_drop
+                    && !promoted_before
+                    && self.settings.effects_enabled
+                    && mv.promotion_step().is_some_and(|step| step + 1 < mv.path().len())
+                {
+                    self.promotions
+                        .push(Promotion::new(mv.to(), self.session.human(), now));
+                }
                 self.process_events(now);
             }
             InputEvent::Selected(_) | InputEvent::Cleared | InputEvent::None => self.glide = None,
@@ -657,6 +711,15 @@ impl CheckersApp {
             }
         }
 
+        // The king and all neighbouring pieces occlude the compass rose, including
+        // while it fades after the move animation itself has ended.
+        if self.settings.effects_enabled {
+            for promotion in &self.promotions {
+                if let Some(frame) = promotion.frame(now, layout.flipped) {
+                    board::draw_promotion(painter, layout, &frame);
+                }
+            }
+        }
         self.paint_resting_pieces(painter, sprites, layout, &scene, now);
         let hover_hand = interactive && self.paint_input_hints(painter, layout, pointer, scene.hidden);
         self.paint_turn_marker(painter, layout, now, ppp);
@@ -703,6 +766,7 @@ impl CheckersApp {
             self.anims.pop_front();
         }
         self.effects.retain(|effect| !effect.is_finished(now));
+        self.promotions.retain(|promotion| !promotion.is_finished(now));
         if self
             .glide
             .as_ref()
@@ -744,7 +808,12 @@ impl CheckersApp {
             let Some(mut piece) = scene.position.piece_at(origin) else {
                 return scene;
             };
-            if input.promoted_so_far() {
+            // A clicked capture step may still be gliding to its promotion square.
+            // The crown and the rose appear together on landing, not on the click.
+            let promotion_in_flight = self.glide.as_ref().is_some_and(|glide| {
+                glide.promotes && now < glide.start + segment_seconds(glide.from, glide.to)
+            });
+            if input.promoted_so_far() && !promotion_in_flight {
                 piece.kind = Kind::King;
             }
             let current = input.current_square().unwrap_or(origin);
@@ -877,7 +946,11 @@ impl CheckersApp {
         let Some(outcome) = self.session.outcome() else {
             return;
         };
-        if !self.started || !self.anims.is_empty() || self.dismissed_result == Some(node) || self.modal_open()
+        if !self.started
+            || !self.anims.is_empty()
+            || (self.settings.effects_enabled && !self.promotions.is_empty())
+            || self.dismissed_result == Some(node)
+            || self.modal_open()
         {
             return;
         }
@@ -1402,6 +1475,7 @@ impl eframe::App for CheckersApp {
         // computer is thinking or a system dialog is open.
         let animating = !self.anims.is_empty()
             || !self.effects.is_empty()
+            || !self.promotions.is_empty()
             || self.glide.is_some()
             || self.dragging.is_some();
         if animating {
@@ -1422,5 +1496,194 @@ impl eframe::App for CheckersApp {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         theme::BACKGROUND.to_normalized_gamma_f32()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui::{vec2, Rect};
+    use rucheckers::board::Position;
+    use rucheckers::tree::GameTree;
+
+    fn square(name: &str) -> Square {
+        Square::parse(name).unwrap()
+    }
+
+    fn app(fen: &str, human: Color) -> CheckersApp {
+        let cc = eframe::CreationContext::_new_kittest(Context::default());
+        let settings = Settings {
+            human,
+            sound: false,
+            ..Settings::default()
+        };
+        let mut app = CheckersApp::new(&cc, settings, None, None);
+        app.session.load(
+            GameTree::from_position(Position::from_fen(fen).unwrap()),
+            Some(human),
+        );
+        app.started = true;
+        app.new_game = None;
+        app.process_events(0.0);
+        app
+    }
+
+    fn choose(app: &mut CheckersApp, to: &str, via_drop: bool, now: f64) {
+        let promoted_before = app.session.input().promoted_so_far();
+        let steps_before = app.session.input().steps().len();
+        let event = if via_drop {
+            app.session.drop_on(square(to))
+        } else {
+            app.session.click(square(to))
+        };
+        app.after_input(event, via_drop, promoted_before, steps_before, now);
+    }
+
+    #[test]
+    fn clicked_and_dropped_promotions_start_with_the_crown_for_both_colours() {
+        for (fen, human, from, to) in [
+            ("W:Wg7:BKa1", Color::White, "g7", "h8"),
+            ("B:WKh8:Bb2", Color::Black, "b2", "a1"),
+        ] {
+            for via_drop in [false, true] {
+                let mut app = app(fen, human);
+                assert!(app.session.grab(square(from)));
+                choose(&mut app, to, via_drop, 2.0);
+                assert_eq!(app.promotions.len(), 1);
+                let rose = app.promotions[0];
+                let anim = &app.anims.front().unwrap().anim;
+                assert_eq!(rose.square, square(to));
+                assert_eq!(rose.color, human);
+                assert_eq!(rose.start, 2.0 + anim.travel_seconds());
+                assert!(anim.frame(rose.start + 0.001).is_king);
+                if !via_drop {
+                    assert!(!anim.frame(rose.start - 0.001).is_king);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn intermediate_promotion_waits_for_landing_and_is_not_replayed() {
+        let layout = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        for via_drop in [false, true] {
+            let mut app = app("W:Wd6:Be7,g7", Color::White);
+            assert!(app.session.grab(square("d6")));
+            choose(&mut app, "f8", via_drop, 2.0);
+            assert_eq!(app.promotions.len(), 1);
+            let rose = app.promotions[0];
+            assert_eq!(rose.square, square("f8"));
+            if !via_drop {
+                assert_eq!(
+                    app.scene(&layout, None, rose.start - 0.001).mover.unwrap().1.kind,
+                    Kind::Man
+                );
+            }
+            assert_eq!(
+                app.scene(&layout, None, rose.start).mover.unwrap().1.kind,
+                Kind::King
+            );
+            choose(&mut app, "h6", via_drop, rose.start + 0.1);
+            assert_eq!(
+                app.promotions,
+                vec![rose],
+                "finishing the capture must not replay promotion"
+            );
+        }
+    }
+
+    #[test]
+    fn dropped_shortcut_shows_promotion_beneath_the_final_king() {
+        for (fen, human, from, to) in [
+            ("W:Wd6:Be7,g7", Color::White, "d6", "h6"),
+            ("B:Wb2,d2:Be3", Color::Black, "e3", "a3"),
+        ] {
+            let mut app = app(fen, human);
+            assert!(app.session.grab(square(from)));
+            choose(&mut app, to, true, 2.0);
+            assert_eq!(app.promotions, vec![Promotion::new(square(to), human, 2.0)]);
+        }
+    }
+
+    #[test]
+    fn cancelling_an_unfinished_capture_removes_its_promotion() {
+        let mut app = app("W:Wd6:Be7,g7", Color::White);
+        assert!(app.session.grab(square("d6")));
+        choose(&mut app, "f8", false, 2.0);
+        let ctx = Context::default();
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::default(),
+                }],
+                ..Default::default()
+            },
+            |ctx| app.handle_keys(ctx, &mut Vec::new()),
+        );
+        assert!(
+            app.promotions.is_empty(),
+            "a cancelled landing must not flash on an empty square"
+        );
+        assert!(app.session.input().origin().is_none());
+    }
+
+    #[test]
+    fn a_quick_second_click_cannot_skip_the_promotion_landing() {
+        let mut app = app("W:Wd6:Be7,g7", Color::White);
+        assert!(app.session.grab(square("d6")));
+        choose(&mut app, "f8", false, 2.0);
+        let layout = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        let pointer = board::square_center(&layout, square("h6"));
+        let ctx = Context::default();
+        for (i, pressed) in [None, Some(true), Some(false)].into_iter().enumerate() {
+            let mut events = vec![egui::Event::PointerMoved(pointer)];
+            if let Some(pressed) = pressed {
+                events.push(egui::Event::PointerButton {
+                    pos: pointer,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+            }
+            let now = 2.01 + i as f64 * 0.01;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 640.0))),
+                    time: Some(now),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let response =
+                            ui.interact(ui.max_rect(), Id::new("board"), egui::Sense::click_and_drag());
+                        if pressed == Some(false) {
+                            assert!(response.clicked());
+                        }
+                        app.handle_board_input(ctx, &response, &layout, Some(pointer), now);
+                    });
+                },
+            );
+        }
+        assert_eq!(app.session.input().steps(), &[square("f8")]);
+        assert_eq!(app.scene(&layout, None, 2.04).mover.unwrap().1.kind, Kind::Man);
+        assert_eq!(app.promotions.len(), 1);
+    }
+
+    #[test]
+    fn effects_switch_and_view_reset_control_promotion() {
+        let mut app = app("W:Wg7:BKa1", Color::White);
+        app.settings.effects_enabled = false;
+        assert!(app.session.grab(square("g7")));
+        choose(&mut app, "h8", true, 2.0);
+        assert!(app.promotions.is_empty());
+        app.promotions
+            .push(Promotion::new(square("h8"), Color::White, 2.0));
+        app.reset_view();
+        assert!(app.promotions.is_empty());
     }
 }

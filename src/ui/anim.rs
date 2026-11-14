@@ -8,6 +8,7 @@
 
 use super::fx::{self, Discharge, Strike};
 use super::geometry::screen_cell;
+use super::promotion::Promotion;
 use crate::board::{Piece, Square};
 use crate::moves::Move;
 
@@ -207,6 +208,21 @@ impl MoveAnimation {
     #[must_use]
     pub fn landing_times(&self) -> Vec<f64> {
         self.ends.iter().map(|end| self.start + end).collect()
+    }
+
+    /// The rose starts on the promotion landing, including a final square reached by
+    /// dragging. An intermediate promotion already shown step by step is not replayed.
+    #[must_use]
+    pub fn promotion(&self) -> Option<Promotion> {
+        let step = self.mv.promotion_step()?;
+        if self.piece.is_king() || (step < self.first_step && step + 1 < self.mv.path().len()) {
+            return None;
+        }
+        Some(Promotion::new(
+            self.mv.path()[step],
+            self.piece.color,
+            self.start + self.knot_seconds(step + 1),
+        ))
     }
 
     /// The discharge that comes with the move: the route of the piece with its timing
@@ -578,5 +594,55 @@ mod tests {
         );
         assert!(anim.frame(first + 0.01).is_king, "a king after landing");
         assert!(anim.frame(anim.total_seconds() + 1.0).is_king);
+    }
+
+    #[test]
+    fn promotion_rose_starts_on_landing_for_both_colours() {
+        for (fen, name, color) in [
+            ("W:Wg7:BKa1", "g7-h8", Color::White),
+            ("B:WKh8:Bb2", "b2-a1", Color::Black),
+        ] {
+            let (mv, piece) = named_move(fen, name);
+            let anim = MoveAnimation::new(mv, piece, 0, 10.0);
+            let rose = anim.promotion().unwrap();
+            let landing = 10.0 + anim.travel_seconds();
+            assert_eq!(rose.square, mv.to());
+            assert_eq!(rose.color, color);
+            assert!((rose.start - landing).abs() < 1e-9);
+            assert!(rose.frame(landing - 0.001, false).is_none());
+            assert!(!anim.frame(landing - 0.001).is_king);
+            assert!(anim.frame(landing + 0.001).is_king);
+            assert!(rose.frame(landing + 0.05, false).is_some());
+            // A dropped piece is already on its destination: no artificial delay.
+            let dropped = MoveAnimation::new(mv, piece, mv.path().len(), 10.0);
+            assert_eq!(dropped.promotion().unwrap().start, 10.0);
+        }
+    }
+
+    #[test]
+    fn promotion_mid_capture_is_not_delayed_until_the_move_ends_or_replayed() {
+        let (mv, piece) = only_move("W:Wd6:Be7,g7");
+        let anim = MoveAnimation::new(mv, piece, 0, 4.0);
+        let rose = anim.promotion().unwrap();
+        assert_eq!(rose.square, square("f8"));
+        assert!((rose.start - anim.landing_times()[0]).abs() < 1e-9);
+        assert!(rose.start < 4.0 + anim.travel_seconds());
+        // The player already saw the promotion on the first manual capture step.
+        for shown in [1, mv.path().len()] {
+            assert!(MoveAnimation::new(mv, piece, shown, 5.0).promotion().is_none());
+        }
+        // A single capture that ends in promotion also works when dropped.
+        let (mv, piece) = only_move("W:Wd6:Be7");
+        let dropped = MoveAnimation::new(mv, piece, 1, 7.0).promotion().unwrap();
+        assert_eq!(dropped.square, square("f8"));
+        assert_eq!(dropped.start, 7.0);
+    }
+
+    #[test]
+    fn ordinary_moves_and_existing_kings_do_not_create_a_rose() {
+        for (fen, name) in [("W:Wa1:BKh8", "a1-b2"), ("W:WKg7:BKa1", "g7-h8")] {
+            let (mv, piece) = named_move(fen, name);
+            assert!(MoveAnimation::new(mv, piece, 0, 0.0).promotion().is_none());
+        }
     }
 }

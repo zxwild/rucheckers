@@ -9,6 +9,7 @@ use eframe::egui::{
 use rucheckers::board::{Color, Kind, Piece, Square};
 use rucheckers::ui::fx::{self, DischargeFrame};
 use rucheckers::ui::geometry::BoardLayout;
+use rucheckers::ui::promotion::PromotionFrame;
 use rucheckers::ui::sprite::{self, PIECE_RADIUS};
 use std::f32::consts::TAU;
 
@@ -337,6 +338,27 @@ pub fn draw_lightning(
     painter.extend(shapes);
 }
 
+/// The promotion sign goes under every piece, so the new king naturally covers its
+/// centre. The playing-field scissor clips equally sized rays at the board's edge.
+pub fn draw_promotion(painter: &Painter, layout: &BoardLayout, frame: &PromotionFrame) {
+    let field = Rect::from_min_size(
+        pos2(layout.field_x, layout.field_y),
+        vec2(layout.field_size(), layout.field_size()),
+    );
+    let mut mesh = egui::Mesh::default();
+    mesh.indices.clone_from(&frame.indices);
+    mesh.vertices.reserve(frame.vertices.len());
+    for vertex in &frame.vertices {
+        let (x, y) = layout.cell_to_point(vertex.point);
+        let [red, green, blue, alpha] = vertex.rgba.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+        mesh.colored_vertex(
+            pos2(x, y),
+            Color32::from_rgba_premultiplied(red, green, blue, alpha),
+        );
+    }
+    painter.with_clip_rect(field).add(Shape::mesh(mesh));
+}
+
 /// The upper layer of the discharge: the sparks. They are drawn over all pieces.
 pub fn draw_sparks(painter: &Painter, layout: &BoardLayout, frame: &DischargeFrame, pixels_per_point: f32) {
     let cell = layout.cell;
@@ -518,5 +540,44 @@ pub const fn cursor_for(hover: bool, dragging: bool) -> egui::CursorIcon {
         egui::CursorIcon::PointingHand
     } else {
         egui::CursorIcon::Default
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rucheckers::ui::promotion::Promotion;
+
+    #[test]
+    fn promotion_mesh_at_board_edges_has_a_playing_field_scissor() {
+        for name in ["a1", "h8", "d8", "e1"] {
+            for flipped in [false, true] {
+                let layout = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, flipped, 1.0);
+                let field = Rect::from_min_size(
+                    pos2(layout.field_x, layout.field_y),
+                    vec2(layout.field_size(), layout.field_size()),
+                );
+                let rose = Promotion::new(Square::parse(name).unwrap(), Color::White, 0.0);
+                let frame = rose.frame(0.25, flipped).unwrap();
+                let ctx = egui::Context::default();
+                let output = ctx.run(egui::RawInput::default(), |ctx| {
+                    let painter = ctx.layer_painter(egui::LayerId::background());
+                    draw_promotion(&painter, &layout, &frame);
+                });
+                let clipped = output
+                    .shapes
+                    .iter()
+                    .find(|shape| matches!(&shape.shape, Shape::Mesh(mesh) if mesh.is_valid()))
+                    .expect("the rose is a valid OpenGL triangle mesh");
+                assert_eq!(clipped.clip_rect, field);
+                let Shape::Mesh(mesh) = &clipped.shape else {
+                    unreachable!()
+                };
+                assert!(
+                    mesh.vertices.iter().any(|vertex| !field.contains(vertex.pos)),
+                    "the scissor, rather than a smaller or distorted rose, handles the edge"
+                );
+            }
+        }
     }
 }

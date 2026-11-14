@@ -7,5 +7,6 @@ pub mod fx;
 pub mod geometry;
 pub mod icon;
 pub mod input;
+pub mod promotion;
 pub mod session;
 pub mod sprite;
