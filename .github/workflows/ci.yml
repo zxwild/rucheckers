@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Formatting, lints and tests on the three supported operating systems.
+  checks:
+    name: ${{ matrix.name }}
+    # A pull request from a branch of this repository is already checked by its push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-latest }
+          - { name: Windows, os: windows-latest }
+          - { name: macOS (Apple Silicon), os: macos-latest }
+          - { name: macOS (Intel), os: macos-13 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Lints
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test
+      - name: Release build
+        run: cargo build --release
