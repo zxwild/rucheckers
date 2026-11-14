@@ -11,11 +11,11 @@ use crate::board::{Color, Square};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 /// Total lifetime, including the outward ignition and the fade, s.
-pub const DURATION_SECONDS: f64 = 0.82;
+pub const DURATION_SECONDS: f64 = 1.2;
 /// Time for the light to reach the tips, s.
-pub const REVEAL_SECONDS: f64 = 0.22;
+pub const REVEAL_SECONDS: f64 = 0.32;
 /// A brief fully lit interval before the uniform fade, s.
-pub const HOLD_SECONDS: f64 = 0.06;
+pub const HOLD_SECONDS: f64 = 0.08;
 /// Maximum extent, including the soft glow: half a cell into neighbouring cells.
 pub const RADIUS: f32 = 1.0;
 const TIP_RADIUS: f32 = RADIUS - 0.012;
@@ -66,7 +66,7 @@ impl Promotion {
     #[must_use]
     pub fn frame(self, now: f64, flipped: bool) -> Option<PromotionFrame> {
         let age = now - self.start;
-        if !age.is_finite() || !(0.0..DURATION_SECONDS).contains(&age) {
+        if !age.is_finite() || now < self.start || self.is_finished(now) {
             return None;
         }
         let center = screen_cell(

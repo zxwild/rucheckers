@@ -288,7 +288,7 @@ disappear at the end of the move.
 When a man becomes a king, an eight-point compass rose with slightly shorter diagonal
 points lights up beneath it. Its champagne or smoky-bronze facets reveal from the
 centre outwards, then fade uniformly;
-the entire effect lasts 0.82 seconds. The king covers the centre; the glow may overlap
+the entire effect lasts 1.2 seconds. The king covers the centre; the glow may overlap
 the coordinate frame and is clipped at the board's outer edge. Like the lightning,
 the rose is computed as coloured triangles and drawn through OpenGL. The main
 special-effects switch also turns off this effect.
