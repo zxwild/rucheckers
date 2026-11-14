@@ -461,3 +461,39 @@ fn key_help_lists_the_same_shortcuts_in_every_language() {
         }
     }
 }
+
+/// The desktop entry for Linux (`assets/linux/rucheckers.desktop`) names the program in
+/// the application menu, so it carries the title in every language of the interface.
+#[test]
+fn the_desktop_entry_names_the_program_in_every_language() {
+    let entry = include_str!("../../assets/linux/rucheckers.desktop");
+    let value = |key: &str| {
+        entry
+            .lines()
+            .find_map(|line| line.strip_prefix(key)?.strip_prefix('='))
+            .unwrap_or_else(|| panic!("the desktop entry has no {key}"))
+    };
+    assert_eq!(entry.lines().next(), Some("[Desktop Entry]"));
+    assert_eq!(value("Name"), tr(Lang::En, Text::AppTitle));
+    for lang in Lang::ALL {
+        if lang == Lang::En {
+            continue;
+        }
+        // Chinese is the only language whose translation is tied to a territory.
+        let locale = match lang {
+            Lang::Zh => "zh_CN".to_string(),
+            _ => lang.code().to_string(),
+        };
+        assert_eq!(
+            value(&format!("Name[{locale}]")),
+            tr(lang, Text::AppTitle),
+            "{lang:?}"
+        );
+    }
+    // The window is matched to the entry by this name (the application identifier under
+    // Wayland, the window class under X11), and the menu starts the program with a file.
+    assert_eq!(value("StartupWMClass"), "rucheckers");
+    assert_eq!(value("Icon"), "rucheckers");
+    assert_eq!(value("Exec"), "rucheckers %f");
+    assert_eq!(value("Terminal"), "false");
+}

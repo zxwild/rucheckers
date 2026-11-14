@@ -16,9 +16,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Formatting, lints and tests on the three supported operating systems.
-  checks:
-    name: ${{ matrix.name }}
+  # Tests and a release build with the current stable Rust on every supported system.
+  test:
+    name: Test · ${{ matrix.name }}
     # A pull request from a branch of this repository is already checked by its push.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ${{ matrix.os }}
@@ -27,21 +27,130 @@ jobs:
       matrix:
         include:
           - { name: Linux, os: ubuntu-latest }
-          - { name: Windows, os: windows-latest }
+          - { name: Windows (x64), os: windows-latest }
+          - { name: Windows (ARM64), os: windows-11-arm }
           - { name: macOS (Apple Silicon), os: macos-latest }
-          - { name: macOS (Intel), os: macos-13 }
+          - { name: macOS (Intel), os: macos-15-intel }
     steps:
       - uses: actions/checkout@v4
       - name: Install system packages
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
-      - name: Rust toolchain
-        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Tests
+        run: cargo test
+      - name: Release build
+        run: cargo build --release
+
+  # Formatting and lints with the oldest supported Rust. The version is fixed, so a new
+  # compiler release cannot fail the check with lints that did not exist before. Every
+  # system has code of its own, so the lints run on each of them.
+  lint:
+    name: Lint · ${{ matrix.name }} · Rust 1.85
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-latest }
+          - { name: Windows, os: windows-latest }
+          - { name: macOS, os: macos-latest }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+      - name: Install Rust 1.85
+        run: rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy && rustup default 1.85.0
       - name: Formatting
         run: cargo fmt --check
       - name: Lints
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests
         run: cargo test
+
+  # A build from the packages the README names, inside the distribution itself, and a
+  # start of the program on a virtual display.
+  linux:
+    name: Linux · ${{ matrix.name }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Debian 13
+            image: debian:13
+            id: debian-13
+            build: apt-get update && apt-get install -y cargo build-essential pkg-config libasound2-dev
+            run: apt-get install -y libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1 libgl1-mesa-dri xvfb xdotool imagemagick
+          - name: Debian 12
+            image: debian:12
+            id: debian-12
+            rustup: true
+            build: apt-get update && apt-get install -y curl ca-certificates build-essential pkg-config libasound2-dev
+            run: apt-get install -y libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1 libgl1-mesa-dri xvfb xdotool imagemagick
+          - name: Ubuntu 26.04
+            image: ubuntu:26.04
+            id: ubuntu-26.04
+            build: apt-get update && apt-get install -y cargo build-essential pkg-config libasound2-dev
+            run: apt-get install -y libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1 libgl1-mesa-dri xvfb xdotool imagemagick
+          - name: Ubuntu 24.04
+            image: ubuntu:24.04
+            id: ubuntu-24.04
+            rustup: true
+            build: apt-get update && apt-get install -y curl ca-certificates build-essential pkg-config libasound2-dev
+            run: apt-get install -y libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1 libgl1-mesa-dri xvfb xdotool imagemagick
+          - name: Ubuntu 22.04
+            image: ubuntu:22.04
+            id: ubuntu-22.04
+            rustup: true
+            build: apt-get update && apt-get install -y curl ca-certificates build-essential pkg-config libasound2-dev
+            run: apt-get install -y libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1 libgl1-mesa-dri xvfb xdotool imagemagick
+          - name: Fedora
+            image: fedora:latest
+            id: fedora
+            build: dnf install -y cargo gcc pkgconf-pkg-config alsa-lib-devel
+            run: dnf install -y libX11 libXcursor libXi libXrandr libxkbcommon libxkbcommon-x11 mesa-libGL mesa-libEGL mesa-dri-drivers xorg-x11-server-Xvfb xdotool ImageMagick
+          - name: Arch Linux
+            image: archlinux:latest
+            id: arch
+            build: pacman -Syu --noconfirm rust gcc pkgconf alsa-lib
+            run: pacman -S --noconfirm libx11 libxcursor libxi libxrandr libxkbcommon libxkbcommon-x11 mesa xorg-server-xvfb xdotool imagemagick
+          - name: openSUSE Tumbleweed
+            image: opensuse/tumbleweed:latest
+            id: opensuse-tumbleweed
+            build: zypper --non-interactive install cargo gcc pkgconf-pkg-config alsa-devel tar gzip
+            run: zypper --non-interactive install libX11-6 libXcursor1 libXi6 libXrandr2 libxkbcommon0 libxkbcommon-x11-0 Mesa-libGL1 Mesa-libEGL1 Mesa-dri xorg-x11-server-Xvfb xdotool ImageMagick
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install the build packages
+        run: ${{ matrix.build }}
+      - name: Install Rust with rustup
+        if: matrix.rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v4
+      - name: Versions
+        run: cargo --version && rustc --version
       - name: Release build
         run: cargo build --release
+      - name: Tests
+        run: cargo test
+      - name: Install the run-time packages and a virtual display
+        run: ${{ matrix.run }}
+      - name: Start the program
+        run: tools/smoke-test.sh target/release/rucheckers screenshot-${{ matrix.id }}.png
+      - name: Keep the screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot-${{ matrix.id }}
+          path: screenshot-${{ matrix.id }}.png
+          if-no-files-found: ignore
+          retention-days: 14
