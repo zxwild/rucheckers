@@ -19,6 +19,7 @@ pub const HOLD_SECONDS: f64 = 0.06;
 /// Maximum extent, including the soft glow: half a cell into neighbouring cells.
 pub const RADIUS: f32 = 1.0;
 const TIP_RADIUS: f32 = RADIUS - 0.012;
+const DIAGONAL_TIP_SCALE: f32 = 0.85;
 const ROOT_RADIUS: f32 = 0.30;
 const FRONT_SOFTNESS: f32 = 0.07;
 const RAYS: u32 = 8;
@@ -103,11 +104,11 @@ impl Promotion {
             );
         }
 
-        // Eight equal points: the symbol is symmetric before the board clips it.
+        // Four long cardinal points alternate with slightly shorter diagonal points.
         // Splitting each point into two differently lit facets gives a fine ridge.
         for ray in 0..RAYS {
             let angle = TAU * ray as f32 / RAYS as f32 - FRAC_PI_2;
-            let tip = polar(TIP_RADIUS, angle);
+            let tip = polar(tip_radius(ray), angle);
             let left = polar(ROOT_RADIUS, angle - PI / RAYS as f32);
             let right = polar(ROOT_RADIUS, angle + PI / RAYS as f32);
             mesh.facet(left, tip, palette.face_light);
@@ -117,7 +118,7 @@ impl Promotion {
         // Every stroke is subdivided so the reveal is circular even on a long edge.
         for ray in 0..RAYS {
             let angle = TAU * ray as f32 / RAYS as f32 - FRAC_PI_2;
-            let tip = polar(TIP_RADIUS, angle);
+            let tip = polar(tip_radius(ray), angle);
             for side in [-1.0, 1.0] {
                 let root = polar(ROOT_RADIUS, angle + side * PI / RAYS as f32);
                 for segment in 0..12 {
@@ -163,6 +164,10 @@ impl Palette {
             },
         }
     }
+}
+
+fn tip_radius(ray: u32) -> f32 {
+    TIP_RADIUS * if ray % 2 == 0 { 1.0 } else { DIAGONAL_TIP_SCALE }
 }
 
 fn polar(radius: f32, angle: f32) -> Point {
@@ -349,8 +354,12 @@ mod tests {
                         furthest.max(x * angle.cos() + y * angle.sin())
                     })
                 };
+                let cardinal = extent(0.0);
+                let diagonal = extent(PI / 4.0);
+                assert!((0.80..0.90).contains(&(diagonal / cardinal)));
                 for ray in 0..RAYS {
-                    assert!((extent(TAU * ray as f32 / RAYS as f32) - extent(0.0)).abs() < 1e-5);
+                    let expected = if ray % 2 == 0 { cardinal } else { diagonal };
+                    assert!((extent(TAU * ray as f32 / RAYS as f32) - expected).abs() < 1e-5);
                 }
             }
         }

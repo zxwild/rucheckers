@@ -285,8 +285,9 @@ off all at once or one by one: lightning, sparks, flashes and glow. With everyth
 a capture of several pieces is shown like an ordinary one: the captured pieces dim and
 disappear at the end of the move.
 
-When a man becomes a king, an eight-point compass rose lights up beneath it. Its
-champagne or smoky-bronze facets reveal from the centre outwards, then fade uniformly;
+When a man becomes a king, an eight-point compass rose with slightly shorter diagonal
+points lights up beneath it. Its champagne or smoky-bronze facets reveal from the
+centre outwards, then fade uniformly;
 the entire effect lasts 0.82 seconds. The king covers the centre; the glow may overlap
 the coordinate frame and is clipped at the board's outer edge. Like the lightning,
 the rose is computed as coloured triangles and drawn through OpenGL. The main
