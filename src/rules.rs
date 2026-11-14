@@ -1,59 +1,59 @@
-//! Окончание партии: выигрыш и автоматические ничьи.
+//! The end of a game: a win and the automatic draws.
 //!
-//! «N ходов» в правилах означает N ходов каждого игрока, поэтому счётчики, которые
-//! считают ходы обеих сторон, ведутся в полуходах и сравниваются с удвоенным лимитом.
-//! Счётчики, считающие ходы одной (сильнейшей) стороны, ведутся в её ходах.
+//! "N moves" in the rules means N moves by each player, so the counters that count the
+//! moves of both sides are kept in plies and compared with twice the limit. The
+//! counters that count the moves of one (the stronger) side are kept in its moves.
 //!
-//! «Соотношение сил» — число простых и дамок каждой стороны. Оно меняется при любом
-//! взятии и при любом превращении простой в дамку; при этом счётчики правил 2, 4 и 5
-//! сбрасываются.
+//! The "balance of forces" is the number of men and kings of each side. It changes with
+//! every capture and with every promotion of a man; the counters of rules 2, 4 and 5
+//! are then reset.
 
 use crate::board::{Color, Position, MAIN_ROAD};
 use crate::moves::{generate_moves, Move};
 
-/// Правило 1: позиция с той же очередью хода возникла в третий раз.
+/// Rule 1: the position with the same side to move has occurred for the third time.
 pub const REPETITION_LIMIT: u32 = 3;
-/// Правило 2: три и более дамки против одной дамки — столько ходов сильнейшей стороны
-/// отводится на взятие с момента возникновения соотношения.
+/// Rule 2: three or more kings against one king. The stronger side has this many moves
+/// to capture it, counted from the moment this balance of forces arose.
 pub const KINGS_VS_KING_MOVES: u32 = 15;
-/// Правило 3: столько ходов подряд обе стороны ходят только дамками без взятий.
+/// Rule 3: this many moves in a row both sides move kings only, without captures.
 pub const KINGS_ONLY_MOVES: u32 = 15;
-/// Правило 4: лимит ходов без изменения соотношения сил при 2–3 фигурах на доске.
+/// Rule 4: limit of moves without a change in the balance of forces with 2–3 pieces on the board.
 pub const BALANCE_MOVES_2_3: u32 = 5;
-/// Правило 4: лимит ходов при 4–5 фигурах.
+/// Rule 4: limit of moves with 4–5 pieces.
 pub const BALANCE_MOVES_4_5: u32 = 30;
-/// Правило 4: лимит ходов при 6–7 фигурах.
+/// Rule 4: limit of moves with 6–7 pieces.
 pub const BALANCE_MOVES_6_7: u32 = 60;
-/// Правило 5: три шашки против одинокой дамки на большой дороге — столько ходов
-/// сильнейшей стороны отводится на взятие.
+/// Rule 5: three pieces against a lone king on the main road. The stronger side has
+/// this many moves to capture it.
 pub const MAIN_ROAD_MOVES: u32 = 5;
 
-/// Причина ничьей.
+/// Reason for a draw.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum DrawReason {
-    /// Правило 1: троекратное повторение позиции.
+    /// Rule 1: threefold repetition of a position.
     Repetition,
-    /// Правило 2: три и более дамки не взяли одинокую дамку за 15 ходов.
+    /// Rule 2: three or more kings did not capture a lone king in 15 moves.
     KingsVsKing,
-    /// Правило 3: 15 ходов только дамками без взятий.
+    /// Rule 3: 15 moves by kings only, without captures.
     KingsOnly,
-    /// Правило 4: соотношение сил не менялось заданное число ходов.
-    /// `pieces` — число фигур на доске, `moves` — сработавший лимит.
+    /// Rule 4: the balance of forces did not change for the given number of moves.
+    /// `pieces` is the number of pieces on the board, `moves` is the limit that was hit.
     Balance { pieces: u32, moves: u32 },
-    /// Правило 5: три шашки не взяли одинокую дамку на большой дороге за 5 ходов.
+    /// Rule 5: three pieces did not capture a lone king on the main road in 5 moves.
     MainRoad,
 }
 
-/// Причина выигрыша.
+/// Reason for a win.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum WinReason {
-    /// У проигравшего не осталось шашек.
+    /// The loser has no pieces left.
     NoPieces,
-    /// У проигравшего нет допустимых ходов.
+    /// The loser has no legal moves.
     NoMoves,
 }
 
-/// Результат завершённой партии.
+/// Result of a finished game.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Outcome {
     Win { winner: Color, reason: WinReason },
@@ -61,51 +61,53 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// Победитель, если партия не закончилась вничью.
-    pub fn winner(&self) -> Option<Color> {
+    /// The winner, unless the game ended in a draw.
+    #[must_use]
+    pub const fn winner(&self) -> Option<Color> {
         match self {
-            Outcome::Win { winner, .. } => Some(*winner),
-            Outcome::Draw(_) => None,
+            Self::Win { winner, .. } => Some(*winner),
+            Self::Draw(_) => None,
         }
     }
 
-    pub fn is_draw(&self) -> bool {
-        matches!(self, Outcome::Draw(_))
+    #[must_use]
+    pub const fn is_draw(&self) -> bool {
+        matches!(self, Self::Draw(_))
     }
 }
 
-/// Счётчики правил ничьей, зависящие от хода партии.
+/// Counters of the draw rules that depend on the course of the game.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct DrawCounters {
-    /// Правило 2: ходы сильнейшей стороны с момента возникновения соотношения
-    /// «три и более дамки против одной дамки».
+    /// Rule 2: moves of the stronger side since the balance "three or more kings
+    /// against one king" arose.
     pub kings_vs_king: u8,
-    /// Правило 3: полуходы подряд, сделанные дамками без взятий.
+    /// Rule 3: plies in a row made by kings without captures.
     pub kings_only: u8,
-    /// Правило 4: полуходы без изменения соотношения сил, пока у обеих сторон есть
-    /// дамки и на доске не более семи фигур.
+    /// Rule 4: plies without a change in the balance of forces, while both sides have
+    /// kings and there are at most seven pieces on the board.
     pub balance: u8,
-    /// Правило 5: ходы сильнейшей стороны, пока три её шашки стоят против одинокой
-    /// дамки на большой дороге.
+    /// Rule 5: moves of the stronger side while its three pieces face a lone king on
+    /// the main road.
     pub main_road: u8,
 }
 
-/// Правило 2: сторона, у которой три и более дамки против одинокой дамки соперника.
+/// Rule 2: the side that has three or more kings against the opponent's lone king.
+#[must_use]
 pub fn kings_vs_king_side(pos: &Position) -> Option<Color> {
     for strong in [Color::White, Color::Black] {
         let weak = strong.opponent();
-        if pos.kings_of(strong).count_ones() >= 3
-            && pos.count(weak) == 1
-            && pos.kings_of(weak).count_ones() == 1
-        {
+        // The weaker side has a single piece, and that piece is a king.
+        if pos.kings_of(strong).count_ones() >= 3 && pos.count(weak) == 1 && pos.kings_of(weak) != 0 {
             return Some(strong);
         }
     }
     None
 }
 
-/// Правило 5: сторона, у которой ровно три шашки (в любом сочетании дамок и простых)
-/// против одинокой дамки соперника, стоящей на большой дороге.
+/// Rule 5: the side that has exactly three pieces (any mix of kings and men) against
+/// the opponent's lone king standing on the main road.
+#[must_use]
 pub fn main_road_side(pos: &Position) -> Option<Color> {
     for strong in [Color::White, Color::Black] {
         let weak = strong.opponent();
@@ -116,8 +118,9 @@ pub fn main_road_side(pos: &Position) -> Option<Color> {
     None
 }
 
-/// Правило 4: лимит ходов для текущего числа фигур, если у обеих сторон есть дамки.
-pub fn balance_limit(pos: &Position) -> Option<u32> {
+/// Rule 4: the limit of moves for the current number of pieces, if both sides have kings.
+#[must_use]
+pub const fn balance_limit(pos: &Position) -> Option<u32> {
     if pos.kings_of(Color::White) == 0 || pos.kings_of(Color::Black) == 0 {
         return None;
     }
@@ -129,7 +132,8 @@ pub fn balance_limit(pos: &Position) -> Option<u32> {
     }
 }
 
-/// Состояние партии: позиция и счётчики ничьей, накопленные по ветке, ведущей к ней.
+/// State of a game: the position and the draw counters accumulated along the branch that
+/// leads to it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct GameState {
     pub pos: Position,
@@ -137,21 +141,24 @@ pub struct GameState {
 }
 
 impl GameState {
-    /// Состояние с обнулёнными счётчиками.
-    pub fn new(pos: Position) -> GameState {
-        GameState {
+    /// A state with the counters at zero.
+    #[must_use]
+    pub fn new(pos: Position) -> Self {
+        Self {
             pos,
             counters: DrawCounters::default(),
         }
     }
 
-    /// Начало партии.
-    pub fn initial() -> GameState {
-        GameState::new(Position::initial())
+    /// The start of a game.
+    #[must_use]
+    pub fn initial() -> Self {
+        Self::new(Position::initial())
     }
 
-    /// Состояние после хода `mv` (ход должен быть допустимым в этой позиции).
-    pub fn play(&self, mv: &Move) -> GameState {
+    /// The state after the move `mv` (the move must be legal in this position).
+    #[must_use]
+    pub fn play(&self, mv: &Move) -> Self {
         let mover = self.pos.side;
         let king_move = self.pos.kings & mv.from().bit() != 0;
         let capture = mv.is_capture();
@@ -159,21 +166,21 @@ impl GameState {
         let next = self.pos.after(mv);
         let old = self.counters;
 
-        // Правило 3: считаются только тихие ходы дамок.
+        // Rule 3: only quiet moves of kings count.
         let kings_only = if king_move && !capture {
             old.kings_only.saturating_add(1)
         } else {
             0
         };
 
-        // Правило 4.
+        // Rule 4.
         let balance = if !balance_changed && balance_limit(&next).is_some() {
             old.balance.saturating_add(1)
         } else {
             0
         };
 
-        // Правило 2: считаются ходы сильнейшей стороны.
+        // Rule 2: the moves of the stronger side count.
         let kings_vs_king = match kings_vs_king_side(&next) {
             Some(strong) if !balance_changed => {
                 if mover == strong {
@@ -185,8 +192,8 @@ impl GameState {
             _ => 0,
         };
 
-        // Правило 5: отсчёт начинается, когда одинокая дамка оказалась на большой дороге
-        // при трёх шашках соперника, и прерывается, если она дорогу покинула.
+        // Rule 5: the count starts when the lone king is on the main road against three
+        // pieces of the opponent, and stops if the king leaves the road.
         let main_road = match main_road_side(&next) {
             Some(strong) if !balance_changed && main_road_side(&self.pos) == Some(strong) => {
                 if mover == strong {
@@ -198,7 +205,7 @@ impl GameState {
             _ => 0,
         };
 
-        GameState {
+        Self {
             pos: next,
             counters: DrawCounters {
                 kings_vs_king,
@@ -209,7 +216,8 @@ impl GameState {
         }
     }
 
-    /// Ничья по счётчикам (правила 2–5), если один из лимитов достигнут.
+    /// A draw by the counters (rules 2–5), if one of the limits has been reached.
+    #[must_use]
     pub fn counter_draw(&self) -> Option<DrawReason> {
         let c = &self.counters;
         if u32::from(c.kings_vs_king) >= KINGS_VS_KING_MOVES {
@@ -232,9 +240,10 @@ impl GameState {
         None
     }
 
-    /// Через сколько полуходов самое раннее из правил 2–5 зафиксирует ничью, если
-    /// соотношение сил не изменится и простые не будут ходить.
-    /// `u32::MAX`, если ни одно правило сейчас не отсчитывается.
+    /// In how many plies the earliest of rules 2–5 will declare a draw if the balance
+    /// of forces does not change and no man moves. `u32::MAX` if no rule is counting
+    /// at the moment.
+    #[must_use]
     pub fn plies_to_counter_draw(&self) -> u32 {
         let c = &self.counters;
         let mut best = u32::MAX;
@@ -263,13 +272,13 @@ impl GameState {
         best
     }
 
-    /// Результат партии в этом состоянии.
+    /// Result of the game in this state.
     ///
-    /// `occurrences` — сколько раз эта позиция (с той же очередью хода) встретилась
-    /// на ветке, ведущей к ней, считая текущую.
+    /// `occurrences` is how many times this position (with the same side to move) has
+    /// occurred on the branch that leads to it, the current occurrence included.
     ///
-    /// Сначала проверяется проигрыш стороны, которой нечем ходить: ход, лишивший
-    /// соперника ходов, выигрывает, даже если тем же ходом исчерпан лимит ничьей.
+    /// The loss of a side with nothing to move is checked first: a move that leaves the
+    /// opponent without moves wins even if the same move exhausts a draw limit.
     pub fn outcome(&self, occurrences: u32) -> Option<Outcome> {
         let mut moves = Vec::new();
         generate_moves(&self.pos, &mut moves);
@@ -292,8 +301,9 @@ impl GameState {
     }
 }
 
-/// Сколько раз позиция `current` встречается среди `earlier` (более ранних позиций
-/// ветки), считая её саму.
+/// How many times the position `current` occurs among `earlier` (the earlier positions
+/// of the branch), itself included.
+#[must_use]
 pub fn occurrences(earlier: &[Position], current: &Position) -> u32 {
     1 + earlier.iter().filter(|p| *p == current).count() as u32
 }
@@ -324,7 +334,7 @@ mod tests {
         assert_eq!(balance_limit(&p("W:WKa1,c1,e1:BKh8,b8,d8")), Some(60));
         assert_eq!(balance_limit(&p("W:WKa1,c1,e1,g1:BKh8,b8,d8")), Some(60));
         assert_eq!(balance_limit(&p("W:WKa1,c1,e1,g1:BKh8,b8,d8,f8")), None);
-        assert_eq!(balance_limit(&p("W:WKa1,c1:Bh8")), None, "у чёрных нет дамки");
+        assert_eq!(balance_limit(&p("W:WKa1,c1:Bh8")), None, "Black has no king");
         assert_eq!(balance_limit(&Position::initial()), None);
     }
 
@@ -339,17 +349,17 @@ mod tests {
         assert_eq!(
             kings_vs_king_side(&p("W:WKa1,Kc1,e1:BKh8")),
             None,
-            "только две дамки"
+            "only two kings"
         );
         assert_eq!(
             kings_vs_king_side(&p("W:WKa1,Kc1,Ke1:Bh8")),
             None,
-            "простая, а не дамка"
+            "a man, not a king"
         );
         assert_eq!(
             kings_vs_king_side(&p("W:WKa1,Kc1,Ke1:BKh8,b8")),
             None,
-            "дамка не одна"
+            "more than one king"
         );
         assert_eq!(
             kings_vs_king_side(&p("W:WKa1,Kc1,Ke1,g1:BKh8")),
@@ -361,11 +371,11 @@ mod tests {
         assert_eq!(
             main_road_side(&p("W:WKc1,e1,g1:BKb8")),
             None,
-            "дамка не на большой дороге"
+            "the king is not on the main road"
         );
-        assert_eq!(main_road_side(&p("W:WKc1,e1,g1:Bd4")), None, "на дороге простая");
-        assert_eq!(main_road_side(&p("W:WKc1,e1:BKd4")), None, "две шашки");
-        assert_eq!(main_road_side(&p("W:WKc1,e1,g1,a3:BKd4")), None, "четыре шашки");
+        assert_eq!(main_road_side(&p("W:WKc1,e1,g1:Bd4")), None, "a man on the road");
+        assert_eq!(main_road_side(&p("W:WKc1,e1:BKd4")), None, "two pieces");
+        assert_eq!(main_road_side(&p("W:WKc1,e1,g1,a3:BKd4")), None, "four pieces");
         assert_eq!(main_road_side(&p("W:WKd4:BKc1,e3,g3")), Some(Color::Black));
     }
 }

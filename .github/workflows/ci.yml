@@ -1,0 +1,209 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Tests and a release build with the current stable Rust on every supported system.
+  test:
+    name: Test · ${{ matrix.name }}
+    # A pull request from a branch of this repository is already checked by its push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-latest }
+          - { name: Windows (x64), os: windows-latest }
+          - { name: Windows (ARM64), os: windows-11-arm }
+          - { name: macOS (Apple Silicon), os: macos-latest }
+          - { name: macOS (Intel), os: macos-15-intel }
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install system packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Tests
+        run: cargo test
+      - name: Release build
+        run: cargo build --release
+
+  # The start of the program on Windows. The machine has no graphics card, so the Mesa
+  # software renderer is put next to the executable.
+  windows-start:
+    name: Windows · start of the program
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Release build
+        run: cargo build --release
+      - name: The executable needs system libraries only
+        shell: bash
+        run: |
+          libraries=$(llvm-objdump -p target/release/rucheckers.exe | grep 'DLL Name' | sort -u)
+          echo "$libraries"
+          if echo "$libraries" | grep -i -E 'vcruntime|msvcp|ucrtbased|libgcc|libstdc|libwinpthread'; then
+            echo "the executable must not depend on a redistributable library" >&2
+            exit 1
+          fi
+      - name: Get the software OpenGL renderer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo pal1000/mesa-dist-win --pattern "mesa3d-*-release-msvc.7z" --dir mesa
+          7z x (Get-ChildItem mesa\*.7z).FullName -omesa -y | Out-Null
+          Copy-Item mesa\x64\opengl32.dll, mesa\x64\libgallium_wgl.dll target\release\
+      - name: Start the program
+        shell: pwsh
+        run: tools/smoke-test.ps1 -Binary target\release\rucheckers.exe -Screenshot window.png
+      - name: Keep the screenshot
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: screenshot-windows
+          path: window.png
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Formatting and lints with the oldest supported Rust. The version is fixed, so a new
+  # compiler release cannot fail the check with lints that did not exist before. Every
+  # system has code of its own, so the lints run on each of them.
+  lint:
+    name: Lint · ${{ matrix.name }} · Rust 1.85
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-latest }
+          - { name: Windows, os: windows-latest }
+          - { name: macOS, os: macos-latest }
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install system packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+      - name: Install Rust 1.85
+        run: rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy && rustup default 1.85.0
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Lints
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test
+
+  # A build from the packages the README names, inside the distribution itself, and a
+  # start of the program on a virtual display under X11 and under Wayland.
+  linux:
+    name: Linux · ${{ matrix.name }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # `rust` says where the compiler comes from: the packages of the distribution
+        # (`cargo`) or rustup, where the packaged one is older than Rust 1.85.
+        include:
+          - { name: Debian 13, id: debian-13, image: "debian:13", family: apt, rust: cargo }
+          - { name: Debian 12, id: debian-12, image: "debian:12", family: apt, rust: rustup }
+          - { name: Ubuntu 26.04, id: ubuntu-26.04, image: "ubuntu:26.04", family: apt, rust: cargo }
+          - { name: Ubuntu 24.04, id: ubuntu-24.04, image: "ubuntu:24.04", family: apt, rust: rustup }
+          - { name: Ubuntu 22.04, id: ubuntu-22.04, image: "ubuntu:22.04", family: apt, rust: rustup }
+          - { name: Fedora, id: fedora, image: "fedora:latest", family: dnf, rust: cargo }
+          - { name: Arch Linux, id: arch, image: "archlinux:latest", family: pacman, rust: cargo }
+          - { name: openSUSE Tumbleweed, id: opensuse-tumbleweed, image: "opensuse/tumbleweed:latest", family: zypper, rust: cargo }
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # The packages of the "Building" section of the README.
+      - name: Install the build packages (apt)
+        if: matrix.family == 'apt'
+        run: >
+          apt-get update &&
+          apt-get install -y build-essential pkg-config libasound2-dev
+          ${{ matrix.rust == 'cargo' && 'cargo' || 'curl ca-certificates' }}
+      - name: Install the build packages (dnf)
+        if: matrix.family == 'dnf'
+        run: dnf install -y cargo gcc pkgconf-pkg-config alsa-lib-devel
+      - name: Install the build packages (pacman)
+        if: matrix.family == 'pacman'
+        run: pacman -Syu --noconfirm rust gcc pkgconf alsa-lib
+      - name: Install the build packages (zypper)
+        if: matrix.family == 'zypper'
+        run: zypper --non-interactive install cargo gcc pkgconf-pkg-config alsa-devel tar gzip
+      - name: Install Rust with rustup
+        if: matrix.rust == 'rustup'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/checkout@v5
+      - name: Versions
+        run: cargo --version && rustc --version
+      - name: Release build
+        run: cargo build --release
+      - name: Tests
+        run: cargo test
+
+      # A container has no desktop: the libraries every desktop installation has, the
+      # software renderer, two virtual displays and the tools of the smoke test.
+      - name: Install the run-time packages and virtual displays (apt)
+        if: matrix.family == 'apt'
+        run: >
+          apt-get install -y
+          libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0
+          libwayland-client0 libwayland-cursor0 libwayland-egl1 libgl1 libegl1 libgl1-mesa-dri
+          xvfb xdotool weston imagemagick
+      - name: Install the run-time packages and virtual displays (dnf)
+        if: matrix.family == 'dnf'
+        run: >
+          dnf install -y
+          libX11 libXcursor libXi libXrandr libxkbcommon libxkbcommon-x11
+          libwayland-client libwayland-cursor libwayland-egl mesa-libGL mesa-libEGL mesa-dri-drivers
+          xorg-x11-server-Xvfb xdotool weston ImageMagick
+      - name: Install the run-time packages and virtual displays (pacman)
+        if: matrix.family == 'pacman'
+        run: >
+          pacman -S --noconfirm
+          libx11 libxcursor libxi libxrandr libxkbcommon libxkbcommon-x11 wayland mesa
+          xorg-server-xvfb xdotool weston imagemagick
+      - name: Install the run-time packages and virtual displays (zypper)
+        if: matrix.family == 'zypper'
+        run: >
+          zypper --non-interactive install
+          libX11-6 libXcursor1 libXi6 libXrandr2 libxkbcommon0 libxkbcommon-x11-0
+          libwayland-client0 libwayland-cursor0 libwayland-egl1 Mesa-libGL1 Mesa-libEGL1 Mesa-dri
+          xorg-x11-server-Xvfb xdotool weston ImageMagick
+      - name: Start the program under X11
+        run: tools/smoke-test.sh x11 target/release/rucheckers screenshot-${{ matrix.id }}-x11.png
+      - name: Start the program under Wayland
+        run: tools/smoke-test.sh wayland target/release/rucheckers screenshot-${{ matrix.id }}-wayland.png
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: screenshots-${{ matrix.id }}
+          path: screenshot-${{ matrix.id }}-*.png
+          if-no-files-found: ignore
+          retention-days: 14

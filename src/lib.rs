@@ -1,8 +1,8 @@
-//! Русские шашки: правила, компьютерный соперник, дерево партии, PDN и логика интерфейса.
+//! Russian draughts: rules, computer opponent, game tree, PDN and interface logic.
 //!
-//! Всё, что находится в этой библиотеке, не зависит от окна и звукового устройства
-//! и проверяется командой `cargo test`. Отрисовка и воспроизведение звука живут
-//! в исполняемом файле (`src/main.rs`, `src/gui/`).
+//! Nothing in this library depends on a window or a sound device, and all of it is
+//! checked by `cargo test`. Drawing and sound playback live in the executable
+//! (`src/main.rs`, `src/gui/`).
 
 pub mod ai;
 pub mod board;

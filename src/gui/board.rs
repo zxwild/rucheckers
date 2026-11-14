@@ -1,19 +1,18 @@
-//! Отрисовка доски и шашек векторными фигурами: изображение остаётся чётким при
-//! любом размере окна и плотности экрана.
+//! Drawing of the board and pieces. The board is drawn with vector shapes, the pieces
+//! with images computed for the exact cell size, so the picture stays sharp at any
+//! window size and screen density.
 
 use super::theme;
 use eframe::egui::{
-    self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Mesh, Painter, Pos2, Rect, Shape, Stroke,
-    StrokeKind,
+    self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind,
 };
-use rucheckers::board::{Color, Piece, Square};
+use rucheckers::board::{Color, Kind, Piece, Square};
+use rucheckers::ui::fx::{self, DischargeFrame};
 use rucheckers::ui::geometry::BoardLayout;
+use rucheckers::ui::sprite::{self, PIECE_RADIUS};
 use std::f32::consts::TAU;
 
-/// Радиус шашки в долях клетки.
-const PIECE_RADIUS: f32 = 0.40;
-
-/// Цвет с изменённой непрозрачностью (0…1).
+/// A colour with a changed opacity (0…1).
 fn faded(color: Color32, alpha: f32) -> Color32 {
     if alpha >= 0.999 {
         color
@@ -22,14 +21,7 @@ fn faded(color: Color32, alpha: f32) -> Color32 {
     }
 }
 
-/// Смешение двух цветов: `t = 0` — первый, `t = 1` — второй.
-fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
-    let t = t.clamp(0.0, 1.0);
-    let lerp = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
-    Color32::from_rgb(lerp(a.r(), b.r()), lerp(a.g(), b.g()), lerp(a.b(), b.b()))
-}
-
-/// Детерминированное псевдослучайное число 0…1 по целому ключу (для рисунка древесины).
+/// A deterministic pseudo-random number 0…1 for an integer key (for the wood pattern).
 fn noise(key: u32) -> f32 {
     let mut x = key.wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
     x ^= x >> 15;
@@ -40,13 +32,13 @@ fn noise(key: u32) -> f32 {
     (x & 0xFFFF) as f32 / 65_535.0
 }
 
-/// Прямоугольник клетки.
+/// Rectangle of a cell.
 pub fn cell_rect(layout: &BoardLayout, file: u8, rank: u8) -> Rect {
     let (x, y) = layout.cell_origin(file, rank);
     Rect::from_min_size(pos2(x, y), vec2(layout.cell, layout.cell))
 }
 
-/// Прямоугольник всей доски вместе с рамкой.
+/// Rectangle of the whole board with its frame.
 pub fn outer_rect(layout: &BoardLayout) -> Rect {
     Rect::from_min_size(
         pos2(layout.outer_x, layout.outer_y),
@@ -54,13 +46,13 @@ pub fn outer_rect(layout: &BoardLayout) -> Rect {
     )
 }
 
-/// Центр поля на экране.
+/// Centre of a square on the screen.
 pub fn square_center(layout: &BoardLayout, sq: Square) -> Pos2 {
     let (x, y) = layout.square_center(sq);
     pos2(x, y)
 }
 
-/// Тонкие прожилки древесины внутри прямоугольника.
+/// Thin veins of wood inside a rectangle.
 fn wood_grain(painter: &Painter, rect: Rect, key: u32, color: Color32, count: u32, pixel: f32) {
     for i in 0..count {
         let k = key.wrapping_mul(31).wrapping_add(i * 7 + 1);
@@ -76,7 +68,7 @@ fn wood_grain(painter: &Painter, rect: Rect, key: u32, color: Color32, count: u3
     }
 }
 
-/// Доска: рамка с координатами и 64 клетки.
+/// The board: the frame with coordinates and the 64 cells.
 pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32) {
     let pixel = 1.0 / pixels_per_point.max(0.1);
     let outer = outer_rect(layout);
@@ -86,7 +78,7 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
         vec2(layout.field_size(), layout.field_size()),
     );
 
-    // Тень под доской и рамка.
+    // The shadow under the board and the frame.
     let radius = CornerRadius::same((frame * 0.28).clamp(2.0, 14.0) as u8);
     painter.rect_filled(
         outer.translate(vec2(0.0, frame * 0.10)).expand(frame * 0.03),
@@ -115,7 +107,7 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
         StrokeKind::Inside,
     );
 
-    // Клетки.
+    // The cells.
     for rank in 0..8u8 {
         for file in 0..8u8 {
             let rect = cell_rect(layout, file, rank);
@@ -137,7 +129,7 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
             }
         }
     }
-    // Кант вокруг игрового поля.
+    // The edging around the playing field.
     painter.rect_stroke(
         field,
         0.0,
@@ -145,7 +137,7 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
         StrokeKind::Outside,
     );
 
-    // Координаты: буквы сверху и снизу, цифры слева и справа.
+    // Coordinates: letters above and below, digits on the left and right.
     let font_size = frame * 0.52;
     if font_size >= 6.0 {
         let font = FontId::proportional(font_size);
@@ -177,12 +169,12 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
     }
 }
 
-/// Заливка поля полупрозрачным цветом (последний ход, выбранная шашка).
+/// Fills a square with a semi-transparent colour (the last move, the selected piece).
 pub fn tint_square(painter: &Painter, layout: &BoardLayout, sq: Square, color: Color32) {
     painter.rect_filled(cell_rect(layout, sq.file(), sq.rank()), 0.0, color);
 }
 
-/// Отметка поля, на которое можно пойти.
+/// Mark of a square a piece can go to.
 pub fn draw_target(painter: &Painter, layout: &BoardLayout, sq: Square, hovered: bool) {
     let center = square_center(layout, sq);
     let radius = layout.cell * if hovered { 0.20 } else { 0.15 };
@@ -194,7 +186,190 @@ pub fn draw_target(painter: &Painter, layout: &BoardLayout, sq: Square, hovered:
     painter.circle_filled(center, radius, theme::TARGET);
 }
 
-/// Кольцо вокруг шашки, обязанной бить.
+/// Mark of the final square of a multi-capture: a click on it makes all the remaining
+/// jumps. It differs from an ordinary reachable square by a ring.
+pub fn draw_final_target(painter: &Painter, layout: &BoardLayout, sq: Square, hovered: bool) {
+    draw_target(painter, layout, sq, hovered);
+    let center = square_center(layout, sq);
+    let radius = layout.cell * if hovered { 0.30 } else { 0.25 };
+    let width = (layout.cell * 0.03).max(1.5);
+    painter.circle_stroke(
+        center,
+        radius,
+        Stroke::new(width + 1.5, Color32::from_black_alpha(40)),
+    );
+    painter.circle_stroke(center, radius, Stroke::new(width, theme::TARGET));
+}
+
+/// A glow: the colour is added to the background and dims it slightly at the same time.
+/// Pure addition gives an almost white colour on light warm squares and loses the tint.
+fn glow(color: [f32; 3], intensity: f32) -> Color32 {
+    let intensity = intensity.clamp(0.0, 1.0);
+    let channel = |v: f32| (v * intensity * 255.0).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgba_premultiplied(
+        channel(color[0]),
+        channel(color[1]),
+        channel(color[2]),
+        (0.55 * intensity * 255.0).round() as u8,
+    )
+}
+
+/// A colour with the given opacity that covers the background.
+fn blended(color: [f32; 3], alpha: f32) -> Color32 {
+    let alpha = alpha.clamp(0.0, 1.0);
+    let channel = |v: f32| (v * alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgba_premultiplied(
+        channel(color[0]),
+        channel(color[1]),
+        channel(color[2]),
+        (alpha * 255.0).round() as u8,
+    )
+}
+
+/// A round glow: bright in the centre and fading to nothing at the edge.
+fn glow_disc(center: Pos2, radius: f32, intensity: f32) -> Shape {
+    const SEGMENTS: u32 = 32;
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(center, glow(fx::BOLT_CORE, 0.85 * intensity));
+    for ring in [
+        (0.4, glow(fx::GLOW, 0.55 * intensity)),
+        (1.0, Color32::TRANSPARENT),
+    ] {
+        for i in 0..SEGMENTS {
+            let angle = TAU * i as f32 / SEGMENTS as f32;
+            mesh.colored_vertex(center + vec2(angle.cos(), angle.sin()) * radius * ring.0, ring.1);
+        }
+    }
+    for i in 0..SEGMENTS {
+        let next = (i + 1) % SEGMENTS;
+        let (inner, inner_next) = (1 + i, 1 + next);
+        let (outer, outer_next) = (1 + SEGMENTS + i, 1 + SEGMENTS + next);
+        mesh.add_triangle(0, inner, inner_next);
+        mesh.add_triangle(inner, outer, outer_next);
+        mesh.add_triangle(inner, outer_next, inner_next);
+    }
+    Shape::mesh(mesh)
+}
+
+/// A glow in a ring: brightest at the radius `peak`, fading to nothing at `inner` and `outer`.
+fn glow_ring(center: Pos2, inner: f32, peak: f32, outer: f32, intensity: f32) -> Shape {
+    const SEGMENTS: u32 = 40;
+    let mut mesh = egui::Mesh::default();
+    for (radius, color) in [
+        (inner, Color32::TRANSPARENT),
+        (peak, glow(fx::GLOW, 0.80 * intensity)),
+        (f32::midpoint(peak, outer), glow(fx::GLOW, 0.26 * intensity)),
+        (outer, Color32::TRANSPARENT),
+    ] {
+        for i in 0..SEGMENTS {
+            let angle = TAU * i as f32 / SEGMENTS as f32;
+            mesh.colored_vertex(center + vec2(angle.cos(), angle.sin()) * radius, color);
+        }
+    }
+    for ring in 0..3 {
+        for i in 0..SEGMENTS {
+            let next = (i + 1) % SEGMENTS;
+            let (a, a_next) = (ring * SEGMENTS + i, ring * SEGMENTS + next);
+            let (b, b_next) = (a + SEGMENTS, a_next + SEGMENTS);
+            mesh.add_triangle(a, b, b_next);
+            mesh.add_triangle(a, b_next, a_next);
+        }
+    }
+    Shape::mesh(mesh)
+}
+
+/// The lower layer of the discharge: flashes on the captured pieces, the lightning
+/// behind the flying piece and the halo around it. It is drawn over the standing pieces
+/// but under the flying one.
+///
+/// Everything is drawn with plain triangles through the same hardware-accelerated
+/// rendering (OpenGL) as the rest of the interface, so the effect works the same on
+/// macOS and Linux and needs no shaders of its own.
+pub fn draw_lightning(
+    painter: &Painter,
+    layout: &BoardLayout,
+    frame: &DischargeFrame,
+    pixels_per_point: f32,
+) {
+    // A dark underlay keeps the bolt visible on light squares as well.
+    const SHADE: [f32; 3] = [0.10, 0.13, 0.0];
+    let cell = layout.cell;
+    let pixel = 1.0 / pixels_per_point.max(0.1);
+    let on_screen = |p: fx::Point| {
+        let (x, y) = layout.cell_to_point(p);
+        pos2(x, y)
+    };
+    let mut shapes: Vec<Shape> = Vec::new();
+    for flash in &frame.flashes {
+        shapes.push(glow_disc(
+            on_screen(flash.center),
+            flash.radius * cell,
+            flash.intensity,
+        ));
+    }
+    // The bolt: the dark underlay, two layers of glow and a bright core.
+    for bolt in &frame.bolts {
+        let points: Vec<Pos2> = bolt.points.iter().map(|&p| on_screen(p)).collect();
+        let (width, level) = (bolt.width, bolt.intensity);
+        for (thickness, color) in [
+            (cell * 0.15 * width, blended(SHADE, 0.34 * level)),
+            (cell * 0.26 * width, glow(fx::GLOW, 0.22 * level)),
+            (cell * 0.11 * width, glow(fx::GLOW, 0.60 * level)),
+            (
+                (cell * 0.036 * width).max(1.2 * pixel),
+                blended(fx::BOLT_CORE, level),
+            ),
+        ] {
+            shapes.push(Shape::line(points.clone(), Stroke::new(thickness, color)));
+        }
+    }
+    // The halo: it starts under the edge of the piece and shows from under it.
+    if let Some(halo) = &frame.halo {
+        let edge = PIECE_RADIUS * cell;
+        shapes.push(glow_ring(
+            on_screen(halo.center),
+            edge * 0.8,
+            edge,
+            halo.radius * cell,
+            halo.intensity,
+        ));
+    }
+    painter.extend(shapes);
+}
+
+/// The upper layer of the discharge: the sparks. They are drawn over all pieces.
+pub fn draw_sparks(painter: &Painter, layout: &BoardLayout, frame: &DischargeFrame, pixels_per_point: f32) {
+    let cell = layout.cell;
+    let pixel = 1.0 / pixels_per_point.max(0.1);
+    let on_screen = |p: fx::Point| {
+        let (x, y) = layout.cell_to_point(p);
+        pos2(x, y)
+    };
+    let mut shapes: Vec<Shape> = Vec::new();
+    // A spark is a short glowing stroke with a bright head.
+    for spark in &frame.sparks {
+        let (head, tail) = (on_screen(spark.head), on_screen(spark.tail));
+        let color = fx::spark_color(spark.heat);
+        let level = spark.intensity;
+        shapes.push(Shape::line_segment(
+            [tail, head],
+            Stroke::new(cell * 0.085 * spark.size, glow(fx::GLOW, 0.30 * level)),
+        ));
+        let core = (cell * 0.032 * spark.size).max(1.2 * pixel);
+        shapes.push(Shape::line_segment(
+            [tail, head],
+            Stroke::new(core, blended(color, 0.95 * level)),
+        ));
+        shapes.push(Shape::circle_filled(
+            head,
+            (core * 0.75).max(0.8 * pixel),
+            blended(color, level),
+        ));
+    }
+    painter.extend(shapes);
+}
+
+/// The ring around a piece that must capture.
 pub fn draw_obligation_ring(painter: &Painter, layout: &BoardLayout, sq: Square) {
     let center = square_center(layout, sq);
     let width = (layout.cell * 0.045).max(1.5);
@@ -205,182 +380,86 @@ pub fn draw_obligation_ring(painter: &Painter, layout: &BoardLayout, sq: Square)
     );
 }
 
-/// Круг с плавным переходом освещённости: светлее слева сверху, темнее справа снизу.
-fn shaded_disc(painter: &Painter, center: Pos2, radius: f32, light: Color32, shade: Color32, alpha: f32) {
-    const SEGMENTS: u32 = 48;
-    let mut mesh = Mesh::default();
-    mesh.colored_vertex(center, faded(mix(light, shade, 0.25), alpha));
-    for i in 0..SEGMENTS {
-        let angle = TAU * i as f32 / SEGMENTS as f32;
-        let (sin, cos) = angle.sin_cos();
-        // Источник света — слева сверху (ось Y направлена вниз).
-        let lit = 0.5 - 0.5 * (cos * 0.707 + sin * 0.707);
-        let color = mix(shade, light, lit);
-        mesh.colored_vertex(center + vec2(cos, sin) * radius, faded(color, alpha));
-    }
-    for i in 0..SEGMENTS {
-        mesh.add_triangle(0, 1 + i, 1 + (i + 1) % SEGMENTS);
-    }
-    painter.add(Shape::mesh(mesh));
-}
-
-/// Одна шайба шашки: боковая грань, верх с объёмом и контур.
-#[allow(clippy::too_many_arguments)]
-fn draw_disc(
-    painter: &Painter,
-    center: Pos2,
-    radius: f32,
-    thickness: f32,
-    color: Color,
-    alpha: f32,
-    grooves: bool,
-    pixel: f32,
-) {
-    let (face, shade, side, outline, groove) = match color {
-        Color::White => (
-            theme::WHITE_FACE,
-            theme::WHITE_FACE_SHADE,
-            theme::WHITE_SIDE,
-            theme::WHITE_OUTLINE,
-            theme::WHITE_GROOVE,
-        ),
-        Color::Black => (
-            theme::BLACK_FACE,
-            theme::BLACK_FACE_SHADE,
-            theme::BLACK_SIDE,
-            theme::BLACK_OUTLINE,
-            theme::BLACK_GROOVE,
-        ),
-    };
-    let line = (radius * 0.045).max(pixel);
-    // Боковая грань выглядывает из-под верха.
-    let below = center + vec2(0.0, thickness);
-    painter.circle_filled(below, radius, faded(side, alpha));
-    painter.circle_stroke(below, radius, Stroke::new(line, faded(outline, alpha)));
-    // Верх.
-    shaded_disc(painter, center, radius - line * 0.5, face, shade, alpha);
-    painter.circle_stroke(center, radius, Stroke::new(line, faded(outline, alpha)));
-    if grooves {
-        painter.circle_stroke(center, radius * 0.76, Stroke::new(line, faded(groove, alpha)));
-        painter.circle_stroke(center, radius * 0.46, Stroke::new(line, faded(groove, alpha)));
-    }
-}
-
-/// Корона — знак дамки.
-fn draw_crown(
-    painter: &Painter,
-    center: Pos2,
-    size: f32,
-    color: Color32,
-    outline: Color32,
-    alpha: f32,
-    pixel: f32,
-) {
-    let at = |x: f32, y: f32| center + vec2(x * size, y * size);
-    let fill = faded(color, alpha);
-    let edge = Stroke::new((size * 0.035).max(pixel * 0.75), faded(outline, alpha * 0.8));
-    let parts: [&[(f32, f32)]; 4] = [
-        &[(-0.50, 0.10), (-0.50, -0.34), (-0.10, 0.10)],
-        &[(-0.28, 0.10), (0.0, -0.44), (0.28, 0.10)],
-        &[(0.10, 0.10), (0.50, -0.34), (0.50, 0.10)],
-        &[(-0.50, 0.08), (0.50, 0.08), (0.50, 0.26), (-0.50, 0.26)],
-    ];
-    // Контур рисуется первым, заливка поверх него закрывает внутренние стыки частей.
-    for part in parts {
-        let points: Vec<Pos2> = part.iter().map(|&(x, y)| at(x, y)).collect();
-        painter.add(Shape::convex_polygon(points, Color32::TRANSPARENT, edge));
-    }
-    for part in parts {
-        let points: Vec<Pos2> = part.iter().map(|&(x, y)| at(x, y)).collect();
-        painter.add(Shape::convex_polygon(points, fill, Stroke::NONE));
-    }
-    for (x, y) in [(-0.50, -0.34), (0.0, -0.44), (0.50, -0.34)] {
-        painter.circle_filled(at(x, y), size * 0.075, fill);
-    }
-    let base = Rect::from_min_max(at(-0.50, 0.33), at(0.50, 0.42));
-    painter.rect_filled(base, size * 0.03, fill);
-}
-
-/// Шашка с центром в точке `center`.
+/// Images of the pieces for the current cell size.
 ///
-/// `alpha` — непрозрачность (побитые шашки бледнеют), `lifted` — шашку держат мышью:
-/// она чуть крупнее и отбрасывает более длинную тень.
+/// The pieces are computed pixel by pixel (`rucheckers::ui::sprite`) for exactly the
+/// cell size in physical pixels and kept as textures: the edges and the relief are
+/// smooth, and a resting piece is drawn pixel for pixel, without stretching.
+pub struct PieceSprites {
+    size_px: usize,
+    pieces: [egui::TextureHandle; 4],
+    lift_shadow: egui::TextureHandle,
+}
+
+impl PieceSprites {
+    /// Computes the images for a cell with the side of `size_px` physical pixels.
+    pub fn new(ctx: &egui::Context, size_px: usize) -> Self {
+        let size_px = size_px.max(2);
+        let upload = |name: &str, image: sprite::PieceImage| {
+            let pixels = egui::ColorImage::from_rgba_premultiplied([image.size, image.size], &image.rgba);
+            ctx.load_texture(name, pixels, egui::TextureOptions::LINEAR)
+        };
+        let piece = |color: Color, kind: Kind| {
+            let name = format!("piece-{color:?}-{kind:?}");
+            upload(
+                &name,
+                sprite::render_piece(Piece::new(color, kind), size_px, true),
+            )
+        };
+        Self {
+            size_px,
+            pieces: [
+                piece(Color::White, Kind::Man),
+                piece(Color::White, Kind::King),
+                piece(Color::Black, Kind::Man),
+                piece(Color::Black, Kind::King),
+            ],
+            lift_shadow: upload("piece-lift-shadow", sprite::render_lift_shadow(size_px)),
+        }
+    }
+
+    /// The side of the cell in physical pixels the images were computed for.
+    pub const fn size_px(&self) -> usize {
+        self.size_px
+    }
+
+    const fn texture(&self, piece: Piece) -> &egui::TextureHandle {
+        let index = match (piece.color, piece.kind) {
+            (Color::White, Kind::Man) => 0,
+            (Color::White, Kind::King) => 1,
+            (Color::Black, Kind::Man) => 2,
+            (Color::Black, Kind::King) => 3,
+        };
+        &self.pieces[index]
+    }
+}
+
+/// A piece centred at the point `center` (the centre of the image is the centre of the piece).
+///
+/// `alpha` is the opacity (captured pieces dim); `lifted` means the piece is held with
+/// the mouse: it is slightly larger and casts a longer soft shadow.
 pub fn draw_piece(
     painter: &Painter,
+    sprites: &PieceSprites,
     center: Pos2,
     cell: f32,
     piece: Piece,
     alpha: f32,
     lifted: bool,
-    pixels_per_point: f32,
 ) {
-    let pixel = 1.0 / pixels_per_point.max(0.1);
+    let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    let tint = Color32::from_white_alpha((alpha.clamp(0.0, 1.0) * 255.0).round() as u8);
     let scale = if lifted { 1.06 } else { 1.0 };
-    let radius = cell * PIECE_RADIUS * scale;
-    let thickness = cell * 0.045 * scale;
-    let king = piece.is_king();
-
-    // Тень.
-    let (shadow_shift, shadow_alpha) = if lifted {
-        (cell * 0.11, 50.0)
-    } else {
-        (cell * 0.055, 70.0)
-    };
-    let shadow_center = center
-        + vec2(
-            shadow_shift * 0.45,
-            thickness + shadow_shift + if king { thickness } else { 0.0 },
-        );
-    painter.circle_filled(
-        shadow_center,
-        radius * 1.02,
-        Color32::from_black_alpha((shadow_alpha * alpha) as u8),
-    );
-
-    if king {
-        // Дамка — две шашки, поставленные одна на другую, с короной наверху.
-        draw_disc(
-            painter,
-            center + vec2(0.0, thickness * 1.1),
-            radius,
-            thickness,
-            piece.color,
-            alpha,
-            false,
-            pixel,
-        );
-        let top = center - vec2(0.0, thickness * 1.1);
-        draw_disc(painter, top, radius, thickness, piece.color, alpha, false, pixel);
-        let (crown, outline) = match piece.color {
-            Color::White => (theme::CROWN_ON_WHITE, theme::WHITE_OUTLINE),
-            Color::Black => (theme::CROWN_ON_BLACK, theme::BLACK_OUTLINE),
-        };
-        let groove = match piece.color {
-            Color::White => theme::WHITE_GROOVE,
-            Color::Black => theme::BLACK_GROOVE,
-        };
-        painter.circle_stroke(
-            top,
-            radius * 0.80,
-            Stroke::new((radius * 0.045).max(pixel), faded(groove, alpha)),
-        );
-        draw_crown(painter, top, radius * 0.98, crown, outline, alpha, pixel);
-    } else {
-        draw_disc(
-            painter,
-            center,
-            radius,
-            thickness,
-            piece.color,
-            alpha,
-            true,
-            pixel,
-        );
+    if lifted {
+        let shadow = Rect::from_center_size(center + vec2(cell * 0.03, cell * 0.07), vec2(cell, cell) * 1.16);
+        painter.image(sprites.lift_shadow.id(), shadow, whole, tint);
     }
+    let rect = Rect::from_center_size(center, vec2(cell, cell) * scale);
+    painter.image(sprites.texture(piece).id(), rect, whole, tint);
 }
 
-/// Отметка стороны, чья очередь хода, в углу рамки; пока компьютер думает,
-/// вокруг неё вращается дуга.
+/// The mark of the side to move, in a corner of the frame; while the computer is
+/// thinking, an arc rotates around it.
 pub fn draw_turn_marker(
     painter: &Painter,
     center: Pos2,
@@ -414,12 +493,12 @@ pub fn draw_turn_marker(
     }
 }
 
-/// Радиус, в пределах которого точка считается попавшей в шашку (для курсора).
+/// The radius within which a point counts as being on a piece (for the cursor).
 pub fn piece_hit_radius(cell: f32) -> f32 {
     cell * (PIECE_RADIUS + 0.04)
 }
 
-/// Преобразование точки интерфейса в координаты для геометрии.
+/// Converts an interface point into coordinates for the geometry.
 pub fn layout_for(rect: Rect, flipped: bool, pixels_per_point: f32) -> BoardLayout {
     BoardLayout::fit(
         rect.left(),
@@ -431,8 +510,8 @@ pub fn layout_for(rect: Rect, flipped: bool, pixels_per_point: f32) -> BoardLayo
     )
 }
 
-/// Курсор «рука» над шашкой, которой можно ходить, и над доступным полем.
-pub fn cursor_for(hover: bool, dragging: bool) -> egui::CursorIcon {
+/// The "hand" cursor over a piece that can move and over a reachable square.
+pub const fn cursor_for(hover: bool, dragging: bool) -> egui::CursorIcon {
     if dragging {
         egui::CursorIcon::Grabbing
     } else if hover {

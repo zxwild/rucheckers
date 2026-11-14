@@ -1,12 +1,12 @@
-//! Поиск лучшего хода: итеративное углубление, альфа-бета с главным вариантом,
-//! таблица перестановок, упорядочение ходов и сокращение поздних ходов.
+//! Search for the best move: iterative deepening, principal variation alpha-beta, a
+//! transposition table, move ordering and late move reductions.
 //!
-//! Особенности шашек, учтённые в поиске:
-//! * взятия обязательны, поэтому они не расходуют глубину, а статическая оценка
-//!   берётся только в позициях, где стороне нечего бить;
-//! * правила ничьей (повторение и счётчики) проверяются в каждом узле;
-//! * оценка плавно убывает к нулю при приближении ничьей по счётчику, чтобы
-//!   сильнейшая сторона вовремя меняла соотношение сил.
+//! Features of draughts that the search takes into account:
+//! * captures are mandatory, so they do not consume depth, and the static evaluation
+//!   is taken only in positions where the side to move has nothing to capture;
+//! * the draw rules (repetition and counters) are checked in every node;
+//! * the score fades smoothly to zero as a counter draw approaches, so that the
+//!   stronger side changes the balance of forces in time.
 
 use super::eval::evaluate;
 use crate::board::Position;
@@ -16,63 +16,73 @@ use crate::rules::GameState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// Оценка выигрыша в текущем узле; выигрыш через `n` полуходов оценивается как `WIN - n`.
+/// Score of a win in the current node; a win in `n` plies is scored as `WIN - n`.
 pub const WIN: i32 = 30_000;
-/// Граница, выше которой оценка означает форсированный выигрыш.
+/// The bound above which a score means a forced win.
 pub const WIN_BOUND: i32 = WIN - 1_000;
 const INF: i32 = 32_000;
-/// Наибольшая глубина линии поиска в полуходах.
+/// Greatest depth of a search line in plies.
 const MAX_PLY: usize = 120;
-/// За столько полуходов до ничьей по счётчику оценка начинает убывать к нулю.
+/// This many plies before a counter draw the score starts to fade to zero.
 const DRAW_FADE_PLIES: u32 = 16;
-/// Если до ничьей по счётчику осталось меньше полуходов, остаток входит в ключ таблицы.
+/// If fewer plies are left before a counter draw, their number becomes part of the table key.
 const DRAW_KEY_PLIES: u32 = 24;
 
-const BOUND_NONE: u8 = 0;
-const BOUND_EXACT: u8 = 1;
-const BOUND_LOWER: u8 = 2;
-const BOUND_UPPER: u8 = 3;
+/// What a stored score says about the true value of a position.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bound {
+    /// The table slot is empty.
+    None,
+    /// The score is exact.
+    Exact,
+    /// The true value is at least the stored score (the search failed high).
+    Lower,
+    /// The true value is at most the stored score (the search failed low).
+    Upper,
+}
+
 const NO_MOVE: u8 = u8::MAX;
 const NO_KILLER: u16 = u16::MAX;
-/// Объём работы (узлы и сгенерированные ходы) между проверками времени и сигнала остановки.
+/// Amount of work (nodes and generated moves) between checks of the time and the stop signal.
 const POLL_WORK: usize = 2_048;
 
-/// Параметры одного поиска.
+/// Parameters of one search.
 #[derive(Clone, Debug)]
 pub struct SearchParams {
-    /// Наибольшая глубина в тихих полуходах (взятия глубину не расходуют).
+    /// Greatest depth in quiet plies (captures do not consume depth).
     pub max_depth: i32,
-    /// Жёсткий лимит времени: по его истечении поиск прерывается.
+    /// Hard time limit: the search is interrupted when it runs out.
     pub hard_time: Option<Duration>,
-    /// Мягкий лимит: после него новая итерация не начинается.
+    /// Soft limit: no new iteration starts after it.
     pub soft_time: Option<Duration>,
-    /// Доводить ли взятия до конца на границе глубины.
+    /// Whether captures are followed to the end at the depth limit.
     pub quiescence: bool,
-    /// Амплитуда псевдослучайной добавки к оценке (в сотых простой).
+    /// Amplitude of the pseudo-random addition to the score (in hundredths of a man).
     pub jitter: i32,
-    /// Зерно: порядок равноценных ходов и добавка к оценке.
+    /// Seed: the order of equal moves and the addition to the score.
     pub seed: u64,
-    /// Размер таблицы перестановок: 2^`table_bits` записей.
+    /// Size of the transposition table: 2^`table_bits` entries.
     pub table_bits: u32,
-    /// Считать точную оценку каждого хода в корне (нужно уровням со случайным выбором).
+    /// Compute the exact score of every root move (needed by levels that choose at random).
     pub exact_root_scores: bool,
 }
 
-/// Результат поиска.
+/// Result of a search.
 #[derive(Clone, Debug)]
 pub struct SearchResult {
-    /// Лучший ход; `None`, если ходов нет или поиск прерван до первой оценки.
+    /// The best move; `None` if there are no moves or the search was interrupted before the
+    /// first score.
     pub best: Option<Move>,
-    /// Оценка лучшего хода с точки зрения стороны, чья очередь хода.
+    /// Score of the best move from the point of view of the side to move.
     pub score: i32,
-    /// Глубина последней полностью завершённой итерации.
+    /// Depth of the last fully completed iteration.
     pub depth: i32,
-    /// Число просмотренных узлов.
+    /// Number of nodes visited.
     pub nodes: u64,
-    /// Оценки ходов в корне по последней завершённой итерации.
-    /// Точны для всех ходов только при `exact_root_scores`.
+    /// Scores of the root moves from the last completed iteration.
+    /// They are exact for all moves only with `exact_root_scores`.
     pub root_scores: Vec<(Move, i32)>,
-    /// Поиск остановлен по времени или по внешнему сигналу.
+    /// The search was stopped by the clock or by an external signal.
     pub aborted: bool,
 }
 
@@ -81,7 +91,7 @@ struct Entry {
     key: u64,
     score: i16,
     depth: i8,
-    bound: u8,
+    bound: Bound,
     mv: u8,
 }
 
@@ -89,20 +99,20 @@ const EMPTY_ENTRY: Entry = Entry {
     key: 0,
     score: 0,
     depth: 0,
-    bound: BOUND_NONE,
+    bound: Bound::None,
     mv: NO_MOVE,
 };
 
-/// Таблица перестановок: корзины по две записи (предпочтение глубине и всегда заменяемая).
+/// Transposition table: buckets of two entries (one prefers depth, the other is always replaced).
 struct Table {
     entries: Vec<Entry>,
     mask: usize,
 }
 
 impl Table {
-    fn new(bits: u32) -> Table {
+    fn new(bits: u32) -> Self {
         let size = 1usize << bits.clamp(4, 26);
-        Table {
+        Self {
             entries: vec![EMPTY_ENTRY; size],
             mask: size - 2,
         }
@@ -112,18 +122,18 @@ impl Table {
     fn probe(&self, key: u64) -> Option<Entry> {
         let index = (key as usize) & self.mask;
         let first = self.entries[index];
-        if first.bound != BOUND_NONE && first.key == key {
+        if first.bound != Bound::None && first.key == key {
             return Some(first);
         }
         let second = self.entries[index + 1];
-        if second.bound != BOUND_NONE && second.key == key {
+        if second.bound != Bound::None && second.key == key {
             return Some(second);
         }
         None
     }
 
     #[inline]
-    fn store(&mut self, key: u64, depth: i32, score: i32, bound: u8, mv: u8) {
+    fn store(&mut self, key: u64, depth: i32, score: i32, bound: Bound, mv: u8) {
         let index = (key as usize) & self.mask;
         let entry = Entry {
             key,
@@ -133,7 +143,7 @@ impl Table {
             mv,
         };
         let first = self.entries[index];
-        if first.bound == BOUND_NONE || first.key == key || entry.depth >= first.depth {
+        if first.bound == Bound::None || first.key == key || entry.depth >= first.depth {
             self.entries[index] = entry;
         } else {
             self.entries[index + 1] = entry;
@@ -142,7 +152,7 @@ impl Table {
 }
 
 #[inline]
-fn mix(mut x: u64) -> u64 {
+const fn mix(mut x: u64) -> u64 {
     x ^= x >> 33;
     x = x.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
     x ^= x >> 33;
@@ -150,7 +160,7 @@ fn mix(mut x: u64) -> u64 {
 }
 
 #[inline]
-fn to_table(score: i32, ply: usize) -> i32 {
+const fn to_table(score: i32, ply: usize) -> i32 {
     if score >= WIN_BOUND {
         score + ply as i32
     } else if score <= -WIN_BOUND {
@@ -161,7 +171,7 @@ fn to_table(score: i32, ply: usize) -> i32 {
 }
 
 #[inline]
-fn from_table(score: i32, ply: usize) -> i32 {
+const fn from_table(score: i32, ply: usize) -> i32 {
     if score >= WIN_BOUND {
         score - ply as i32
     } else if score <= -WIN_BOUND {
@@ -171,9 +181,9 @@ fn from_table(score: i32, ply: usize) -> i32 {
     }
 }
 
-/// Убирает взятия, которые отличаются только маршрутом: если совпадают исходное и
-/// конечное поля и набор побитых шашек, позиция после хода одна и та же, и для поиска
-/// такие ходы равноценны.
+/// Removes captures that differ only in their route: if the first and last squares and
+/// the set of captured pieces are the same, the position after the move is the same,
+/// and such moves are equal for the search.
 fn dedupe_captures(moves: &mut Vec<Move>) {
     if moves.len() < 2 || !moves[0].is_capture() {
         return;
@@ -195,9 +205,34 @@ fn dedupe_captures(moves: &mut Vec<Move>) {
     moves.truncate(kept);
 }
 
+/// Moves the best of the not yet searched moves (`order[from..]`) to position `from`.
+/// Among equal scores the earliest one wins, so the order stays deterministic.
 #[inline]
-fn killer_key(mv: &Move) -> u16 {
-    (mv.from().index() as u16) << 5 | mv.to().index() as u16
+fn select_best(order: &mut [(i32, u16)], from: usize) {
+    let mut pick = from;
+    for candidate in from + 1..order.len() {
+        if order[candidate].0 > order[pick].0 {
+            pick = candidate;
+        }
+    }
+    order.swap(from, pick);
+}
+
+#[inline]
+const fn killer_key(mv: &Move) -> u16 {
+    ((mv.from().index() as u16) << 5) | mv.to().index() as u16
+}
+
+/// Transposition table key: the position and, close to a counter draw, the number of
+/// plies left before it.
+fn table_key(st: &GameState) -> u64 {
+    let left = st.plies_to_counter_draw();
+    let salt = if left < DRAW_KEY_PLIES {
+        mix(0xD6E8_FEB8_6659_FD93 ^ u64::from(left))
+    } else {
+        0
+    };
+    st.pos.hash64() ^ salt
 }
 
 struct Searcher<'a> {
@@ -206,12 +241,12 @@ struct Searcher<'a> {
     started: Instant,
     hard_time: Option<Duration>,
     nodes: u64,
-    /// Объём работы с последней проверки времени (узлы и сгенерированные ходы).
+    /// Amount of work since the last time check (nodes and generated moves).
     work: usize,
     aborted: bool,
-    /// Позиции ветки партии до корня и текущей линии поиска.
+    /// Positions of the game branch up to the root and of the current search line.
     path: Vec<Position>,
-    /// Индекс корневой позиции в `path`.
+    /// Index of the root position in `path`.
     root_index: usize,
     killers: Vec<[u16; 2]>,
     history: Vec<i32>,
@@ -233,7 +268,7 @@ impl Searcher<'_> {
         }
     }
 
-    /// Статическая оценка с точки зрения стороны, чья очередь хода.
+    /// Static score from the point of view of the side to move.
     fn eval(&self, st: &GameState) -> i32 {
         let mut score = evaluate(&st.pos);
         if self.jitter > 0 {
@@ -247,19 +282,8 @@ impl Searcher<'_> {
         score.clamp(-WIN_BOUND + 1, WIN_BOUND - 1)
     }
 
-    /// Ключ таблицы: позиция и, вблизи ничьей по счётчику, оставшееся до неё число полуходов.
-    fn key(&self, st: &GameState) -> u64 {
-        let left = st.plies_to_counter_draw();
-        let salt = if left < DRAW_KEY_PLIES {
-            mix(0xD6E8_FEB8_6659_FD93 ^ u64::from(left))
-        } else {
-            0
-        };
-        st.pos.hash64() ^ salt
-    }
-
-    /// Повторение позиции: внутри линии поиска достаточно одного совпадения,
-    /// среди позиций партии до корня нужно два (тогда это третье появление).
+    /// Repetition of a position: inside the search line one match is enough; among the
+    /// game positions before the root two are needed (then this is the third occurrence).
     fn repeated(&self, st: &GameState) -> bool {
         let reversible = st.counters.kings_only as usize;
         if reversible < 4 {
@@ -284,6 +308,53 @@ impl Searcher<'_> {
         false
     }
 
+    /// Fills `order` with a sorting score for every move: the table move first, then
+    /// big captures, killer moves and the history heuristic.
+    fn score_moves(
+        &self,
+        st: &GameState,
+        moves: &[Move],
+        table_move: u8,
+        ply: usize,
+        order: &mut Vec<(i32, u16)>,
+    ) {
+        let in_capture = moves[0].is_capture();
+        let side = st.pos.side as usize;
+        let killers = self.killers[ply];
+        order.clear();
+        for (index, mv) in moves.iter().enumerate() {
+            let score = if index == table_move as usize {
+                1_000_000_000
+            } else if in_capture {
+                let kings = (mv.captured() & st.pos.kings).count_ones() as i32;
+                1_000 * mv.captured_count() as i32 + 500 * kings + 100 * i32::from(mv.promotes())
+            } else {
+                let k = killer_key(mv);
+                if k == killers[0] {
+                    900_000_000
+                } else if k == killers[1] {
+                    800_000_000
+                } else {
+                    let h = self.history[side * 1024 + k as usize];
+                    h + if mv.promotes() { 500_000_000 } else { 0 }
+                }
+            };
+            order.push((score, index as u16));
+        }
+    }
+
+    /// Remembers a quiet move that refuted the line: it becomes a killer move at this
+    /// ply and gains history score.
+    fn record_cutoff(&mut self, mv: &Move, side: usize, depth: i32, ply: usize) {
+        let k = killer_key(mv);
+        if self.killers[ply][0] != k {
+            self.killers[ply][1] = self.killers[ply][0];
+            self.killers[ply][0] = k;
+        }
+        let slot = &mut self.history[side * 1024 + k as usize];
+        *slot = (*slot + depth * depth).min(400_000_000);
+    }
+
     fn negamax(&mut self, st: &GameState, depth: i32, alpha: i32, beta: i32, ply: usize, pv: bool) -> i32 {
         self.nodes += 1;
         if self.aborted {
@@ -292,8 +363,8 @@ impl Searcher<'_> {
         let mut moves = std::mem::take(&mut self.move_buffers[ply]);
         let mut order = std::mem::take(&mut self.order_buffers[ply]);
         generate_moves(&st.pos, &mut moves);
-        // Время проверяется по объёму работы, а не по числу узлов: в позициях с длинными
-        // взятиями дамок один узел может содержать сотни ходов.
+        // The time is checked by the amount of work, not by the number of nodes: in
+        // positions with long king captures a single node can hold hundreds of moves.
         self.work += 1 + moves.len();
         if self.work >= POLL_WORK {
             self.work = 0;
@@ -334,55 +405,33 @@ impl Searcher<'_> {
         }
         let depth = depth.max(0);
 
-        // Быстрее, чем за `ply` полуходов, уже не выиграть и не проиграть.
+        // Nobody can win or lose faster than in `ply` plies any more.
         alpha = alpha.max(-(WIN - ply as i32));
         beta = beta.min(WIN - ply as i32 - 1);
         if alpha >= beta {
             return alpha;
         }
 
-        let key = self.key(st);
+        let key = table_key(st);
         let mut table_move = NO_MOVE;
         if let Some(entry) = self.table.probe(key) {
             table_move = entry.mv;
             if !pv && i32::from(entry.depth) >= depth {
                 let score = from_table(i32::from(entry.score), ply);
                 match entry.bound {
-                    BOUND_EXACT => return score,
-                    BOUND_LOWER if score >= beta => return score,
-                    BOUND_UPPER if score <= alpha => return score,
+                    Bound::Exact => return score,
+                    Bound::Lower if score >= beta => return score,
+                    Bound::Upper if score <= alpha => return score,
                     _ => {}
                 }
             }
         }
 
-        // Упорядочение: ход из таблицы, затем крупные взятия, «убийцы» и история.
+        self.score_moves(st, moves, table_move, ply, order);
         let side = st.pos.side as usize;
-        let killers = self.killers[ply];
-        order.clear();
-        for (index, mv) in moves.iter().enumerate() {
-            let score = if index == table_move as usize {
-                1_000_000_000
-            } else if in_capture {
-                let kings = (mv.captured() & st.pos.kings).count_ones() as i32;
-                1_000 * mv.captured_count() as i32 + 500 * kings + 100 * i32::from(mv.promotes())
-            } else {
-                let k = killer_key(mv);
-                if k == killers[0] {
-                    900_000_000
-                } else if k == killers[1] {
-                    800_000_000
-                } else {
-                    let h = self.history[side * 1024 + k as usize];
-                    h + if mv.promotes() { 500_000_000 } else { 0 }
-                }
-            };
-            order.push((score, index as u16));
-        }
-
         let count = moves.len();
-        // Короткие списки упорядочиваются выбором по ходу перебора (часто хватает первого
-        // хода), длинные сортируются сразу.
+        // Short lists are ordered by selection as the moves are searched (the first move
+        // is often enough); long ones are sorted at once.
         let presorted = count > 24;
         if presorted {
             order.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
@@ -394,14 +443,7 @@ impl Searcher<'_> {
         self.path.push(st.pos);
         for i in 0..count {
             if !presorted {
-                // Выбор лучшего из оставшихся ходов.
-                let mut pick = i;
-                for j in i + 1..count {
-                    if order[j].0 > order[pick].0 {
-                        pick = j;
-                    }
-                }
-                order.swap(i, pick);
+                select_best(order, i);
             }
             let index = order[i].1 as usize;
             let mv = &moves[index];
@@ -436,13 +478,7 @@ impl Searcher<'_> {
             }
             if alpha >= beta {
                 if !in_capture {
-                    let k = killer_key(mv);
-                    if self.killers[ply][0] != k {
-                        self.killers[ply][1] = self.killers[ply][0];
-                        self.killers[ply][0] = k;
-                    }
-                    let slot = &mut self.history[side * 1024 + k as usize];
-                    *slot = (*slot + depth * depth).min(400_000_000);
+                    self.record_cutoff(mv, side, depth, ply);
                 }
                 break;
             }
@@ -453,11 +489,11 @@ impl Searcher<'_> {
         }
 
         let bound = if best >= beta {
-            BOUND_LOWER
+            Bound::Lower
         } else if best > original_alpha {
-            BOUND_EXACT
+            Bound::Exact
         } else {
-            BOUND_UPPER
+            Bound::Upper
         };
         self.table
             .store(key, depth, to_table(best, ply), bound, best_index);
@@ -465,10 +501,10 @@ impl Searcher<'_> {
     }
 }
 
-/// Ищет лучший ход в состоянии `state`.
+/// Searches for the best move in the state `state`.
 ///
-/// `history` — позиции ветки партии, предшествующие текущей (нужны для учёта повторений).
-/// `stop` позволяет прервать поиск извне.
+/// `history` holds the positions of the game branch before the current one (needed to
+/// account for repetitions). `stop` allows the search to be interrupted from outside.
 pub fn search(
     state: &GameState,
     history: &[Position],
@@ -490,7 +526,7 @@ pub fn search(
     if root.is_empty() {
         return result;
     }
-    // Случайный начальный порядок: из равноценных ходов выбирается случайный.
+    // A random initial order: among equal moves a random one is chosen.
     rng.shuffle(&mut root);
 
     let mut path = Vec::with_capacity(history.len() + MAX_PLY + 1);
@@ -520,7 +556,7 @@ pub fn search(
         let mut alpha = -INF;
         let mut best: Option<(usize, i32)> = None;
         searcher.path.push(state.pos);
-        // Индексный цикл: оценки записываются в `root` по ходу перебора.
+        // An index loop: the scores are written into `root` as the moves are searched.
         #[allow(clippy::needless_range_loop)]
         for i in 0..root.len() {
             let mv = root[i].0;
@@ -552,8 +588,8 @@ pub fn search(
         }
         searcher.path.pop();
 
-        // Прерванная итерация учитывается, только если в ней уже оценён хотя бы первый
-        // (лучший по прошлой итерации) ход: найденное в ней улучшение достоверно.
+        // An interrupted iteration counts only if at least its first move (the best of the
+        // previous iteration) has been scored: an improvement found in it can be trusted.
         if let Some((index, score)) = best {
             result.best = Some(root[index].0);
             result.score = score;
@@ -564,9 +600,9 @@ pub fn search(
             break;
         }
         result.depth = depth;
-        result.root_scores = root.clone();
+        result.root_scores.clone_from(&root);
 
-        // Форсированный исход найден, и глубины хватает, чтобы в нём не сомневаться.
+        // A forced outcome is found, and the depth is enough to leave no doubt about it.
         if result.score.abs() >= WIN_BOUND && depth >= WIN - result.score.abs() + 2 {
             break;
         }

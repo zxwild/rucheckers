@@ -1,10 +1,11 @@
-//! Русская шашечная нотация: `c3-d4` — тихий ход, `c3:e5:g7` — взятие.
+//! Russian draughts notation: `c3-d4` is a quiet move, `c3:e5:g7` is a capture.
 
 use crate::board::Square;
 use crate::moves::Move;
 use std::fmt;
 
-/// Запись хода: тихий ход через дефис, взятие — через двоеточие со всеми полями маршрута.
+/// Writes a move: a quiet move with a hyphen, a capture with colons and every square of the route.
+#[must_use]
 pub fn format_move(mv: &Move) -> String {
     let sep = if mv.is_capture() { ':' } else { '-' };
     let mut out = String::with_capacity(3 * (mv.path().len() + 1));
@@ -16,30 +17,35 @@ pub fn format_move(mv: &Move) -> String {
     out
 }
 
-/// Ошибка разбора записи хода.
+/// Error of parsing a move.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NotationError {
-    /// Текст не похож на запись хода.
+    /// The text does not look like a move.
     Syntax,
-    /// Такого хода в позиции нет.
+    /// There is no such move in the position.
     Illegal,
-    /// Запись подходит к нескольким разным взятиям.
+    /// The text matches several different captures.
     Ambiguous,
 }
 
 impl fmt::Display for NotationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            NotationError::Syntax => "not a move",
-            NotationError::Illegal => "illegal move",
-            NotationError::Ambiguous => "ambiguous capture",
+            Self::Syntax => "not a move",
+            Self::Illegal => "illegal move",
+            Self::Ambiguous => "ambiguous capture",
         })
     }
 }
 
 impl std::error::Error for NotationError {}
 
-/// Разбирает последовательность полей, разделённых `-`, `:` или `x`.
+/// Parses a sequence of squares separated by `-`, `:` or `x`.
+///
+/// # Errors
+///
+/// Returns [`NotationError::Syntax`] if the text is not such a sequence of at least
+/// two playable squares.
 pub fn parse_squares(text: &str) -> Result<Vec<Square>, NotationError> {
     let text = text.trim().trim_end_matches(['!', '?', '+', '#']);
     let mut squares = Vec::new();
@@ -52,16 +58,23 @@ pub fn parse_squares(text: &str) -> Result<Vec<Square>, NotationError> {
     Ok(squares)
 }
 
-/// Находит среди допустимых ходов `legal` тот, что записан в `text`.
+/// Finds among the legal moves `legal` the one written in `text`.
 ///
-/// Принимается полная запись (`c3:e5:g7`), а для взятий — и сокращённая
-/// (`c3:g7` или с частью промежуточных полей), если она определяет результат однозначно.
+/// The full notation (`c3:e5:g7`) is accepted and, for captures, a shortened one as
+/// well (`c3:g7`, or with some of the intermediate squares) as long as it determines
+/// the result of the move unambiguously.
+///
+/// # Errors
+///
+/// Returns [`NotationError::Syntax`] if the text is not a move at all,
+/// [`NotationError::Illegal`] if no legal move matches it and
+/// [`NotationError::Ambiguous`] if captures with different results match it.
 pub fn parse_move(text: &str, legal: &[Move]) -> Result<Move, NotationError> {
     let squares = parse_squares(text)?;
     let from = squares[0];
     let to = squares[squares.len() - 1];
 
-    // Точное совпадение маршрута.
+    // An exact match of the route.
     if let Some(mv) = legal
         .iter()
         .find(|m| m.from() == from && m.path() == &squares[1..])
@@ -69,7 +82,7 @@ pub fn parse_move(text: &str, legal: &[Move]) -> Result<Move, NotationError> {
         return Ok(*mv);
     }
 
-    // Сокращённая запись взятия: указанные поля идут в маршруте в том же порядке.
+    // A shortened capture: the given squares appear in the route in the same order.
     let inner = &squares[1..squares.len() - 1];
     let mut found: Option<Move> = None;
     for mv in legal {
@@ -88,7 +101,7 @@ pub fn parse_move(text: &str, legal: &[Move]) -> Result<Move, NotationError> {
         match found {
             None => found = Some(*mv),
             Some(prev) => {
-                // Разные маршруты допустимы, только если они дают одну и ту же позицию.
+                // Different routes are acceptable only if they lead to the same position.
                 if prev.captured() != mv.captured() || prev.promotes() != mv.promotes() {
                     return Err(NotationError::Ambiguous);
                 }
@@ -129,16 +142,16 @@ mod tests {
         assert_eq!(format_move(&legal[0]), "c3:e5:g7");
         assert_eq!(parse_move("c3:e5:g7", &legal), Ok(legal[0]));
         assert_eq!(parse_move("C3xE5xG7", &legal), Ok(legal[0]));
-        assert_eq!(parse_move("c3:g7", &legal), Ok(legal[0]), "сокращённая запись");
+        assert_eq!(parse_move("c3:g7", &legal), Ok(legal[0]), "shortened notation");
         assert_eq!(
             parse_move("c3:e5", &legal),
             Err(NotationError::Illegal),
-            "бой не доведён до конца"
+            "the capture is not carried to its end"
         );
         assert_eq!(
             parse_move("c3-b4", &legal),
             Err(NotationError::Illegal),
-            "взятие обязательно"
+            "capturing is mandatory"
         );
     }
 
@@ -152,7 +165,7 @@ mod tests {
             "-d4",
             "c3--d4",
             "b1-c2",
-            "привет",
+            "日本語",
             "c3-d4-",
             "1-0",
             "c3 d4",
@@ -169,9 +182,9 @@ mod tests {
 
     #[test]
     fn short_capture_notation_is_accepted_when_the_result_is_the_same() {
-        // Дамка обходит ромб из четырёх шашек по часовой стрелке или против неё.
-        // Маршруты разные, но побитые шашки и конечное поле одни и те же, поэтому
-        // сокращённая запись допустима.
+        // The king goes round a rhombus of four pieces clockwise or anticlockwise. The
+        // routes differ, but the captured pieces and the last square are the same, so
+        // the shortened notation is accepted.
         let legal = moves("W:WKd2:Bc3,c5,e5,e3");
         let names: Vec<String> = legal.iter().map(format_move).collect();
         assert!(names.contains(&"d2:f4:d6:b4:d2".to_string()), "{names:?}");
@@ -179,13 +192,14 @@ mod tests {
         let short = parse_move("d2:d2", &legal).unwrap();
         assert_eq!(short.captured_count(), 4);
         assert_eq!(short.to(), short.from());
-        // Промежуточное поле b4 есть в обоих маршрутах; результат хода от этого не зависит.
+        // The intermediate square b4 is in both routes; the result of the move does not
+        // depend on it.
         let via_b4 = parse_move("d2:b4:d2", &legal).unwrap();
         assert_eq!(via_b4.captured(), short.captured());
         assert!(via_b4.path().contains(&Square::parse("b4").unwrap()));
-        // Поля, которого нет ни в одном маршруте, запись содержать не может.
+        // The text cannot contain a square that is in neither route.
         assert_eq!(parse_move("d2:h6:d2", &legal), Err(NotationError::Illegal));
-        // Полная запись каждого хода разбирается в него же.
+        // The full notation of each move is parsed back into that move.
         for mv in &legal {
             assert_eq!(parse_move(&format_move(mv), &legal), Ok(*mv));
         }
@@ -193,8 +207,8 @@ mod tests {
 
     #[test]
     fn short_capture_notation_is_rejected_when_ambiguous() {
-        // Два взятия с общими началом и концом, но разными побитыми шашками. Список
-        // составлен из ходов двух позиций: проверяется сама логика разбора.
+        // Two captures with the same first and last squares but different captured pieces.
+        // The list is made of moves from two positions: the parsing logic itself is tested.
         let mut list = moves("W:WKc1:Bd2,e5");
         list.extend(moves("W:WKc1:Bb2,c5"));
         let names: Vec<String> = list.iter().map(format_move).collect();
@@ -209,7 +223,7 @@ mod tests {
             parse_move("c1:a3:d6", &list).map(|m| format_move(&m)),
             Ok("c1:a3:d6".to_string())
         );
-        // Конечное поле c7 достижимо только одним маршрутом.
+        // The last square c7 can be reached by one route only.
         assert_eq!(
             parse_move("c1:c7", &list).map(|m| format_move(&m)),
             Ok("c1:f4:c7".to_string())

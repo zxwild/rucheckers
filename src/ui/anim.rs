@@ -1,57 +1,69 @@
-//! Расчёт анимации хода: положение шашки во времени, момент превращения,
-//! затухание побитых шашек. Модуль не рисует — он только считает кадр.
+//! Timing of a move animation: where the piece is at each moment, when it is promoted,
+//! when captured pieces disappear. The module does not draw; it only computes a frame.
+//!
+//! An ordinary capture: the piece that was jumped over dims and disappears after the
+//! move is finished. If several pieces are captured in a move and special effects are
+//! on, the move comes with an electric discharge ([`super::fx`]): lightning trails the
+//! flying piece, and each captured piece disappears the moment the piece flies over it.
 
+use super::fx::{self, Discharge, Strike};
+use super::geometry::screen_cell;
 use crate::board::{Piece, Square};
 use crate::moves::Move;
 
-/// Длительность перемещения на соседнее поле, с.
+/// Duration of a move to a neighbouring square, s.
 pub const STEP_SECONDS: f64 = 0.17;
-/// Добавка за каждое следующее поле длинного хода дамки, с.
+/// Addition for every further square of a long king move, s.
 pub const EXTRA_SQUARE_SECONDS: f64 = 0.04;
-/// Время исчезновения побитых шашек после завершения хода, с.
+/// Time a captured piece takes to disappear after the move is finished (without a discharge), s.
 pub const FADE_SECONDS: f64 = 0.20;
+/// Opacity of a captured piece while the move is not finished and it still stands on the board.
+pub const CAPTURED_ALPHA: f32 = 0.42;
 
-/// Длительность одного отрезка пути между полями `a` и `b`.
+/// Duration of one leg of the route, between the squares `a` and `b`.
+#[must_use]
 pub fn segment_seconds(a: Square, b: Square) -> f64 {
     let distance = (i32::from(a.file()) - i32::from(b.file())).unsigned_abs().max(1);
     STEP_SECONDS + EXTRA_SQUARE_SECONDS * f64::from(distance - 1)
 }
 
-/// Кадр анимации.
+/// A frame of the animation.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct AnimFrame {
-    /// Положение центра шашки в координатах доски (вертикаль и горизонталь, дробные).
+    /// Position of the centre of the piece in board coordinates (file and rank, fractional).
     pub file: f32,
     pub rank: f32,
-    /// Рисовать ли шашку дамкой.
+    /// Whether the piece is drawn as a king.
     pub is_king: bool,
-    /// Маска побитых шашек, через которые шашка уже перепрыгнула.
+    /// Mask of the captured pieces the piece has already flown over.
     pub jumped: u32,
-    /// Непрозрачность побитых шашек: 1 во время движения, затем убывает до 0.
-    pub captured_alpha: f32,
-    /// Шашка достигла конечного поля.
+    /// The piece has reached its final square.
     pub arrived: bool,
-    /// Анимация закончена полностью.
+    /// The animation is completely finished.
     pub finished: bool,
 }
 
-/// Анимация одного хода.
+/// Animation of one move.
 #[derive(Clone, Debug)]
 pub struct MoveAnimation {
     mv: Move,
     piece: Piece,
     first_step: usize,
     start: f64,
-    /// Моменты окончания каждого анимируемого отрезка относительно начала.
+    /// The moments each animated leg ends, relative to the start.
     ends: Vec<f64>,
+    /// Whether the move comes with an electric discharge.
+    discharge: bool,
 }
 
 impl MoveAnimation {
-    /// Анимация хода `mv` шашкой `piece` (какой она была до хода).
+    /// Animation of the move `mv` by the piece `piece` (as it was before the move).
     ///
-    /// `first_step` — сколько прыжков уже показано (игрок сделал их по шагам);
-    /// анимируются остальные. `start` — время начала.
-    pub fn new(mv: Move, piece: Piece, first_step: usize, start: f64) -> MoveAnimation {
+    /// `first_step` is how many jumps have already been shown (the player made them step
+    /// by step); the rest are animated. `start` is the starting time. A capture of
+    /// several pieces comes with a discharge; [`Self::with_discharge`] can switch it off.
+    #[must_use]
+    pub fn new(mv: Move, piece: Piece, first_step: usize, start: f64) -> Self {
         let first_step = first_step.min(mv.path().len());
         let points: Vec<Square> = mv.squares().collect();
         let mut ends = Vec::new();
@@ -60,54 +72,186 @@ impl MoveAnimation {
             elapsed += segment_seconds(pair[0], pair[1]);
             ends.push(elapsed);
         }
-        MoveAnimation {
+        let discharge = mv.captured_count() >= fx::MIN_CAPTURES;
+        Self {
             mv,
             piece,
             first_step,
             start,
             ends,
+            discharge,
         }
     }
 
-    /// Анимируемый ход.
-    pub fn mv(&self) -> &Move {
+    /// Switches the discharge on or off (it is possible only when several pieces are captured).
+    #[must_use]
+    pub const fn with_discharge(mut self, enabled: bool) -> Self {
+        self.discharge = enabled && self.mv.captured_count() >= fx::MIN_CAPTURES;
+        self
+    }
+
+    /// The animated move.
+    #[must_use]
+    pub const fn mv(&self) -> &Move {
         &self.mv
     }
 
-    /// Шашка до хода.
-    pub fn piece(&self) -> Piece {
+    /// The piece before the move.
+    #[must_use]
+    pub const fn piece(&self) -> Piece {
         self.piece
     }
 
-    /// Время начала.
-    pub fn start(&self) -> f64 {
+    /// The starting time.
+    #[must_use]
+    pub const fn start(&self) -> f64 {
         self.start
     }
 
-    /// Длительность движения шашки.
+    /// Duration of the piece's travel.
+    #[must_use]
     pub fn travel_seconds(&self) -> f64 {
         self.ends.last().copied().unwrap_or(0.0)
     }
 
-    /// Полная длительность: движение и исчезновение побитых шашек.
-    pub fn total_seconds(&self) -> f64 {
-        self.travel_seconds() + if self.mv.is_capture() { FADE_SECONDS } else { 0.0 }
+    /// Whether the move comes with an electric discharge.
+    #[must_use]
+    pub const fn has_discharge(&self) -> bool {
+        self.discharge
     }
 
-    /// Моменты (в абсолютном времени), когда шашка встаёт на очередное поле.
+    /// When (from the start of the animation) the piece is on the square number `index` of
+    /// the route (0 is the starting square). Squares of jumps already shown are passed at
+    /// the start.
+    fn knot_seconds(&self, index: usize) -> f64 {
+        if index <= self.first_step {
+            0.0
+        } else {
+            self.ends
+                .get(index - self.first_step - 1)
+                .copied()
+                .unwrap_or_else(|| self.travel_seconds())
+        }
+    }
+
+    /// When (from the start of the animation) the piece flies over the piece captured by
+    /// the jump `step`. For jumps already shown: at the very start.
+    fn pass_seconds(&self, step: usize) -> f64 {
+        let (begin, end) = (self.knot_seconds(step), self.knot_seconds(step + 1));
+        if end <= begin {
+            return begin;
+        }
+        let points: Vec<Square> = self.mv.squares().collect();
+        let (Some(&a), Some(&b)) = (points.get(step), points.get(step + 1)) else {
+            return end;
+        };
+        // The captured piece is not necessarily in the middle of the jump: a king captures
+        // from afar.
+        let length = (i32::from(b.file()) - i32::from(a.file())).abs().max(1);
+        let along = match self.mv.captured_at(step) {
+            Some(victim) => {
+                f64::from((i32::from(victim.file()) - i32::from(a.file())).abs()) / f64::from(length)
+            }
+            None => 0.5,
+        };
+        begin + (end - begin) * fx::ease_inverse(along)
+    }
+
+    /// The moment of the first strike of the discharge (in absolute time), if there is a discharge.
+    #[must_use]
+    pub fn first_strike_time(&self) -> Option<f64> {
+        self.discharge.then(|| self.start + self.pass_seconds(0))
+    }
+
+    /// Opacity of the piece on the square `sq` at the moment `now`.
+    ///
+    /// Always 1 for pieces this move does not capture. Without a discharge a captured
+    /// piece dims when it is jumped over and disappears after the move is finished. With
+    /// a discharge it disappears as soon as the capturing piece has flown over it.
+    #[must_use]
+    pub fn captured_alpha(&self, sq: Square, now: f64) -> f32 {
+        let Some(step) = (0..self.mv.path().len()).find(|&i| self.mv.captured_at(i) == Some(sq)) else {
+            return 1.0;
+        };
+        let t = now - self.start;
+        let passed = self.pass_seconds(step);
+        // The pieces of jumps already shown were standing on the board dimmed.
+        let shown_before = step < self.first_step;
+        let fade = |since: f64, duration: f64| (1.0 - (t - since) / duration).clamp(0.0, 1.0) as f32;
+        if self.discharge {
+            let base = if shown_before { CAPTURED_ALPHA } else { 1.0 };
+            base * fade(passed, fx::VANISH_SECONDS)
+        } else if t < passed && !shown_before {
+            1.0
+        } else {
+            CAPTURED_ALPHA * fade(self.travel_seconds(), FADE_SECONDS)
+        }
+    }
+
+    /// Total duration. A move with a discharge is finished when the lightning has gone
+    /// out (sparks are still flying, but they do not get in the way of the next move);
+    /// an ordinary capture, when the captured pieces have disappeared.
+    #[must_use]
+    pub fn total_seconds(&self) -> f64 {
+        let tail = if self.discharge {
+            fx::TRAIL_SECONDS
+        } else if self.mv.is_capture() {
+            FADE_SECONDS
+        } else {
+            0.0
+        };
+        self.travel_seconds() + tail
+    }
+
+    /// The moments (in absolute time) the piece lands on each next square.
+    #[must_use]
     pub fn landing_times(&self) -> Vec<f64> {
         self.ends.iter().map(|end| self.start + end).collect()
     }
 
-    /// Кадр в момент `now`.
+    /// The discharge that comes with the move: the route of the piece with its timing
+    /// and the strikes on the captured pieces, in screen cells. `flipped`: the board is
+    /// turned (Black at the bottom).
+    #[must_use]
+    pub fn discharge(&self, flipped: bool, seed: u64) -> Option<Discharge> {
+        if !self.discharge {
+            return None;
+        }
+        let cell = |sq: Square| screen_cell(f32::from(sq.file()), f32::from(sq.rank()), flipped);
+        let points: Vec<Square> = self.mv.squares().collect();
+        let knots = points
+            .iter()
+            .enumerate()
+            .map(|(index, &sq)| (cell(sq), self.start + self.knot_seconds(index)))
+            .collect();
+        let mut strikes = Vec::new();
+        for step in 0..self.mv.path().len() {
+            let Some(victim) = self.mv.captured_at(step) else {
+                continue;
+            };
+            let (from, to) = (cell(points[step]), cell(points[step + 1]));
+            let length = (to.0 - from.0).hypot(to.1 - from.1).max(1e-6);
+            strikes.push(Strike {
+                center: cell(victim),
+                time: self.start + self.pass_seconds(step),
+                direction: ((to.0 - from.0) / length, (to.1 - from.1) / length),
+            });
+        }
+        Some(Discharge::new(knots, strikes, seed))
+    }
+
+    /// The frame at the moment `now`.
+    #[must_use]
     pub fn frame(&self, now: f64) -> AnimFrame {
         let t = now - self.start;
         let points: Vec<Square> = self.mv.squares().collect();
         let promotion = self.mv.promotion_step();
         let mut jumped = 0u32;
-        for step in 0..self.first_step {
-            if let Some(sq) = self.mv.captured_at(step) {
-                jumped |= sq.bit();
+        for step in 0..self.mv.path().len() {
+            if t >= self.pass_seconds(step) {
+                if let Some(sq) = self.mv.captured_at(step) {
+                    jumped |= sq.bit();
+                }
             }
         }
 
@@ -116,46 +260,28 @@ impl MoveAnimation {
             let step = self.first_step + i;
             if t < end {
                 let duration = (end - segment_start).max(1e-6);
-                let local = ((t - segment_start) / duration).clamp(0.0, 1.0);
-                let eased = local * local * (3.0 - 2.0 * local);
+                let eased = fx::ease((t - segment_start) / duration) as f32;
                 let (a, b) = (points[step], points[step + 1]);
-                if local > 0.5 {
-                    if let Some(sq) = self.mv.captured_at(step) {
-                        jumped |= sq.bit();
-                    }
-                }
                 return AnimFrame {
-                    file: lerp(f32::from(a.file()), f32::from(b.file()), eased as f32),
-                    rank: lerp(f32::from(a.rank()), f32::from(b.rank()), eased as f32),
+                    file: lerp(f32::from(a.file()), f32::from(b.file()), eased),
+                    rank: lerp(f32::from(a.rank()), f32::from(b.rank()), eased),
                     is_king: self.piece.is_king() || promotion.is_some_and(|p| p < step),
                     jumped,
-                    captured_alpha: 1.0,
                     arrived: false,
                     finished: false,
                 };
-            }
-            if let Some(sq) = self.mv.captured_at(step) {
-                jumped |= sq.bit();
             }
             segment_start = end;
         }
 
         let to = self.mv.to();
-        let travel = self.travel_seconds();
-        let total = self.total_seconds();
-        let captured_alpha = if self.mv.is_capture() {
-            (1.0 - (t - travel) / FADE_SECONDS).clamp(0.0, 1.0) as f32
-        } else {
-            0.0
-        };
         AnimFrame {
             file: f32::from(to.file()),
             rank: f32::from(to.rank()),
             is_king: self.piece.is_king() || promotion.is_some(),
             jumped: self.mv.captured(),
-            captured_alpha,
             arrived: true,
-            finished: t >= total,
+            finished: t >= self.total_seconds(),
         }
     }
 }
@@ -169,6 +295,8 @@ mod tests {
     use super::*;
     use crate::board::{Color, Kind, Position};
     use crate::moves::legal_moves;
+    use crate::notation::format_move;
+    use crate::ui::fx::EffectSet;
 
     fn only_move(fen: &str) -> (Move, Piece) {
         let pos = Position::from_fen(fen).unwrap();
@@ -177,12 +305,28 @@ mod tests {
         (moves[0], pos.piece_at(moves[0].from()).unwrap())
     }
 
+    fn named_move(fen: &str, name: &str) -> (Move, Piece) {
+        let pos = Position::from_fen(fen).unwrap();
+        let mv = legal_moves(&pos)
+            .into_iter()
+            .find(|m| format_move(m) == name)
+            .expect(name);
+        (mv, pos.piece_at(mv.from()).unwrap())
+    }
+
+    fn square(name: &str) -> Square {
+        Square::parse(name).unwrap()
+    }
+
+    const HOP: f64 = STEP_SECONDS + EXTRA_SQUARE_SECONDS;
+
     #[test]
     fn quiet_move_goes_from_start_to_end() {
         let (mv, piece) = only_move("W:Wa1:Bh8,g7,f6");
         let anim = MoveAnimation::new(mv, piece, 0, 10.0);
         assert!((anim.travel_seconds() - STEP_SECONDS).abs() < 1e-9);
         assert!((anim.total_seconds() - STEP_SECONDS).abs() < 1e-9);
+        assert!(!anim.has_discharge() && anim.discharge(false, 1).is_none());
         let start = anim.frame(10.0);
         assert_eq!((start.file, start.rank), (0.0, 0.0));
         assert!(!start.arrived && !start.finished);
@@ -190,7 +334,7 @@ mod tests {
         assert_eq!(
             (before.file, before.rank),
             (0.0, 0.0),
-            "до начала шашка стоит на месте"
+            "before the start the piece stands still"
         );
         let middle = anim.frame(10.0 + STEP_SECONDS / 2.0);
         assert!((middle.file - 0.5).abs() < 1e-4 && (middle.rank - 0.5).abs() < 1e-4);
@@ -201,52 +345,238 @@ mod tests {
     }
 
     #[test]
-    fn capture_marks_jumped_pieces_and_fades_them() {
-        let (mv, piece) = only_move("W:Wc3:Bd4,f6");
+    fn single_capture_dims_the_piece_and_removes_it_after_landing() {
+        let (mv, piece) = only_move("W:Wc3,a1:Bd4");
         let anim = MoveAnimation::new(mv, piece, 0, 0.0);
-        let d4 = Square::parse("d4").unwrap().bit();
-        let f6 = Square::parse("f6").unwrap().bit();
-        assert_eq!(anim.frame(0.01).jumped, 0);
-        assert_eq!(anim.frame(STEP_SECONDS * 0.9).jumped, d4);
-        assert_eq!(anim.frame(STEP_SECONDS * 1.1).jumped, d4);
-        assert_eq!(anim.frame(STEP_SECONDS * 1.9).jumped, d4 | f6);
+        let d4 = square("d4");
+        assert!(!anim.has_discharge(), "one captured piece: no discharge");
+        assert_eq!(anim.first_strike_time(), None);
         let travel = anim.travel_seconds();
-        assert!((travel - 2.0 * (STEP_SECONDS + EXTRA_SQUARE_SECONDS)).abs() < 1e-9);
+        assert!((travel - HOP).abs() < 1e-9);
+        assert!((anim.total_seconds() - (travel + FADE_SECONDS)).abs() < 1e-9);
+        // Before the jump the piece is intact; after it, it dims and stands until the move ends.
+        assert_eq!(anim.frame(travel * 0.4).jumped, 0);
+        assert_eq!(anim.captured_alpha(d4, travel * 0.4), 1.0);
+        assert_eq!(anim.frame(travel * 0.6).jumped, d4.bit());
+        assert_eq!(anim.captured_alpha(d4, travel * 0.6), CAPTURED_ALPHA);
         let landed = anim.frame(travel + 1e-6);
         assert!(landed.arrived && !landed.finished);
-        assert!(landed.captured_alpha > 0.9);
-        let fading = anim.frame(travel + FADE_SECONDS / 2.0);
-        assert!((fading.captured_alpha - 0.5).abs() < 0.01);
+        assert!((anim.captured_alpha(d4, travel + 1e-6) - CAPTURED_ALPHA).abs() < 1e-3);
+        let half = anim.captured_alpha(d4, travel + FADE_SECONDS / 2.0);
+        assert!((half - CAPTURED_ALPHA / 2.0).abs() < 0.01);
+        assert_eq!(anim.captured_alpha(d4, travel + FADE_SECONDS + 1e-6), 0.0);
         assert!(anim.frame(travel + FADE_SECONDS + 1e-6).finished);
+        // Other squares do not depend on the animation.
+        assert_eq!(anim.captured_alpha(square("a1"), 100.0), 1.0);
+    }
+
+    #[test]
+    fn multi_capture_strikes_each_piece_as_the_piece_flies_over_it() {
+        let (mv, piece) = only_move("W:Wa1:Bb2,d4,f6");
+        let anim = MoveAnimation::new(mv, piece, 0, 5.0);
+        let victims = [square("b2"), square("d4"), square("f6")];
+        assert!(anim.has_discharge());
+        let travel = anim.travel_seconds();
+        assert!((travel - 3.0 * HOP).abs() < 1e-9);
+        // A man jumps over a piece in the middle of the jump.
+        assert!((anim.first_strike_time().unwrap() - (5.0 + 0.5 * HOP)).abs() < 1e-9);
+        for (index, sq) in victims.into_iter().enumerate() {
+            let strike = 5.0 + (index as f64 + 0.5) * HOP;
+            assert_eq!(
+                anim.captured_alpha(sq, strike - 1e-6),
+                1.0,
+                "{sq}: the piece is intact before the fly-over"
+            );
+            assert_eq!(anim.frame(strike - 1e-6).jumped & sq.bit(), 0);
+            assert_ne!(anim.frame(strike + 1e-6).jumped & sq.bit(), 0);
+            let half = anim.captured_alpha(sq, strike + fx::VANISH_SECONDS / 2.0);
+            assert!((half - 0.5).abs() < 0.01, "{sq}: {half}");
+            assert_eq!(
+                anim.captured_alpha(sq, strike + fx::VANISH_SECONDS + 1e-6),
+                0.0,
+                "{sq}"
+            );
+            // At this moment the capturing piece is exactly over the captured one.
+            let over = anim.frame(strike);
+            assert!((over.file - f32::from(sq.file())).abs() < 1e-3);
+            assert!((over.rank - f32::from(sq.rank())).abs() < 1e-3);
+        }
+        // The first piece is gone long before the move ends.
+        assert_eq!(anim.captured_alpha(victims[0], 5.0 + 1.5 * HOP), 0.0);
+        // The move is finished when the lightning has gone out.
+        let total = anim.total_seconds();
+        assert!((total - (travel + fx::TRAIL_SECONDS)).abs() < 1e-9);
+        assert!(!anim.frame(5.0 + total - 0.01).finished);
+        assert!(anim.frame(5.0 + total + 1e-6).finished);
+    }
+
+    #[test]
+    fn discharge_follows_the_piece_exactly() {
+        for flipped in [false, true] {
+            let (mv, piece) = only_move("W:Wa1:Bb2,d4,f6");
+            let anim = MoveAnimation::new(mv, piece, 0, 5.0);
+            let fx = anim.discharge(flipped, 7).unwrap();
+            assert_eq!(fx.start(), 5.0);
+            assert!((fx.arrival() - (5.0 + anim.travel_seconds())).abs() < 1e-9);
+            assert!(
+                (fx.bolt_end() - (5.0 + anim.total_seconds())).abs() < 1e-9,
+                "the move ends together with the lightning"
+            );
+            // The head of the lightning coincides with the piece at every moment.
+            for step in 0..=120 {
+                let now = 4.9 + f64::from(step) * 0.007;
+                let frame = anim.frame(now);
+                let expected = screen_cell(frame.file, frame.rank, flipped);
+                let head = fx.head(now);
+                assert!(
+                    (head.0 - expected.0).abs() < 1e-4 && (head.1 - expected.1).abs() < 1e-4,
+                    "t = {now}"
+                );
+            }
+            // The strikes hit the captured pieces, in the order of capture, as the piece
+            // flies over.
+            let strikes = fx.strikes();
+            assert_eq!(strikes.len(), 3);
+            for (index, name) in ["b2", "d4", "f6"].into_iter().enumerate() {
+                let sq = square(name);
+                assert_eq!(
+                    strikes[index].center,
+                    screen_cell(f32::from(sq.file()), f32::from(sq.rank()), flipped)
+                );
+                assert!((strikes[index].time - (5.0 + (index as f64 + 0.5) * HOP)).abs() < 1e-9);
+                let head = fx.head(strikes[index].time);
+                assert!((head.0 - strikes[index].center.0).abs() < 1e-3);
+                let direction = strikes[index].direction;
+                assert!((direction.0.hypot(direction.1) - 1.0).abs() < 1e-4);
+            }
+            // The piece flies up and to the right; on a turned board, down and to the left.
+            let direction = strikes[0].direction;
+            assert_eq!((direction.0 > 0.0, direction.1 < 0.0), (!flipped, !flipped));
+            // The lightning is visible while the piece is still moving.
+            assert_ne!(fx.frame(5.0 + 0.3 * HOP, EffectSet::ALL).bolts, []);
+        }
+    }
+
+    #[test]
+    fn king_strikes_a_distant_piece_when_it_is_over_it() {
+        // The king on a1 captures c3 (landing on e5) and then g7: the route a1:e5:h8. Both
+        // jumps are long, and the captured pieces are not in the middle of them.
+        let (mv, piece) = named_move("W:WKa1:Bc3,g7", "a1:e5:h8");
+        let anim = MoveAnimation::new(mv, piece, 0, 0.0);
+        let fx = anim.discharge(false, 1).unwrap();
+        for (strike, name) in fx.strikes().iter().zip(["c3", "g7"]) {
+            let sq = square(name);
+            let over = anim.frame(strike.time);
+            assert!(
+                (over.file - f32::from(sq.file())).abs() < 2e-3,
+                "{name}: {}",
+                over.file
+            );
+            assert!((over.rank - f32::from(sq.rank())).abs() < 2e-3, "{name}");
+            assert_eq!(anim.captured_alpha(sq, strike.time - 1e-6), 1.0);
+            assert!(anim.captured_alpha(sq, strike.time + 0.02) < 1.0);
+        }
+        // First jump: c3 is half way (a1 → e5); second: g7 is two thirds of the way (e5 → h8).
+        let first_hop = segment_seconds(square("a1"), square("e5"));
+        assert!((fx.strikes()[0].time - first_hop * 0.5).abs() < 1e-6);
+        let second_hop = segment_seconds(square("e5"), square("h8"));
+        let expected = first_hop + second_hop * fx::ease_inverse(2.0 / 3.0);
+        assert!((fx.strikes()[1].time - expected).abs() < 1e-6);
+        assert!(fx.strikes()[1].time > first_hop + second_hop * 0.5);
+    }
+
+    #[test]
+    fn hops_made_by_hand_are_struck_at_once() {
+        // The player made the first jump by hand: the piece on d4 already stands dimmed.
+        let (mv, piece) = only_move("W:Wc3:Bd4,f6");
+        let anim = MoveAnimation::new(mv, piece, 1, 0.0);
+        let (d4, f6) = (square("d4"), square("f6"));
+        assert!(
+            anim.has_discharge(),
+            "the discharge does not depend on how many steps have been shown"
+        );
+        let start = anim.frame(0.0);
+        assert_eq!(
+            (start.file, start.rank),
+            (4.0, 4.0),
+            "the animation starts from e5"
+        );
+        assert_eq!(start.jumped, d4.bit(), "the first piece is already captured");
+        assert_eq!(anim.landing_times().len(), 1);
+        assert_eq!(anim.first_strike_time(), Some(0.0));
+        assert_eq!(anim.captured_alpha(d4, -0.1), CAPTURED_ALPHA);
+        assert!(anim.captured_alpha(d4, fx::VANISH_SECONDS / 2.0) < CAPTURED_ALPHA);
+        assert_eq!(anim.captured_alpha(d4, fx::VANISH_SECONDS + 1e-6), 0.0);
+        assert_eq!(anim.captured_alpha(f6, 0.4 * HOP), 1.0);
+        assert_eq!(
+            anim.captured_alpha(f6, 0.5 * HOP + fx::VANISH_SECONDS + 1e-6),
+            0.0
+        );
+        // The lightning flashes at once on the leg c3–e5 that is already behind.
+        let fx = anim.discharge(false, 3).unwrap();
+        assert_eq!(fx.head(0.0), screen_cell(4.0, 4.0, false));
+        let frame = fx.frame(0.01, EffectSet::ALL);
+        let c3 = screen_cell(2.0, 2.0, false);
+        assert!(
+            frame.bolts.iter().any(|b| b.points[0] == c3),
+            "the lightning starts from the starting square"
+        );
+
+        // All jumps are shown (the piece was dragged): no travel, everything flashes at once.
+        let dropped = MoveAnimation::new(mv, piece, 2, 0.0);
+        assert_eq!(dropped.travel_seconds(), 0.0);
+        assert!(dropped.frame(0.0).arrived);
+        assert!((dropped.total_seconds() - fx::TRAIL_SECONDS).abs() < 1e-9);
+        assert_eq!(dropped.captured_alpha(f6, -0.01), CAPTURED_ALPHA);
+        assert_eq!(dropped.captured_alpha(f6, fx::VANISH_SECONDS + 1e-6), 0.0);
+        let clamped = MoveAnimation::new(mv, piece, 99, 0.0);
+        assert!(clamped.frame(0.0).arrived);
+        assert!(clamped.discharge(true, 1).is_some());
+    }
+
+    #[test]
+    fn discharge_can_be_switched_off() {
+        // Without special effects a capture of several pieces plays like an ordinary one:
+        // the pieces dim and disappear after the move is finished.
+        let (mv, piece) = only_move("W:Wa1:Bb2,d4,f6");
+        let anim = MoveAnimation::new(mv, piece, 0, 0.0).with_discharge(false);
+        assert!(!anim.has_discharge());
+        assert!(anim.discharge(false, 1).is_none());
+        assert_eq!(anim.first_strike_time(), None);
+        let travel = anim.travel_seconds();
+        assert!((anim.total_seconds() - (travel + FADE_SECONDS)).abs() < 1e-9);
+        let b2 = square("b2");
+        assert_eq!(anim.captured_alpha(b2, 0.4 * HOP), 1.0);
+        assert_eq!(
+            anim.captured_alpha(b2, 1.5 * HOP),
+            CAPTURED_ALPHA,
+            "it stands until the end of the move"
+        );
+        assert_eq!(anim.captured_alpha(b2, travel + FADE_SECONDS + 1e-6), 0.0);
+        // A single capture cannot have a discharge switched on.
+        let (single, man) = only_move("W:Wc3,a1:Bd4");
+        assert!(!MoveAnimation::new(single, man, 0, 0.0)
+            .with_discharge(true)
+            .has_discharge());
+        assert!(MoveAnimation::new(mv, piece, 0, 0.0)
+            .with_discharge(true)
+            .has_discharge());
     }
 
     #[test]
     fn promotion_during_capture_shows_a_king_after_landing() {
-        // Белая простая d6 бьёт e7, встаёт на f8, становится дамкой и тут же бьёт g7.
+        // The white man on d6 captures e7, lands on f8, becomes a king and at once captures g7.
         let (mv, piece) = only_move("W:Wd6:Be7,g7");
         assert_eq!(piece.kind, Kind::Man);
         assert_eq!(piece.color, Color::White);
         assert_eq!(mv.promotion_step(), Some(0));
         let anim = MoveAnimation::new(mv, piece, 0, 0.0);
         let first = segment_seconds(mv.from(), mv.path()[0]);
-        assert!(!anim.frame(first * 0.5).is_king, "до дамочного поля — простая");
-        assert!(anim.frame(first + 0.01).is_king, "после приземления — дамка");
+        assert!(
+            !anim.frame(first * 0.5).is_king,
+            "a man before the promotion square"
+        );
+        assert!(anim.frame(first + 0.01).is_king, "a king after landing");
         assert!(anim.frame(anim.total_seconds() + 1.0).is_king);
-    }
-
-    #[test]
-    fn already_shown_steps_are_skipped() {
-        let (mv, piece) = only_move("W:Wc3:Bd4,f6");
-        let anim = MoveAnimation::new(mv, piece, 1, 0.0);
-        let d4 = Square::parse("d4").unwrap().bit();
-        let start = anim.frame(0.0);
-        assert_eq!((start.file, start.rank), (4.0, 4.0), "анимация начинается с e5");
-        assert_eq!(start.jumped, d4, "первая шашка уже побита");
-        assert_eq!(anim.landing_times().len(), 1);
-        let skipped = MoveAnimation::new(mv, piece, 2, 0.0);
-        assert_eq!(skipped.travel_seconds(), 0.0);
-        assert!(skipped.frame(0.0).arrived);
-        let clamped = MoveAnimation::new(mv, piece, 99, 0.0);
-        assert!(clamped.frame(0.0).arrived);
     }
 }

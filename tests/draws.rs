@@ -1,9 +1,9 @@
-//! Автоматические ничьи: каждое правило срабатывает точно на нужном ходу, не раньше,
-//! а счётчики сбрасываются при изменении соотношения сил.
+//! Automatic draws: every rule fires exactly on the right move, not earlier, and the
+//! counters are reset when the balance of forces changes.
 //!
-//! Длинные последовательности тихих ходов строятся детерминированным перебором
-//! (`common::quiet_line`): в них нет взятий и повторений позиций, поэтому каждое
-//! правило проверяется отдельно от остальных. Номер полухода считается от единицы.
+//! Long sequences of quiet moves are built by a deterministic search
+//! (`common::quiet_line`): they contain no captures and no repeated positions, so every
+//! rule is checked separately from the others. Plies are numbered from one.
 
 mod common;
 
@@ -16,11 +16,12 @@ use rucheckers::rules::{
 };
 use rucheckers::tree::GameTree;
 
-/// Условие на ход: номер полухода в строящейся линии (от 1), позиция до хода и ход.
+/// A condition on a move: the ply number in the line being built (from 1), the position
+/// before the move, the move.
 type Allow<'a> = &'a dyn Fn(usize, &Position, &Move) -> bool;
 
-/// Продолжает партию из текущего узла тихой линией до `max_plies` полуходов и
-/// возвращает, на каком полуходе линии партия закончилась и чем.
+/// Continues the game from the current node with a quiet line of up to `max_plies`
+/// plies and returns the ply of the line at which the game ended, and how.
 fn run(tree: &mut GameTree, max_plies: usize, allow: Allow) -> Option<(usize, Outcome)> {
     let path = tree.path_to(tree.current());
     let avoid: Vec<Position> = path
@@ -31,7 +32,7 @@ fn run(tree: &mut GameTree, max_plies: usize, allow: Allow) -> Option<(usize, Ou
     let start = *tree.current_node().position();
     let line = quiet_line(&start, &avoid, max_plies, allow);
     for (i, m) in line.iter().enumerate() {
-        tree.play(m).unwrap_or_else(|e| panic!("полуход {}: {e}", i + 1));
+        tree.play(m).unwrap_or_else(|e| panic!("ply {}: {e}", i + 1));
         if let Some(result) = tree.current_node().outcome() {
             return Some((i + 1, result));
         }
@@ -39,36 +40,36 @@ fn run(tree: &mut GameTree, max_plies: usize, allow: Allow) -> Option<(usize, Ou
     None
 }
 
-/// Проверяет, что ничья наступает ровно на полуходе `expected` тихой линии.
+/// Checks that the draw comes exactly at the ply `expected` of a quiet line.
 fn assert_draw_at(tree: &mut GameTree, expected: usize, reason: DrawReason, allow: Allow) {
     let result = run(tree, expected + 6, allow);
     assert_eq!(
         result,
         Some((expected, Outcome::Draw(reason))),
-        "ожидалась ничья на полуходе {expected}"
+        "a draw was expected at ply {expected}"
     );
 }
 
-fn any_quiet(_: usize, _: &Position, m: &Move) -> bool {
+const fn any_quiet(_: usize, _: &Position, m: &Move) -> bool {
     !m.promotes()
 }
 
-fn kings_only(_: usize, p: &Position, m: &Move) -> bool {
+const fn kings_only(_: usize, p: &Position, m: &Move) -> bool {
     is_king_move(p, m)
 }
 
-/// Одинокая дамка чёрных не выходит на большую дорогу (иначе начнёт действовать правило 5).
+/// Black's lone king stays off the main road (otherwise rule 5 would start to apply).
 fn black_off_road(_: usize, p: &Position, m: &Move) -> bool {
     is_king_move(p, m) && (p.side == Color::White || !m.to().on_main_road())
 }
 
-/// Одинокая дамка чёрных остаётся на большой дороге; простые белых не доходят до дамок.
+/// Black's lone king stays on the main road; White's men do not reach promotion.
 fn black_on_road(_: usize, p: &Position, m: &Move) -> bool {
     !m.promotes() && (p.side == Color::White || m.to().on_main_road())
 }
 
 // ---------------------------------------------------------------------------
-// Правило 1: троекратное повторение
+// Rule 1: threefold repetition
 // ---------------------------------------------------------------------------
 
 const SHUFFLE_FEN: &str = "W:WKg1,a1,c1,e1:BKb8,d8,f8,h8";
@@ -78,18 +79,18 @@ fn rule1_third_occurrence_is_a_draw_and_not_earlier() {
     assert_eq!(REPETITION_LIMIT, 3);
     let mut tree = GameTree::from_position(pos(SHUFFLE_FEN));
     let cycle = ["g1-h2", "b8-a7", "h2-g1", "a7-b8"];
-    // Первый круг: исходная позиция возникла во второй раз.
+    // The first round: the starting position has occurred for the second time.
     play_all(&mut tree, &cycle);
     assert_eq!(tree.current_node().occurrences(), 2);
     assert_eq!(
         tree.current_node().outcome(),
         None,
-        "второе появление — ещё не ничья"
+        "the second occurrence is not a draw yet"
     );
-    // Второй круг: до последнего хода партия продолжается.
+    // The second round: the game goes on until the last move.
     for text in &cycle[..3] {
         play(&mut tree, text);
-        assert_eq!(tree.current_node().outcome(), None, "после {text}");
+        assert_eq!(tree.current_node().outcome(), None, "after {text}");
         assert_eq!(tree.current_node().occurrences(), 2);
     }
     play(&mut tree, cycle[3]);
@@ -104,7 +105,7 @@ fn rule1_third_occurrence_is_a_draw_and_not_earlier() {
 #[test]
 fn rule1_third_occurrence_need_not_be_consecutive() {
     let mut tree = GameTree::from_position(pos(SHUFFLE_FEN));
-    // Между повторениями партия уходит в другие позиции.
+    // Between the repetitions the game visits other positions.
     play_all(&mut tree, &["g1-h2", "b8-a7", "h2-g1", "a7-b8"]);
     play_all(&mut tree, &["g1-f2", "b8-a7", "f2-g1"]);
     assert_eq!(tree.current_node().outcome(), None);
@@ -117,8 +118,8 @@ fn rule1_third_occurrence_need_not_be_consecutive() {
 
 #[test]
 fn rule1_same_arrangement_with_the_other_side_to_move_does_not_count() {
-    // Белая дамка возвращается на место за три хода (c1-e3-d2-c1), чёрная — за два:
-    // расстановка та же, но очередь хода другая.
+    // The white king returns to its place in three moves (c1-e3-d2-c1), the black one in
+    // two: the placement is the same, but the side to move is different.
     let start = pos("W:WKc1:BKh8");
     let mut tree = GameTree::from_position(start);
     play_all(&mut tree, &["c1-e3", "h8-g7", "e3-d2", "g7-h8", "d2-c1"]);
@@ -135,16 +136,16 @@ fn rule1_same_arrangement_with_the_other_side_to_move_does_not_count() {
 #[test]
 fn rule1_repetitions_are_counted_along_the_current_branch_only() {
     let mut tree = GameTree::from_position(pos(SHUFFLE_FEN));
-    // Ветка A: позиция Q (дамка на h2, ход чёрных).
+    // Branch A: the position Q (a king on h2, Black to move).
     let a = play(&mut tree, "g1-h2");
     assert_eq!(tree.current_node().occurrences(), 1);
-    // Ветка B из начала: один круг другим маршрутом, затем та же позиция Q.
+    // Branch B from the start: one round by another route, then the same position Q.
     tree.go_to(GameTree::ROOT);
     play_all(&mut tree, &["g1-f2", "b8-a7", "f2-g1", "a7-b8"]);
     assert_eq!(
         tree.current_node().occurrences(),
         2,
-        "исходная позиция — второй раз на ветке B"
+        "the starting position for the second time on branch B"
     );
     let q = play(&mut tree, "g1-h2");
     assert_ne!(q, a);
@@ -152,9 +153,9 @@ fn rule1_repetitions_are_counted_along_the_current_branch_only() {
     assert_eq!(
         tree.current_node().occurrences(),
         1,
-        "появление Q на ветке A не считается"
+        "the occurrence of Q on branch A does not count"
     );
-    // На ветке B исходная позиция возникает в третий раз — ничья именно здесь.
+    // On branch B the starting position occurs for the third time: the draw is right here.
     play_all(&mut tree, &["b8-a7", "h2-g1"]);
     assert_eq!(tree.current_node().outcome(), None);
     play(&mut tree, "a7-b8");
@@ -162,18 +163,18 @@ fn rule1_repetitions_are_counted_along_the_current_branch_only() {
         tree.current_node().outcome(),
         Some(Outcome::Draw(DrawReason::Repetition))
     );
-    // Ветка A при этом осталась незаконченной.
+    // Branch A is still unfinished.
     assert_eq!(tree.get(a).unwrap().outcome(), None);
 }
 
 // ---------------------------------------------------------------------------
-// Правило 2: три и более дамки против одной дамки — 15 ходов сильнейшей стороны
+// Rule 2: three or more kings against one king, 15 moves of the stronger side
 // ---------------------------------------------------------------------------
 
 #[test]
 fn rule2_draw_on_the_fifteenth_move_of_the_stronger_side() {
     assert_eq!(KINGS_VS_KING_MOVES, 15);
-    // Ход белых (сильнейших): их 15-й ход — полуход 29.
+    // White (the stronger side) to move: its 15th move is ply 29.
     let mut tree = GameTree::from_position(pos("W:WKc1,Ke1,Kg1:BKb8"));
     assert_draw_at(&mut tree, 29, DrawReason::KingsVsKing, &black_off_road);
     assert_eq!(tree.current_node().state().counters.kings_vs_king, 15);
@@ -181,7 +182,7 @@ fn rule2_draw_on_the_fifteenth_move_of_the_stronger_side() {
 
 #[test]
 fn rule2_counts_moves_of_the_stronger_side_when_the_weaker_moves_first() {
-    // Ход чёрных: 15-й ход белых — полуход 30.
+    // Black to move: White's 15th move is ply 30.
     let mut tree = GameTree::from_position(pos("B:WKc1,Ke1,Kg1:BKb8"));
     assert_draw_at(&mut tree, 30, DrawReason::KingsVsKing, &black_off_road);
 }
@@ -191,7 +192,7 @@ fn rule2_applies_to_more_than_three_kings_and_to_black_as_the_stronger_side() {
     let mut tree = GameTree::from_position(pos("W:WKa3,Kc1,Ke1,Kg1:BKb8"));
     assert_draw_at(&mut tree, 29, DrawReason::KingsVsKing, &black_off_road);
 
-    // Сильнейшая сторона — чёрные; одинокая белая дамка держится вне большой дороги.
+    // The stronger side is Black; the lone white king keeps off the main road.
     let white_off_road = |_: usize, p: &Position, m: &Move| {
         is_king_move(p, m) && (p.side == Color::Black || !m.to().on_main_road())
     };
@@ -201,7 +202,7 @@ fn rule2_applies_to_more_than_three_kings_and_to_black_as_the_stronger_side() {
 
 #[test]
 fn rule2_does_not_apply_to_two_kings_or_to_a_lone_man() {
-    // Две дамки и простая против дамки: правило 2 не отсчитывается.
+    // Two kings and a man against a king: rule 2 does not count.
     let mut tree = GameTree::from_position(pos("W:WKc1,Ke1,g1:BKb8"));
     let result = run(&mut tree, 20, &black_off_road);
     assert_eq!(result, None);
@@ -210,8 +211,8 @@ fn rule2_does_not_apply_to_two_kings_or_to_a_lone_man() {
 
 #[test]
 fn rule2_counter_restarts_when_the_balance_changes_by_capture() {
-    // Четыре дамки против одной; чёрные бьют одну из них — соотношение стало «три против
-    // одной», и 15 ходов белых отсчитываются заново от этого момента.
+    // Four kings against one; Black captures one of them, the balance becomes "three
+    // against one", and White's 15 moves are counted anew from that moment.
     let start = pos("B:WKc1,Ke1,Kg1,Kf6:BKh8");
     let seasoned = GameState {
         pos: start,
@@ -226,16 +227,16 @@ fn rule2_counter_restarts_when_the_balance_changes_by_capture() {
     let mut tree = GameTree::from_position(start);
     tree.play(&capture).unwrap();
     assert_eq!(tree.current_node().outcome(), None);
-    // Чёрная дамка сразу уходит с большой дороги и больше на неё не возвращается.
-    // 15-й ход белых после взятия — полуход 29 этой линии (30-й от начала).
+    // The black king leaves the main road at once and never returns to it. White's 15th
+    // move after the capture is ply 29 of this line (the 30th from the start).
     assert_draw_at(&mut tree, 29, DrawReason::KingsVsKing, &black_off_road);
     assert_eq!(tree.current_node().ply(), 30);
 }
 
 #[test]
 fn rule2_counter_restarts_when_the_balance_changes_by_promotion() {
-    // Три дамки и простая против дамки. Пять ходов белых дамками, затем (11-й полуход)
-    // простая проходит в дамки: соотношение изменилось, отсчёт начинается заново.
+    // Three kings and a man against a king. Five moves by White's kings, then (ply 11)
+    // the man is promoted: the balance has changed, and the count starts anew.
     let schedule = |ply: usize, p: &Position, m: &Move| {
         if ply == 11 {
             return m.promotes();
@@ -243,20 +244,20 @@ fn rule2_counter_restarts_when_the_balance_changes_by_promotion() {
         is_king_move(p, m) && (p.side == Color::White || !m.to().on_main_road())
     };
     let mut tree = GameTree::from_position(pos("W:WKc1,Ke1,Kg1,a7:BKh2"));
-    // Без сброса ничья наступила бы на 29-м полуходе; со сбросом 15-й ход белых после
-    // превращения — 41-й полуход.
+    // Without the reset the draw would come at ply 29; with it, White's 15th move after
+    // the promotion is ply 41.
     assert_draw_at(&mut tree, 41, DrawReason::KingsVsKing, &schedule);
     let path = tree.path_to(tree.current());
     let counter = |ply: usize| tree.get(path[ply]).unwrap().state().counters.kings_vs_king;
     assert_eq!(counter(10), 5);
-    assert_eq!(counter(11), 0, "превращение изменило соотношение сил");
+    assert_eq!(counter(11), 0, "the promotion changed the balance of forces");
     assert_eq!(counter(13), 1);
-    assert_eq!(counter(29), 9, "на 29-м полуходе до лимита далеко");
+    assert_eq!(counter(29), 9, "at ply 29 the limit is still far away");
 }
 
 #[test]
 fn rule2_winning_on_the_fifteenth_move_is_a_win_not_a_draw() {
-    // 14 ходов сделано. Пятнадцатым ходом белые запирают дамку — это выигрыш.
+    // 14 moves are made. With the fifteenth White blocks the king: that is a win.
     let start = pos("W:WKc1,Kc3,Kg1:BKa1");
     let state = GameState {
         pos: start,
@@ -273,10 +274,10 @@ fn rule2_winning_on_the_fifteenth_move_is_a_win_not_a_draw() {
             reason: WinReason::NoMoves
         })
     );
-    // Любой другой пятнадцатый ход — ничья.
+    // Any other fifteenth move is a draw.
     let idle = state.play(&mv(&start, "g1-h2"));
     assert_eq!(idle.outcome(1), Some(Outcome::Draw(DrawReason::KingsVsKing)));
-    // А четырнадцатый ход ничьей ещё не даёт.
+    // And the fourteenth move does not give a draw yet.
     let earlier = GameState {
         pos: start,
         counters: DrawCounters {
@@ -288,13 +289,13 @@ fn rule2_winning_on_the_fifteenth_move_is_a_win_not_a_draw() {
 }
 
 // ---------------------------------------------------------------------------
-// Правило 3: 15 ходов только дамками
+// Rule 3: 15 moves by kings only
 // ---------------------------------------------------------------------------
 
 #[test]
 fn rule3_draw_after_fifteen_king_only_moves_by_each_side() {
     assert_eq!(KINGS_ONLY_MOVES, 15);
-    // На доске восемь фигур: правило 4 не действует, проверяется только правило 3.
+    // Eight pieces on the board: rule 4 does not apply, only rule 3 is checked.
     let mut tree = GameTree::from_position(pos(SHUFFLE_FEN));
     assert_draw_at(&mut tree, 30, DrawReason::KingsOnly, &kings_only);
     assert_eq!(tree.current_node().state().counters.kings_only, 30);
@@ -302,10 +303,10 @@ fn rule3_draw_after_fifteen_king_only_moves_by_each_side() {
 
 #[test]
 fn rule3_counter_restarts_after_a_man_move() {
-    // Двадцать полуходов дамками, на 21-м ходит простая — серия прервана.
+    // Twenty plies by kings; at the 21st a man moves and the series is broken.
     let schedule = |ply: usize, p: &Position, m: &Move| !m.promotes() && ((ply == 21) != is_king_move(p, m));
     let mut tree = GameTree::from_position(pos(SHUFFLE_FEN));
-    // Без хода простой ничья была бы на 30-м полуходе; теперь — на 51-м.
+    // Without the man's move the draw would come at ply 30; now it comes at ply 51.
     assert_draw_at(&mut tree, 51, DrawReason::KingsOnly, &schedule);
     let path = tree.path_to(tree.current());
     let counter = |ply: usize| tree.get(path[ply]).unwrap().state().counters.kings_only;
@@ -324,11 +325,11 @@ fn rule3_counter_restarts_after_a_capture_even_by_a_king() {
             ..DrawCounters::default()
         },
     };
-    // Взятие дамкой серию прерывает…
+    // A capture by a king breaks the series…
     let capture = state.play(&mv(&start, "a1:d4"));
     assert_eq!(capture.counters.kings_only, 0);
     assert_eq!(capture.outcome(1), None);
-    // …а тихий ход дамки в такой же ситуации стал бы тридцатым.
+    // …while a quiet king move in the same situation would be the thirtieth.
     let quiet_start = pos("W:WKa1,c1:BKh2,h8,f8");
     let quiet = GameState {
         pos: quiet_start,
@@ -344,12 +345,12 @@ fn rule3_counter_restarts_after_a_capture_even_by_a_king() {
     assert_eq!(
         quiet.play(&mv(&quiet_start, "c1-d2")).outcome(1),
         None,
-        "ход простой"
+        "a move of a man"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Правило 4: соотношение сил не меняется (у обеих сторон дамки)
+// Rule 4: the balance of forces does not change (both sides have kings)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -371,7 +372,7 @@ fn rule4_two_and_three_pieces_five_moves() {
         &any_quiet,
     );
 
-    // Ходы простой соотношения сил не меняют и отсчёт не прерывают.
+    // Moves of a man do not change the balance of forces and do not interrupt the count.
     let man_on_third_ply =
         |ply: usize, p: &Position, m: &Move| !m.promotes() && ((ply == 3) != is_king_move(p, m));
     let mut tree = GameTree::from_position(pos("W:WKc1,a1:BKf8"));
@@ -383,7 +384,7 @@ fn rule4_two_and_three_pieces_five_moves() {
     );
 }
 
-/// Ходят дамки, но на указанных полуходах — простые: так правило 3 не срабатывает раньше.
+/// Kings move, but at the given plies men do: this keeps rule 3 from firing earlier.
 fn men_at(plies: &'static [usize]) -> impl Fn(usize, &Position, &Move) -> bool {
     move |ply, p, m| !m.promotes() && (plies.contains(&ply) != is_king_move(p, m))
 }
@@ -431,12 +432,12 @@ fn rule4_six_and_seven_pieces_sixty_moves() {
 
 #[test]
 fn rule4_needs_kings_on_both_sides_and_at_most_seven_pieces() {
-    // У чёрных нет дамки — отсчёт не ведётся.
+    // Black has no king: nothing is counted.
     let mut tree = GameTree::from_position(pos("W:WKc1,a1:Bh8,f8"));
     let no_promotion = |_: usize, _: &Position, m: &Move| !m.promotes();
     assert_eq!(run(&mut tree, 8, &no_promotion), None);
     assert_eq!(tree.current_node().state().counters.balance, 0);
-    // Восемь фигур — отсчёт не ведётся.
+    // Eight pieces: nothing is counted.
     let mut tree = GameTree::from_position(pos(SHUFFLE_FEN));
     assert_eq!(run(&mut tree, 12, &any_quiet), None);
     assert_eq!(tree.current_node().state().counters.balance, 0);
@@ -444,8 +445,8 @@ fn rule4_needs_kings_on_both_sides_and_at_most_seven_pieces() {
 
 #[test]
 fn rule4_counter_restarts_after_promotion() {
-    // Дамка и простая против дамки. Шесть полуходов дамками, на седьмом простая
-    // становится дамкой: соотношение изменилось, пять ходов отсчитываются заново.
+    // A king and a man against a king. Six plies by kings; at the seventh the man becomes
+    // a king: the balance has changed, and the five moves are counted anew.
     let schedule = |ply: usize, p: &Position, m: &Move| {
         if ply == 7 {
             m.promotes()
@@ -454,7 +455,7 @@ fn rule4_counter_restarts_after_promotion() {
         }
     };
     let mut tree = GameTree::from_position(pos("W:WKc1,a7:BKf8"));
-    // Без сброса ничья была бы на 10-м полуходе; со сбросом — на 17-м.
+    // Without the reset the draw would come at ply 10; with it, at ply 17.
     assert_draw_at(
         &mut tree,
         17,
@@ -470,8 +471,8 @@ fn rule4_counter_restarts_after_promotion() {
 
 #[test]
 fn rule4_counter_restarts_after_capture_and_uses_the_new_piece_count() {
-    // Четыре фигуры (лимит 30 ходов). Взятие оставляет три фигуры: лимит становится
-    // равным пяти ходам и отсчитывается от взятия.
+    // Four pieces (a limit of 30 moves). A capture leaves three pieces: the limit becomes
+    // five moves and is counted from the capture.
     let start = pos("W:WKc1,e3:Bf4,Kb8");
     let seasoned = GameState {
         pos: start,
@@ -496,19 +497,19 @@ fn rule4_counter_restarts_after_capture_and_uses_the_new_piece_count() {
 }
 
 // ---------------------------------------------------------------------------
-// Правило 5: три шашки против одинокой дамки на большой дороге — 5 ходов
+// Rule 5: three pieces against a lone king on the main road, 5 moves
 // ---------------------------------------------------------------------------
 
 #[test]
 fn rule5_every_combination_of_three_pieces_draws_on_the_fifth_move() {
     assert_eq!(MAIN_ROAD_MOVES, 5);
     for fen in [
-        "W:WKc1,Ke1,Kg1:BKh8", // три дамки
-        "W:WKc1,Ke1,a3:BKh8",  // две дамки и простая
-        "W:WKc1,a3,h2:BKh8",   // дамка и две простые
-        "W:Wc1,e1,g1:BKh8",    // три простые
+        "W:WKc1,Ke1,Kg1:BKh8", // three kings
+        "W:WKc1,Ke1,a3:BKh8",  // two kings and a man
+        "W:WKc1,a3,h2:BKh8",   // a king and two men
+        "W:Wc1,e1,g1:BKh8",    // three men
     ] {
-        // Ход белых: их пятый ход — полуход 9.
+        // White to move: its fifth move is ply 9.
         let mut tree = GameTree::from_position(pos(fen));
         let result = run(&mut tree, 14, &black_on_road);
         assert_eq!(result, Some((9, Outcome::Draw(DrawReason::MainRoad))), "{fen}");
@@ -524,27 +525,27 @@ fn rule5_counts_moves_of_the_stronger_side_when_the_weaker_moves_first() {
 
 #[test]
 fn rule5_fires_before_the_slower_rules() {
-    // Три дамки против дамки на большой дороге: правило 2 дало бы ничью на 15-м ходу,
-    // правило 4 — на 30-м, но раньше всех срабатывает правило 5.
+    // Three kings against a king on the main road: rule 2 would give a draw at the 15th
+    // move and rule 4 at the 30th, but rule 5 fires before either.
     let mut tree = GameTree::from_position(pos("W:WKc1,Ke1,Kg1:BKh8"));
     let result = run(&mut tree, 40, &black_on_road).unwrap();
     assert_eq!(result, (9, Outcome::Draw(DrawReason::MainRoad)));
     let counters = tree.current_node().state().counters;
-    assert_eq!(counters.kings_vs_king, 5, "правило 2 отсчитывалось параллельно");
-    assert_eq!(counters.balance, 9, "правило 4 тоже");
+    assert_eq!(counters.kings_vs_king, 5, "rule 2 was counting in parallel");
+    assert_eq!(counters.balance, 9, "and so was rule 4");
 }
 
 #[test]
 fn rule5_does_not_apply_off_the_main_road_or_with_other_piece_counts() {
-    // Дамка не на большой дороге.
+    // The king is not on the main road.
     let mut tree = GameTree::from_position(pos("W:WKc1,Ke1,g1:BKb8"));
     assert_eq!(run(&mut tree, 12, &black_off_road), None);
     assert_eq!(tree.current_node().state().counters.main_road, 0);
-    // Четыре шашки против дамки на большой дороге.
+    // Four pieces against a king on the main road.
     let mut tree = GameTree::from_position(pos("W:WKc1,Ke1,g1,a3:BKh8"));
     assert_eq!(run(&mut tree, 12, &black_on_road), None);
     assert_eq!(tree.current_node().state().counters.main_road, 0);
-    // На большой дороге не дамка, а простая.
+    // A man, not a king, is on the main road.
     let mut tree = GameTree::from_position(pos("W:Wc1,e1,g1:Bh8"));
     let no_promotion = |_: usize, _: &Position, m: &Move| !m.promotes();
     assert_eq!(run(&mut tree, 4, &no_promotion), None);
@@ -553,7 +554,7 @@ fn rule5_does_not_apply_off_the_main_road_or_with_other_piece_counts() {
 
 #[test]
 fn rule5_counter_restarts_when_the_king_leaves_the_main_road_and_returns() {
-    // Чёрная дамка на 4-м полуходе уходит с большой дороги, на 6-м возвращается.
+    // The black king leaves the main road at ply 4 and returns at ply 6.
     let detour = |ply: usize, p: &Position, m: &Move| {
         if m.promotes() {
             return false;
@@ -565,39 +566,39 @@ fn rule5_counter_restarts_when_the_king_leaves_the_main_road_and_returns() {
         }
     };
     let mut tree = GameTree::from_position(pos("W:WKc1,Ke1,a3:BKh8"));
-    // Без ухода ничья была бы на 9-м полуходе. Теперь пять ходов белых отсчитываются
-    // от возвращения дамки на дорогу: ходы белых № 4–8, то есть полуход 15.
+    // Without the detour the draw would come at ply 9. Now White's five moves are counted
+    // from the king's return to the road: White's moves 4–8, that is, ply 15.
     assert_draw_at(&mut tree, 15, DrawReason::MainRoad, &detour);
     let path = tree.path_to(tree.current());
     let counter = |ply: usize| tree.get(path[ply]).unwrap().state().counters.main_road;
-    assert_eq!(counter(3), 2, "два хода белых до ухода дамки");
-    assert_eq!(counter(4), 0, "дамка ушла с дороги");
+    assert_eq!(counter(3), 2, "two moves by White before the king leaves");
+    assert_eq!(counter(4), 0, "the king has left the road");
     assert_eq!(counter(5), 0);
-    assert_eq!(counter(6), 0, "дамка вернулась: отсчёт начинается заново");
+    assert_eq!(counter(6), 0, "the king is back: the count starts anew");
     assert_eq!(counter(7), 1);
     assert_eq!(counter(9), 2);
 }
 
 #[test]
 fn rule5_counter_restarts_when_the_balance_changes() {
-    // Две дамки и простая; третьим своим ходом белые проводят простую в дамки.
+    // Two kings and a man; with its third move White promotes the man.
     let promote_on_fifth_ply = |ply: usize, p: &Position, m: &Move| match p.side {
         Color::White => (ply == 5) == m.promotes() && (ply == 5 || is_king_move(p, m)),
         Color::Black => m.to().on_main_road(),
     };
     let mut tree = GameTree::from_position(pos("W:WKc1,Ke1,a7:BKh8"));
-    // Пять ходов белых после превращения: ходы № 4–8, полуход 15.
+    // Five moves by White after the promotion: moves 4–8, ply 15.
     assert_draw_at(&mut tree, 15, DrawReason::MainRoad, &promote_on_fifth_ply);
     let path = tree.path_to(tree.current());
     let counter = |ply: usize| tree.get(path[ply]).unwrap().state().counters.main_road;
     assert_eq!(counter(3), 2);
-    assert_eq!(counter(5), 0, "превращение изменило соотношение сил");
+    assert_eq!(counter(5), 0, "the promotion changed the balance of forces");
     assert_eq!(counter(7), 1);
 }
 
 #[test]
 fn rule5_capturing_the_king_on_the_fifth_move_wins() {
-    // Четыре хода сделано; пятым ходом белые бьют дамку — это выигрыш, а не ничья.
+    // Four moves are made; with the fifth White captures the king: a win, not a draw.
     let start = pos("W:WKa1,c1,e1:BKc3");
     let state = GameState {
         pos: start,
@@ -614,7 +615,7 @@ fn rule5_capturing_the_king_on_the_fifth_move_wins() {
             reason: WinReason::NoPieces
         })
     );
-    // Тихий пятый ход — ничья, а четвёртый её ещё не даёт.
+    // A quiet fifth move is a draw, and the fourth does not give one yet.
     let quiet_start = pos("W:WKe1,c1,g1:BKh8");
     let fifth = GameState {
         pos: quiet_start,

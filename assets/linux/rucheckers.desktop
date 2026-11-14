@@ -1,0 +1,27 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Russian Draughts
+Name[de]=Russische Dame
+Name[es]=Damas rusas
+Name[fr]=Dames russes
+Name[id]=Dam Rusia
+Name[it]=Dama russa
+Name[ja]=ロシアンチェッカー
+Name[ko]=러시아 체커
+Name[pt]=Damas russas
+Name[ru]=Русские шашки
+Name[tr]=Rus Daması
+Name[zh_CN]=俄罗斯跳棋
+GenericName=Board Game
+GenericName[ru]=Настольная игра
+Comment=Play Russian draughts against the computer
+Comment[ru]=Игра в русские шашки против компьютера
+Exec=rucheckers %f
+Icon=rucheckers
+Terminal=false
+Categories=Game;BoardGame;
+Keywords=checkers;draughts;shashki;
+Keywords[ru]=шашки;checkers;draughts;
+StartupNotify=true
+StartupWMClass=rucheckers

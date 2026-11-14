@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 rust-version = "1.85"
 resolver = "3"
-description = "Русские шашки: игра против компьютера"
+description = "Russian draughts: a game against the computer"
 publish = false
 
 [lib]
@@ -16,23 +16,55 @@ name = "rucheckers"
 path = "src/main.rs"
 
 [dependencies]
-# Окно, ввод и векторная отрисовка (OpenGL через glow). Встроенные шрифты содержат кириллицу.
+# Window, input and vector drawing (OpenGL through glow). The built-in fonts cover Latin and
+# Cyrillic.
 eframe = { version = "=0.31.1", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
-# Оконная библиотека, на которой работает eframe. Указана явно ради её стандартного набора
-# возможностей: в Wayland под GNOME заголовок и рамку окна рисует само приложение.
+# The windowing library eframe runs on. It is listed explicitly for its default feature
+# set: on Wayland under GNOME the application draws the title bar and window frame itself.
 winit = "=0.30.13"
-# Вывод звука. Декодеры отключены: все звуки синтезируются программой.
+# Sound output. The decoders are off: the program synthesizes all its sounds.
 rodio = { version = "=0.20.1", default-features = false }
-# Системный диалог выбора файла (macOS: AppKit; Linux: XDG Desktop Portal, запасной вариант — zenity).
+# System file dialog (Windows: the common item dialog; macOS: AppKit; Linux: XDG Desktop
+# Portal, falling back to zenity).
 rfd = { version = "=0.15.4", default-features = false, features = ["xdg-portal", "async-std"] }
+
+# The language of the user's account, for the language of the first start. Linux names it
+# in environment variables; Windows and macOS have to be asked.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+sys-locale = "=0.3.2"
+
+# Compiles the icon and the manifest into the Windows executable (build.rs). Cargo builds
+# it on every system, because a build script runs on the building machine, which may be
+# cross-compiling; for other targets the script does nothing.
+[build-dependencies]
+winresource = { version = "=0.1.34", default-features = false }
+
+[lints.rust]
+# The program needs no unsafe code, so the compiler rejects any attempt to add it.
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+use_self = "warn"
+# Board geometry, pixel rendering and sound synthesis convert between integers and
+# floats all the time. The value ranges are small and covered by tests, and spelling
+# every conversion out with `try_from` would bury the arithmetic.
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+# Tests compare exactly representable values on purpose.
+float_cmp = "allow"
+# Coordinate pairs such as `outer_x_px` and `outer_y_px` are meant to look alike.
+similar_names = "allow"
 
 [profile.release]
 opt-level = 3
 lto = "thin"
 codegen-units = 1
 
-# Тесты движка (эталон генератора, партии компьютера) заметно быстрее с оптимизацией.
-# Зависимости в тестах не исполняются, поэтому собираются без неё.
+# The engine tests (move generator reference, computer games) are much faster when optimized.
+# Dependencies do not run in the tests, so they are built without optimization.
 [profile.test]
 opt-level = 2
 

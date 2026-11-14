@@ -1,8 +1,8 @@
-//! Воспроизведение звуков. Сигналы синтезируются в библиотеке (`rucheckers::sound`),
-//! здесь они только отправляются на звуковое устройство.
+//! Sound playback. The signals are synthesized in the library (`rucheckers::sound`);
+//! here they are only sent to the sound device.
 //!
-//! Устройство открывается в отдельном потоке при первом звуке. Если его нет или оно
-//! занято, игра продолжается без звука.
+//! The device is opened in a separate thread at the first sound. If there is none, or
+//! it is busy, the game goes on without sound.
 
 use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, OutputStreamHandle};
@@ -12,21 +12,21 @@ use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Пауза между попытками открыть звуковое устройство после неудачи.
+/// Pause between attempts to open the sound device after a failure.
 const RETRY_AFTER: Duration = Duration::from_secs(10);
 
-/// Проигрыватель звуков.
+/// Sound player.
 pub struct Audio {
     sender: Option<Sender<Sound>>,
 }
 
 impl Audio {
-    /// Создаёт проигрыватель. Звуковое устройство при этом не открывается.
-    pub fn new() -> Audio {
+    /// Creates a player. The sound device is not opened yet.
+    pub fn new() -> Self {
         let (sender, receiver) = channel::<Sound>();
         let worker = move || {
             let bank: HashMap<Sound, Vec<f32>> = Sound::ALL.iter().map(|&s| (s, synthesize(s))).collect();
-            // Поток вывода должен жить, пока звучит звук, и не может покидать свой поток.
+            // The output stream must live while a sound plays, and it cannot leave its thread.
             let mut output: Option<(OutputStream, OutputStreamHandle)> = None;
             let mut last_failure: Option<Instant> = None;
             for sound in receiver {
@@ -40,7 +40,7 @@ impl Audio {
                 let Some(samples) = bank.get(&sound) else { continue };
                 let source = SamplesBuffer::new(1, SAMPLE_RATE, samples.clone());
                 if handle.play_raw(source).is_err() {
-                    // Устройство пропало: при следующем звуке откроем его заново.
+                    // The device is gone: it will be opened again at the next sound.
                     output = None;
                     last_failure = Some(Instant::now());
                 }
@@ -49,12 +49,12 @@ impl Audio {
         let spawned = thread::Builder::new()
             .name("rucheckers-audio".to_string())
             .spawn(worker);
-        Audio {
+        Self {
             sender: spawned.ok().map(|_| sender),
         }
     }
 
-    /// Ставит звук в очередь воспроизведения.
+    /// Queues a sound for playback.
     pub fn play(&self, sound: Sound) {
         if let Some(sender) = &self.sender {
             let _ = sender.send(sound);

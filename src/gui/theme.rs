@@ -1,58 +1,47 @@
-//! Цвета и оформление: спокойные тёплые тона дерева, без ярких акцентов.
+//! Colours and styling: calm warm wood tones, without bright accents.
 
 use eframe::egui::{self, Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle};
 
-/// Фон окна вокруг доски.
+/// Window background around the board.
 pub const BACKGROUND: Color32 = Color32::from_rgb(0xD6, 0xC9, 0xB2);
-/// Фон панели ходов.
+/// Background of the move panel.
 pub const PANEL: Color32 = Color32::from_rgb(0xEE, 0xE5, 0xD6);
-/// Фон диалогов и списка ходов.
+/// Background of dialogs and of the move list.
 pub const PAPER: Color32 = Color32::from_rgb(0xF6, 0xF0, 0xE4);
-/// Основной текст.
+/// Main text.
 pub const TEXT: Color32 = Color32::from_rgb(0x3A, 0x2D, 0x22);
-/// Второстепенный текст.
+/// Secondary text.
 pub const TEXT_WEAK: Color32 = Color32::from_rgb(0x7B, 0x6A, 0x58);
-/// Линии и рамки элементов управления.
+/// Lines and borders of controls.
 pub const BORDER: Color32 = Color32::from_rgb(0xC4, 0xB4, 0x9B);
 const BUTTON: Color32 = Color32::from_rgb(0xE2, 0xD6, 0xC1);
 const BUTTON_HOVER: Color32 = Color32::from_rgb(0xD8, 0xC9, 0xAF);
 const BUTTON_ACTIVE: Color32 = Color32::from_rgb(0xCB, 0xB9, 0x99);
-/// Выделение текущего хода в списке.
+/// Highlight of the current move in the list.
 pub const SELECTION: Color32 = Color32::from_rgb(0xD3, 0xB3, 0x7C);
 
-/// Рамка доски.
+/// Board frame.
 pub const FRAME: Color32 = Color32::from_rgb(0x5E, 0x3F, 0x26);
 pub const FRAME_DARK: Color32 = Color32::from_rgb(0x3E, 0x28, 0x17);
 pub const FRAME_LIGHT: Color32 = Color32::from_rgb(0x7C, 0x57, 0x36);
-/// Подписи координат на рамке.
+/// Coordinate labels on the frame.
 pub const COORDINATES: Color32 = Color32::from_rgb(0xE6, 0xD2, 0xA8);
-/// Светлые и тёмные поля.
+/// Light and dark squares.
 pub const SQUARE_LIGHT: Color32 = Color32::from_rgb(0xE9, 0xD5, 0xAC);
 pub const SQUARE_DARK: Color32 = Color32::from_rgb(0xA0, 0x6F, 0x40);
 
-/// Белая шашка: верх, тень на краю верха, боковая грань, контур и проточки.
+/// Side-to-move mark in the corner of the frame: the colours of White and Black and their outline.
 pub const WHITE_FACE: Color32 = Color32::from_rgb(0xF6, 0xEE, 0xDB);
-pub const WHITE_FACE_SHADE: Color32 = Color32::from_rgb(0xE2, 0xD6, 0xB9);
-pub const WHITE_SIDE: Color32 = Color32::from_rgb(0xBF, 0xAE, 0x88);
 pub const WHITE_OUTLINE: Color32 = Color32::from_rgb(0x8E, 0x7D, 0x5C);
-pub const WHITE_GROOVE: Color32 = Color32::from_rgb(0xC6, 0xB6, 0x92);
-/// Чёрная шашка.
 pub const BLACK_FACE: Color32 = Color32::from_rgb(0x4A, 0x38, 0x2D);
-pub const BLACK_FACE_SHADE: Color32 = Color32::from_rgb(0x30, 0x23, 0x1B);
-pub const BLACK_SIDE: Color32 = Color32::from_rgb(0x1E, 0x15, 0x10);
-pub const BLACK_OUTLINE: Color32 = Color32::from_rgb(0x14, 0x0D, 0x09);
-pub const BLACK_GROOVE: Color32 = Color32::from_rgb(0x66, 0x51, 0x42);
-/// Корона дамки на белой и на чёрной шашке.
-pub const CROWN_ON_WHITE: Color32 = Color32::from_rgb(0xA8, 0x79, 0x2A);
-pub const CROWN_ON_BLACK: Color32 = Color32::from_rgb(0xDD, 0xB8, 0x62);
 
-/// Подсветка последнего хода, выбранной шашки, доступных полей и шашек, обязанных бить.
+/// Highlights: the last move, the selected piece, reachable squares and pieces that must capture.
 pub const LAST_MOVE: Color32 = Color32::from_rgba_premultiplied(0x66, 0x5A, 0x34, 0x6E);
 pub const SELECTED: Color32 = Color32::from_rgba_premultiplied(0x4A, 0x58, 0x30, 0x70);
 pub const TARGET: Color32 = Color32::from_rgba_premultiplied(0xB4, 0xC8, 0x86, 0xDC);
 pub const MUST_CAPTURE: Color32 = Color32::from_rgb(0xC8, 0x6A, 0x3A);
 
-/// Настраивает оформление интерфейса.
+/// Sets up the look of the interface.
 pub fn apply(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Light);
     let mut visuals = egui::Visuals::light();

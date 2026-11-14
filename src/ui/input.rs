@@ -1,28 +1,29 @@
-//! Выбор хода мышью: щелчки и перетаскивание, пошаговое выполнение серийного взятия.
+//! Choosing a move with the mouse: clicks and dragging, step-by-step multi-captures.
 //!
-//! Модуль не знает ни об окне, ни о координатах: он получает поля доски и возвращает
-//! события. Серийное взятие выполняется по одному прыжку; когда маршрутов несколько,
-//! игрок сам выбирает следующее поле.
+//! The module knows nothing about the window or coordinates: it receives board squares
+//! and returns events. A multi-capture can be made one jump at a time (then, with
+//! several routes, the player chooses the next square) or by pointing at the final
+//! square at once, if that determines the result of the capture unambiguously.
 
 use crate::board::Square;
 use crate::moves::Move;
 
-/// Результат действия игрока.
+/// Result of a player's action.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum InputEvent {
-    /// Ничего не изменилось.
+    /// Nothing has changed.
     None,
-    /// Выбрана шашка.
+    /// A piece is selected.
     Selected(Square),
-    /// Выбор снят.
+    /// The selection is cleared.
     Cleared,
-    /// Сделан промежуточный прыжок серийного взятия; ход ещё не закончен.
+    /// An intermediate jump of a multi-capture is made; the move is not finished yet.
     Step { from: Square, to: Square },
-    /// Ход выбран полностью.
+    /// The move is chosen completely.
     Move(Move),
 }
 
-/// Состояние выбора хода.
+/// State of choosing a move.
 #[derive(Clone, Debug, Default)]
 pub struct MoveInput {
     moves: Vec<Move>,
@@ -31,59 +32,67 @@ pub struct MoveInput {
 }
 
 impl MoveInput {
-    /// Выбор хода без доступных ходов (ввод запрещён).
-    pub fn new() -> MoveInput {
-        MoveInput::default()
+    /// A move chooser with no moves available (input is disabled).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Задаёт допустимые ходы текущей позиции и сбрасывает выбор.
+    /// Sets the legal moves of the current position and resets the selection.
     pub fn set_moves(&mut self, moves: Vec<Move>) {
         self.moves = moves;
         self.origin = None;
         self.steps.clear();
     }
 
-    /// Запрещает ввод.
+    /// Disables input.
     pub fn clear(&mut self) {
         self.set_moves(Vec::new());
     }
 
-    /// Можно ли сейчас делать ход.
+    /// Whether a move can be made now.
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         !self.moves.is_empty()
     }
 
-    /// Допустимые ходы.
+    /// The legal moves.
+    #[must_use]
     pub fn moves(&self) -> &[Move] {
         &self.moves
     }
 
-    /// Исходное поле выбранной шашки.
-    pub fn origin(&self) -> Option<Square> {
+    /// The starting square of the selected piece.
+    #[must_use]
+    pub const fn origin(&self) -> Option<Square> {
         self.origin
     }
 
-    /// Уже сделанные прыжки незаконченного взятия.
+    /// The jumps already made in an unfinished capture.
+    #[must_use]
     pub fn steps(&self) -> &[Square] {
         &self.steps
     }
 
-    /// Идёт ли незаконченное серийное взятие.
+    /// Whether an unfinished multi-capture is in progress.
+    #[must_use]
     pub fn in_progress(&self) -> bool {
         !self.steps.is_empty()
     }
 
-    /// Поле, на котором выбранная шашка стоит сейчас.
+    /// The square the selected piece stands on now.
+    #[must_use]
     pub fn current_square(&self) -> Option<Square> {
         self.steps.last().copied().or(self.origin)
     }
 
-    /// Обязано ли взятие (все допустимые ходы — взятия).
+    /// Whether capturing is mandatory (all legal moves are captures).
     pub fn must_capture(&self) -> bool {
         self.moves.first().is_some_and(Move::is_capture)
     }
 
-    /// Шашки, которыми можно ходить. Если взятие обязательно, это шашки, обязанные бить.
+    /// The pieces that can move. If capturing is mandatory, these are the pieces that must capture.
+    #[must_use]
     pub fn movable(&self) -> Vec<Square> {
         let mut squares: Vec<Square> = Vec::new();
         for mv in &self.moves {
@@ -94,7 +103,7 @@ impl MoveInput {
         squares
     }
 
-    /// Ходы, совместимые с выбранной шашкой и уже сделанными прыжками.
+    /// The moves compatible with the selected piece and the jumps already made.
     fn candidates(&self) -> impl Iterator<Item = &Move> {
         let origin = self.origin;
         let steps = &self.steps;
@@ -103,7 +112,8 @@ impl MoveInput {
             .filter(move |mv| Some(mv.from()) == origin && mv.path().starts_with(steps))
     }
 
-    /// Поля, на которые выбранная шашка может пойти следующим шагом.
+    /// The squares the selected piece can go to with its next step.
+    #[must_use]
     pub fn targets(&self) -> Vec<Square> {
         let mut squares: Vec<Square> = Vec::new();
         let next = self.steps.len();
@@ -117,7 +127,66 @@ impl MoveInput {
         squares
     }
 
-    /// Маска шашек, уже побитых в незаконченном взятии (они остаются на доске до конца хода).
+    /// The capture that ends on the square `sq` when that square is pointed at directly,
+    /// skipping the intermediate jumps.
+    ///
+    /// Returns a move only if the result is unambiguous: all matching routes capture the
+    /// same pieces (the first of them is taken). If captures with different results
+    /// lead to one square, the route has to be given step by step.
+    fn shortcut(&self, sq: Square) -> Option<Move> {
+        if self.current_square() == Some(sq) {
+            // A click on the piece itself clears the selection; it is not a round trip.
+            return None;
+        }
+        let done = self.steps.len();
+        let mut found: Option<Move> = None;
+        for mv in self.candidates() {
+            if mv.to() != sq || mv.path().len() <= done + 1 {
+                continue;
+            }
+            match found {
+                None => found = Some(*mv),
+                Some(first) => {
+                    if first.captured() != mv.captured() || first.promotes() != mv.promotes() {
+                        return None;
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// The final squares of a multi-capture that can be pointed at directly: a click on
+    /// such a square makes all the remaining jumps. Squares of the next step are not included.
+    #[must_use]
+    pub fn final_targets(&self) -> Vec<Square> {
+        let next = self.targets();
+        let mut squares: Vec<Square> = Vec::new();
+        for mv in self.candidates() {
+            let sq = mv.to();
+            if !next.contains(&sq) && !squares.contains(&sq) && self.shortcut(sq).is_some() {
+                squares.push(sq);
+            }
+        }
+        squares
+    }
+
+    /// Chooses a square for the selected piece: the next step, or the final square of a
+    /// capture at once. The step has priority: a square one jump away always means that jump.
+    fn choose(&mut self, sq: Square) -> Option<InputEvent> {
+        self.origin?;
+        if self.targets().contains(&sq) {
+            return Some(self.advance(sq));
+        }
+        let mv = self.shortcut(sq)?;
+        self.origin = None;
+        self.steps.clear();
+        Some(InputEvent::Move(mv))
+    }
+
+    /// Mask of the pieces already captured in an unfinished capture (they stay on the board
+    /// until the move ends).
+    #[must_use]
     pub fn captured_so_far(&self) -> u32 {
         let done = self.steps.len();
         match self.candidates().next() {
@@ -128,7 +197,7 @@ impl MoveInput {
         }
     }
 
-    /// Стала ли выбранная простая дамкой на одном из уже сделанных прыжков.
+    /// Whether the selected man has become a king at one of the jumps already made.
     pub fn promoted_so_far(&self) -> bool {
         let done = self.steps.len();
         self.candidates()
@@ -137,13 +206,13 @@ impl MoveInput {
             .is_some_and(|step| step < done)
     }
 
-    /// Щелчок по полю.
+    /// A click on a square.
     pub fn click(&mut self, sq: Square) -> InputEvent {
-        if self.origin.is_some() && self.targets().contains(&sq) {
-            return self.advance(sq);
+        if let Some(event) = self.choose(sq) {
+            return event;
         }
         if self.in_progress() {
-            // Посреди взятия посторонние щелчки игнорируются: бой нужно довести до конца.
+            // In the middle of a capture other clicks are ignored: the capture must be finished.
             return InputEvent::None;
         }
         if self.moves.iter().any(|mv| mv.from() == sq) {
@@ -160,8 +229,8 @@ impl MoveInput {
         InputEvent::None
     }
 
-    /// Начало перетаскивания с поля `sq`. Возвращает `true`, если шашку можно тащить:
-    /// она выбрана (или только что выбрана) и стоит на этом поле.
+    /// The start of dragging from the square `sq`. Returns `true` if the piece can be
+    /// dragged: it is selected (or has just been selected) and stands on this square.
     pub fn grab(&mut self, sq: Square) -> bool {
         if self.in_progress() {
             return self.current_square() == Some(sq);
@@ -174,17 +243,13 @@ impl MoveInput {
         }
     }
 
-    /// Конец перетаскивания над полем `sq`. Если поле недоступно, шашка возвращается
-    /// на место, а выбор сохраняется.
+    /// The end of dragging over the square `sq`. If the square is not available, the
+    /// piece returns to its place and the selection is kept.
     pub fn drop_on(&mut self, sq: Square) -> InputEvent {
-        if self.origin.is_some() && self.targets().contains(&sq) {
-            self.advance(sq)
-        } else {
-            InputEvent::None
-        }
+        self.choose(sq).unwrap_or(InputEvent::None)
     }
 
-    /// Снимает выбор и отменяет незаконченное взятие.
+    /// Clears the selection and cancels an unfinished capture.
     pub fn cancel(&mut self) -> InputEvent {
         let had_selection = self.origin.is_some();
         self.origin = None;
