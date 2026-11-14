@@ -1,76 +1,137 @@
 #!/bin/sh
-# Starts the built program on a virtual X display and checks that its window opens
-# and stays open. CI runs this on every Linux distribution it builds on.
+# Starts the built program on a virtual display and checks that it opens its window,
+# draws into it and stays open. CI runs this on every Linux distribution it builds on,
+# once for each of the two display systems.
 #
-#   tools/smoke-test.sh [path/to/rucheckers] [screenshot.png]
+#   tools/smoke-test.sh x11     [path/to/rucheckers] [screenshot.png]
+#   tools/smoke-test.sh wayland [path/to/rucheckers] [screenshot.png]
 #
-# Needs Xvfb, xdotool and the Mesa software renderer; a screenshot also needs
-# ImageMagick.
+# Both modes need the Mesa software renderer and ImageMagick. `x11` also needs Xvfb and
+# xdotool; `wayland` needs the Weston compositor.
 set -eu
 
-binary=${1:-target/release/rucheckers}
-screenshot=${2:-}
-display=:${SMOKE_DISPLAY:-93}
+mode=${1:-x11}
+binary=${2:-target/release/rucheckers}
+screenshot=${3:-}
+case "$mode" in
+x11 | wayland) ;;
+*)
+    echo "usage: $0 x11|wayland [path/to/rucheckers] [screenshot.png]" >&2
+    exit 2
+    ;;
+esac
 
 work=$(mktemp -d)
-xvfb=
+server=
 app=
 cleanup() {
     [ -z "$app" ] || kill "$app" 2>/dev/null || true
-    [ -z "$xvfb" ] || kill "$xvfb" 2>/dev/null || true
+    [ -z "$server" ] || kill "$server" 2>/dev/null || true
     rm -rf "$work"
 }
 trap cleanup EXIT
 
 fail() {
-    echo "smoke test failed: $1" >&2
-    if [ -s "$work/app.log" ]; then
-        sed 's/^/    /' "$work/app.log" >&2
-    fi
+    echo "smoke test ($mode) failed: $1" >&2
+    for log in app server; do
+        if [ -s "$work/$log.log" ]; then
+            echo "--- $log" >&2
+            tail -n 40 "$work/$log.log" | sed 's/^/    /' >&2
+        fi
+    done
     exit 1
 }
 
-Xvfb "$display" -screen 0 1280x900x24 -nolisten tcp >"$work/xvfb.log" 2>&1 &
-xvfb=$!
+# ImageMagick 7 keeps the classic command names only on some distributions.
+magick_tool() {
+    tool=$1
+    shift
+    if command -v "$tool" >/dev/null 2>&1; then
+        "$tool" "$@"
+    else
+        magick "$tool" "$@"
+    fi
+}
 
 # The program draws with the software renderer and keeps its settings out of the home
-# directory. The language is fixed so that the screenshot does not depend on the machine.
-unset WAYLAND_DISPLAY
-export DISPLAY="$display" LIBGL_ALWAYS_SOFTWARE=1 XDG_CONFIG_HOME="$work/config" LC_ALL=en_US.UTF-8
+# directory. The language is fixed so that the picture does not depend on the machine.
+export LIBGL_ALWAYS_SOFTWARE=1 XDG_CONFIG_HOME="$work/config" LC_ALL=en_US.UTF-8
+shot="$work/screen.png"
 
-ready=
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-    if xdotool getdisplaygeometry >/dev/null 2>&1; then
-        ready=1
-        break
-    fi
-    sleep 1
-done
-[ -n "$ready" ] || fail "the virtual display did not start"
+if [ "$mode" = x11 ]; then
+    display=:${SMOKE_DISPLAY:-93}
+    Xvfb "$display" -screen 0 1280x900x24 -nolisten tcp >"$work/server.log" 2>&1 &
+    server=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY="$display"
+    ready=
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if xdotool getdisplaygeometry >/dev/null 2>&1; then
+            ready=1
+            break
+        fi
+        sleep 1
+    done
+    [ -n "$ready" ] || fail "the virtual display did not start"
+else
+    export XDG_RUNTIME_DIR="$work/runtime"
+    mkdir -m 700 "$XDG_RUNTIME_DIR"
+    socket=rucheckers-smoke
+    # Starts Weston with the given options and waits for its socket.
+    start_weston() {
+        weston "$@" --socket="$socket" --width=1280 --height=900 --debug >"$work/server.log" 2>&1 &
+        server=$!
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            [ ! -S "$XDG_RUNTIME_DIR/$socket" ] || return 0
+            kill -0 "$server" 2>/dev/null || return 1
+            sleep 1
+        done
+        return 1
+    }
+    # The kiosk shell shows the only window full-screen, without decorations; the pixman
+    # renderer composes the screen in memory, so that it can be captured. Weston before
+    # version 12 spells the same options differently.
+    start_weston --backend=headless --renderer=pixman --shell=kiosk ||
+        start_weston --backend=headless-backend.so --use-pixman --shell=kiosk-shell.so ||
+        fail "the compositor did not start"
+    unset DISPLAY
+    export WAYLAND_DISPLAY="$socket"
+fi
 
 "$binary" >"$work/app.log" 2>&1 &
 app=$!
 
-window=
+# Takes a picture of the screen; fails quietly while there is nothing to capture.
+capture() {
+    rm -f "$shot"
+    if [ "$mode" = x11 ]; then
+        magick_tool import -window root "$shot" 2>/dev/null
+    else
+        (cd "$work" && rm -f wayland-screenshot-*.png && weston-screenshooter >/dev/null 2>&1) || return 1
+        mv "$work"/wayland-screenshot-*.png "$shot" 2>/dev/null
+    fi
+}
+
+# An empty screen is one flat colour; the board with its pieces has thousands.
+colours=0
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
     sleep 1
     kill -0 "$app" 2>/dev/null || fail "the program exited"
-    if xdotool search --class rucheckers >/dev/null 2>&1; then
-        window=1
-        break
+    if [ "$mode" = x11 ] && ! xdotool search --class rucheckers >/dev/null 2>&1; then
+        continue
+    fi
+    if capture; then
+        colours=$(magick_tool identify -format '%k' "$shot")
+        [ "$colours" -lt 1000 ] || break
     fi
 done
-[ -n "$window" ] || fail "the window did not appear"
+[ "$colours" -ge 1000 ] || fail "the window did not appear: $colours colours on the screen"
 
-# A program that cannot draw exits within the first frames.
+# A program that cannot go on drawing exits within the first frames.
 sleep 3
 kill -0 "$app" 2>/dev/null || fail "the program exited after opening its window"
 
 if [ -n "$screenshot" ]; then
-    if command -v import >/dev/null 2>&1; then
-        import -window root "$screenshot"
-    else
-        magick import -window root "$screenshot"
-    fi
+    cp "$shot" "$screenshot"
 fi
-echo "smoke test passed: the window is open"
+echo "smoke test ($mode) passed: the window is open and drawn, $colours colours on the screen"

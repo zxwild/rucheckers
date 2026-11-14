@@ -32,7 +32,7 @@ jobs:
           - { name: macOS (Apple Silicon), os: macos-latest }
           - { name: macOS (Intel), os: macos-15-intel }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install system packages
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
@@ -58,7 +58,7 @@ jobs:
           - { name: Windows, os: windows-latest }
           - { name: macOS, os: macos-latest }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install system packages
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
@@ -72,7 +72,7 @@ jobs:
         run: cargo test
 
   # A build from the packages the README names, inside the distribution itself, and a
-  # start of the program on a virtual display.
+  # start of the program on a virtual display under X11 and under Wayland.
   linux:
     name: Linux · ${{ matrix.name }}
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
@@ -81,76 +81,88 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `rust` says where the compiler comes from: the packages of the distribution
+        # (`cargo`) or rustup, where the packaged one is older than Rust 1.85.
         include:
-          - name: Debian 13
-            image: debian:13
-            id: debian-13
-            build: apt-get update && apt-get install -y cargo build-essential pkg-config libasound2-dev
-            run: apt-get install -y libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1 libgl1-mesa-dri xvfb xdotool imagemagick
-          - name: Debian 12
-            image: debian:12
-            id: debian-12
-            rustup: true
-            build: apt-get update && apt-get install -y curl ca-certificates build-essential pkg-config libasound2-dev
-            run: apt-get install -y libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1 libgl1-mesa-dri xvfb xdotool imagemagick
-          - name: Ubuntu 26.04
-            image: ubuntu:26.04
-            id: ubuntu-26.04
-            build: apt-get update && apt-get install -y cargo build-essential pkg-config libasound2-dev
-            run: apt-get install -y libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1 libgl1-mesa-dri xvfb xdotool imagemagick
-          - name: Ubuntu 24.04
-            image: ubuntu:24.04
-            id: ubuntu-24.04
-            rustup: true
-            build: apt-get update && apt-get install -y curl ca-certificates build-essential pkg-config libasound2-dev
-            run: apt-get install -y libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1 libgl1-mesa-dri xvfb xdotool imagemagick
-          - name: Ubuntu 22.04
-            image: ubuntu:22.04
-            id: ubuntu-22.04
-            rustup: true
-            build: apt-get update && apt-get install -y curl ca-certificates build-essential pkg-config libasound2-dev
-            run: apt-get install -y libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1 libgl1-mesa-dri xvfb xdotool imagemagick
-          - name: Fedora
-            image: fedora:latest
-            id: fedora
-            build: dnf install -y cargo gcc pkgconf-pkg-config alsa-lib-devel
-            run: dnf install -y libX11 libXcursor libXi libXrandr libxkbcommon libxkbcommon-x11 mesa-libGL mesa-libEGL mesa-dri-drivers xorg-x11-server-Xvfb xdotool ImageMagick
-          - name: Arch Linux
-            image: archlinux:latest
-            id: arch
-            build: pacman -Syu --noconfirm rust gcc pkgconf alsa-lib
-            run: pacman -S --noconfirm libx11 libxcursor libxi libxrandr libxkbcommon libxkbcommon-x11 mesa xorg-server-xvfb xdotool imagemagick
-          - name: openSUSE Tumbleweed
-            image: opensuse/tumbleweed:latest
-            id: opensuse-tumbleweed
-            build: zypper --non-interactive install cargo gcc pkgconf-pkg-config alsa-devel tar gzip
-            run: zypper --non-interactive install libX11-6 libXcursor1 libXi6 libXrandr2 libxkbcommon0 libxkbcommon-x11-0 Mesa-libGL1 Mesa-libEGL1 Mesa-dri xorg-x11-server-Xvfb xdotool ImageMagick
+          - { name: Debian 13, id: debian-13, image: "debian:13", family: apt, rust: cargo }
+          - { name: Debian 12, id: debian-12, image: "debian:12", family: apt, rust: rustup }
+          - { name: Ubuntu 26.04, id: ubuntu-26.04, image: "ubuntu:26.04", family: apt, rust: cargo }
+          - { name: Ubuntu 24.04, id: ubuntu-24.04, image: "ubuntu:24.04", family: apt, rust: rustup }
+          - { name: Ubuntu 22.04, id: ubuntu-22.04, image: "ubuntu:22.04", family: apt, rust: rustup }
+          - { name: Fedora, id: fedora, image: "fedora:latest", family: dnf, rust: cargo }
+          - { name: Arch Linux, id: arch, image: "archlinux:latest", family: pacman, rust: cargo }
+          - { name: openSUSE Tumbleweed, id: opensuse-tumbleweed, image: "opensuse/tumbleweed:latest", family: zypper, rust: cargo }
     env:
       DEBIAN_FRONTEND: noninteractive
     steps:
-      - name: Install the build packages
-        run: ${{ matrix.build }}
+      # The packages of the "Building" section of the README.
+      - name: Install the build packages (apt)
+        if: matrix.family == 'apt'
+        run: >
+          apt-get update &&
+          apt-get install -y build-essential pkg-config libasound2-dev
+          ${{ matrix.rust == 'cargo' && 'cargo' || 'curl ca-certificates' }}
+      - name: Install the build packages (dnf)
+        if: matrix.family == 'dnf'
+        run: dnf install -y cargo gcc pkgconf-pkg-config alsa-lib-devel
+      - name: Install the build packages (pacman)
+        if: matrix.family == 'pacman'
+        run: pacman -Syu --noconfirm rust gcc pkgconf alsa-lib
+      - name: Install the build packages (zypper)
+        if: matrix.family == 'zypper'
+        run: zypper --non-interactive install cargo gcc pkgconf-pkg-config alsa-devel tar gzip
       - name: Install Rust with rustup
-        if: matrix.rustup
+        if: matrix.rust == 'rustup'
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v5
       - name: Versions
         run: cargo --version && rustc --version
       - name: Release build
         run: cargo build --release
       - name: Tests
         run: cargo test
-      - name: Install the run-time packages and a virtual display
-        run: ${{ matrix.run }}
-      - name: Start the program
-        run: tools/smoke-test.sh target/release/rucheckers screenshot-${{ matrix.id }}.png
-      - name: Keep the screenshot
+
+      # A container has no desktop: the libraries every desktop installation has, the
+      # software renderer, two virtual displays and the tools of the smoke test.
+      - name: Install the run-time packages and virtual displays (apt)
+        if: matrix.family == 'apt'
+        run: >
+          apt-get install -y
+          libx11-6 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0
+          libwayland-client0 libwayland-cursor0 libwayland-egl1 libgl1 libegl1 libgl1-mesa-dri
+          xvfb xdotool weston imagemagick
+      - name: Install the run-time packages and virtual displays (dnf)
+        if: matrix.family == 'dnf'
+        run: >
+          dnf install -y
+          libX11 libXcursor libXi libXrandr libxkbcommon libxkbcommon-x11
+          libwayland-client libwayland-cursor libwayland-egl mesa-libGL mesa-libEGL mesa-dri-drivers
+          xorg-x11-server-Xvfb xdotool weston ImageMagick
+      - name: Install the run-time packages and virtual displays (pacman)
+        if: matrix.family == 'pacman'
+        run: >
+          pacman -S --noconfirm
+          libx11 libxcursor libxi libxrandr libxkbcommon libxkbcommon-x11 wayland mesa
+          xorg-server-xvfb xdotool weston imagemagick
+      - name: Install the run-time packages and virtual displays (zypper)
+        if: matrix.family == 'zypper'
+        run: >
+          zypper --non-interactive install
+          libX11-6 libXcursor1 libXi6 libXrandr2 libxkbcommon0 libxkbcommon-x11-0
+          libwayland-client0 libwayland-cursor0 libwayland-egl1 Mesa-libGL1 Mesa-libEGL1 Mesa-dri
+          xorg-x11-server-Xvfb xdotool weston ImageMagick
+      - name: Start the program under X11
+        run: tools/smoke-test.sh x11 target/release/rucheckers screenshot-${{ matrix.id }}-x11.png
+      - name: Start the program under Wayland
+        run: tools/smoke-test.sh wayland target/release/rucheckers screenshot-${{ matrix.id }}-wayland.png
+      - name: Keep the screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
-          name: screenshot-${{ matrix.id }}
-          path: screenshot-${{ matrix.id }}.png
+          name: screenshots-${{ matrix.id }}
+          path: screenshot-${{ matrix.id }}-*.png
           if-no-files-found: ignore
           retention-days: 14
