@@ -1,9 +1,10 @@
 //! Race-specific search: match pieces to destination cells, clear the home in time,
 //! and search useful jump routes. Difficulty uses the application's shared 1–10 scale.
 
-use super::{home_for, State, HOME_DEADLINE};
-use crate::games::{squares_of, Color, Move, Position, Square};
+use super::State;
+use crate::games::{Color, Move, Outcome, Position, Square};
 use crate::rng::Rng;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -33,77 +34,19 @@ pub fn level_settings(level: u8) -> Level {
     }
 }
 
-fn distance(a: Square, b: Square) -> i32 {
-    i32::from(a.file().abs_diff(b.file()) + a.rank().abs_diff(b.rank()))
-}
+pub use super::eval::evaluate;
 
-/// Rectangular Hungarian assignment: every piece gets a different destination.
-/// This prevents the computer from advancing everyone towards the same corner cell.
-fn assignment(pos: Position, color: Color) -> i32 {
-    let pieces: Vec<_> = squares_of(pos.pieces(color)).collect();
-    let goals: Vec<_> = squares_of(home_for(color.opponent(), pos.home_side)).collect();
-    let mut u = [0i32; 13];
-    let mut v = [0i32; 13];
-    let mut matched = [0usize; 13];
-    let mut previous = [0usize; 13];
-    for row in 1..=pieces.len() {
-        matched[0] = row;
-        let mut column = 0;
-        let mut minima = [i32::MAX; 13];
-        let mut used = [false; 13];
-        loop {
-            used[column] = true;
-            let current = matched[column];
-            let mut delta = i32::MAX;
-            let mut next = 0;
-            for j in 1..=goals.len() {
-                if used[j] {
-                    continue;
-                }
-                let cost = distance(pieces[current - 1], goals[j - 1]) - u[current] - v[j];
-                if cost < minima[j] {
-                    minima[j] = cost;
-                    previous[j] = column;
-                }
-                if minima[j] < delta {
-                    delta = minima[j];
-                    next = j;
-                }
-            }
-            for j in 0..=goals.len() {
-                if used[j] {
-                    u[matched[j]] += delta;
-                    v[j] -= delta;
-                } else {
-                    minima[j] = minima[j].saturating_sub(delta);
-                }
-            }
-            column = next;
-            if matched[column] == 0 {
-                break;
-            }
-        }
-        loop {
-            let next = previous[column];
-            matched[column] = matched[next];
-            column = next;
-            if column == 0 {
-                break;
-            }
-        }
-    }
-    -v[0]
-}
+const INFINITY: i32 = 200_000;
+const WIN: i32 = 100_000;
+const CACHE_LIMIT: usize = 65_536;
 
-#[must_use]
-pub fn evaluate(state: State, color: Color) -> i32 {
-    let score = |side| {
-        let arrived = state.arrived(side) as i32;
-        let at_home = (state.pos.pieces(side) & home_for(side, state.pos.home_side)).count_ones() as i32;
-        let urgency = 20 + i32::from(state.ply.min(HOME_DEADLINE * 2)) * 3;
-        arrived * 110 - assignment(state.pos, side) * 24 - at_home * urgency
-    };
-    score(color) - score(color.opponent())
+type Key = (Position, u16);
+type Endpoints = (Square, Square);
+
+#[derive(Clone, Copy)]
+struct Cached {
+    evaluation: i32,
+    preferred: Option<Endpoints>,
 }
 
 struct Search<'a> {
@@ -111,69 +54,145 @@ struct Search<'a> {
     deadline: Instant,
     width: usize,
     path: Vec<Position>,
-    nodes: u64,
+    // Only static evaluations and move ordering are cached. Search scores depend on
+    // the repetition history, so sharing them across different paths would be unsafe.
+    cache: HashMap<Key, Cached>,
 }
+
+fn result_score(state: State, outcome: Outcome, side: Color) -> i32 {
+    outcome.winner().map_or(0, |winner| {
+        let score = WIN - i32::from(state.ply);
+        if winner == side {
+            score
+        } else {
+            -score
+        }
+    })
+}
+
+fn with_noise(score: i32, noise: i32) -> i32 {
+    // Difficulty noise must not turn a proven immediate win into a slower win.
+    // Terminal scores stay outside the heuristic range even at the largest ply.
+    if score.abs() >= WIN - i32::from(u16::MAX) {
+        score
+    } else {
+        score + noise
+    }
+}
+
 impl Search<'_> {
     fn stopped(&self) -> bool {
         self.stop.load(Ordering::Relaxed) || Instant::now() >= self.deadline
     }
-    fn ordered(&self, state: State) -> Vec<(Move, i32)> {
-        let side = state.pos.side;
-        let mut ranked = Vec::new();
-        for mv in state.legal_moves() {
+
+    fn occurrences(&self, pos: Position) -> u32 {
+        1 + self.path.iter().filter(|&&old| old == pos).count() as u32
+    }
+
+    fn evaluation(&mut self, state: State) -> i32 {
+        let key = (state.pos, state.ply);
+        if let Some(cached) = self.cache.get(&key) {
+            return cached.evaluation;
+        }
+        let evaluation = evaluate(state, state.pos.side);
+        if self.cache.len() < CACHE_LIMIT {
+            self.cache.insert(
+                key,
+                Cached {
+                    evaluation,
+                    preferred: None,
+                },
+            );
+        }
+        evaluation
+    }
+
+    fn ordered(&mut self, state: State, legal: Vec<Move>) -> Vec<(Move, i32)> {
+        let preferred = self
+            .cache
+            .get(&(state.pos, state.ply))
+            .and_then(|entry| entry.preferred);
+        let mut ranked = Vec::with_capacity(legal.len());
+        for mv in legal {
             if self.stopped() {
                 break;
             }
             let after = state.after(&mv);
-            let repeated = self.path.iter().filter(|&&pos| pos == after.pos).count() as i32;
-            let score = evaluate(after, side) - repeated * 180;
+            let occurrences = self.occurrences(after.pos);
+            let score = if let Some(outcome) = after.adjudicate(occurrences) {
+                result_score(after, outcome, state.pos.side)
+            } else if after.arrived(state.pos.side) == super::PIECES as u32 {
+                // White's finishing move still allows Black a reply. Always search
+                // that move; its true win/draw value is established by the reply.
+                WIN / 2
+            } else {
+                -self.evaluation(after) - (occurrences as i32 - 1) * 180
+            };
             ranked.push((mv, score));
         }
-        ranked.sort_by(|a, b| b.1.cmp(&a.1));
-        ranked.truncate(self.width);
+        ranked.sort_by_key(|&(mv, score)| {
+            (
+                std::cmp::Reverse(Some((mv.from(), mv.to())) == preferred),
+                std::cmp::Reverse(score),
+            )
+        });
         ranked
     }
+
     fn node(&mut self, state: State, depth: u8, mut alpha: i32, beta: i32) -> Option<i32> {
         if self.stopped() {
             return None;
         }
-        self.nodes += 1;
-        let occurrences = 1 + self.path.iter().filter(|&&pos| pos == state.pos).count() as u32;
-        if let Some(outcome) = state.outcome(occurrences) {
-            return Some(outcome.winner().map_or(0, |winner| {
-                if winner == state.pos.side {
-                    100_000 + i32::from(depth)
-                } else {
-                    -100_000 - i32::from(depth)
-                }
-            }));
+        if let Some(outcome) = state.adjudicate(self.occurrences(state.pos)) {
+            return Some(result_score(state, outcome, state.pos.side));
+        }
+        let legal = state.legal_moves();
+        if legal.is_empty() {
+            return Some(result_score(state, state.no_moves_outcome(), state.pos.side));
         }
         if depth == 0 {
-            return Some(evaluate(state, state.pos.side));
+            return Some(self.evaluation(state));
         }
-        let moves = self.ordered(state);
+        self.evaluation(state);
+        let mut moves = self.ordered(state, legal);
+        moves.truncate(self.width);
         if self.stopped() {
             return None;
         }
         self.path.push(state.pos);
-        let mut best = -200_000;
+        let mut best = -INFINITY;
+        let mut preferred = None;
         for (mv, _) in moves {
             let answer = self.node(state.after(&mv), depth - 1, -beta, -alpha);
             let Some(score) = answer.map(|score| -score) else {
                 self.path.pop();
                 return None;
             };
-            best = best.max(score);
+            if score > best {
+                best = score;
+                preferred = Some((mv.from(), mv.to()));
+            }
             alpha = alpha.max(score);
             if alpha >= beta {
                 break;
             }
         }
         self.path.pop();
-        Some(if best == -200_000 { 0 } else { best })
+        if let Some(entry) = self.cache.get_mut(&(state.pos, state.ply)) {
+            entry.preferred = preferred;
+        }
+        Some(best)
     }
 }
 
+struct RootMove {
+    mv: Move,
+    score: i32,
+    noise: i32,
+}
+
+/// Searches all root moves, with narrower continuations and a shared alpha bound.
+/// The last fully completed iteration is kept if the unchanged time budget expires.
 #[must_use]
 pub fn choose_move(
     state: State,
@@ -182,44 +201,58 @@ pub fn choose_move(
     seed: u64,
     stop: &AtomicBool,
 ) -> Option<Move> {
-    let legal = state.legal_moves();
-    let mut rng = Rng::new(seed);
     let settings = level_settings(level);
-    if legal.is_empty() || stop.load(Ordering::Relaxed) {
+    let deadline = Instant::now() + Duration::from_millis(settings.budget_ms);
+    if stop.load(Ordering::Relaxed) {
         return None;
     }
+    let legal = state.legal_moves();
+    let fallback = *legal.first()?;
+    let mut rng = Rng::new(seed);
     if legal.len() == 1 || rng.chance(settings.blunder) {
         return rng.pick(&legal).copied();
     }
     let mut search = Search {
         stop,
-        deadline: Instant::now() + Duration::from_millis(settings.budget_ms),
+        deadline,
         width: settings.width,
         path: history.to_vec(),
-        nodes: 0,
+        cache: HashMap::new(),
     };
-    let mut best = legal[0];
+    let mut roots: Vec<_> = search
+        .ordered(state, legal)
+        .into_iter()
+        .map(|(mv, score)| RootMove {
+            mv,
+            score,
+            noise: rng.symmetric(settings.noise),
+        })
+        .collect();
+    let mut best = roots.first().map_or(fallback, |root| root.mv);
+    search.path.push(state.pos);
     for depth in 1..=settings.depth {
-        let roots = search.ordered(state);
         let mut iteration = None;
-        let mut best_score = -200_001;
+        let mut best_score = -INFINITY;
         let mut complete = true;
-        search.path.push(state.pos);
-        for (mv, _) in roots {
+        for root in &mut roots {
             let Some(score) = search
-                .node(state.after(&mv), depth - 1, -200_000, 200_000)
-                .map(|s| -s)
+                .node(
+                    state.after(&root.mv),
+                    depth - 1,
+                    -INFINITY,
+                    with_noise(-best_score, root.noise),
+                )
+                .map(|score| with_noise(-score, root.noise))
             else {
                 complete = false;
                 break;
             };
-            let score = score + rng.symmetric(settings.noise);
+            root.score = score;
             if score > best_score {
                 best_score = score;
-                iteration = Some(mv);
+                iteration = Some(root.mv);
             }
         }
-        search.path.pop();
         if complete {
             if let Some(mv) = iteration {
                 best = mv;
@@ -227,9 +260,108 @@ pub fn choose_move(
         } else {
             break;
         }
+        // Principal variation first in the next iteration, including at the root.
+        roots.sort_by_key(|root| std::cmp::Reverse(root.score));
         if search.stopped() {
             break;
         }
     }
-    Some(best)
+    if stop.load(Ordering::Relaxed) {
+        None
+    } else {
+        Some(best)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::games::GameKind;
+
+    fn state(fen: &str, ply: u16) -> State {
+        State {
+            pos: Position::from_fen_for(GameKind::Ugolki, fen).unwrap(),
+            ply,
+        }
+    }
+
+    fn minimax(state: State, depth: u8, path: &mut Vec<Position>) -> i32 {
+        let count = 1 + path.iter().filter(|&&pos| pos == state.pos).count() as u32;
+        if let Some(outcome) = state.outcome(count) {
+            return result_score(state, outcome, state.pos.side);
+        }
+        if depth == 0 {
+            return evaluate(state, state.pos.side);
+        }
+        path.push(state.pos);
+        let score = state
+            .legal_moves()
+            .iter()
+            .map(|mv| -minimax(state.after(mv), depth - 1, path))
+            .max()
+            .unwrap();
+        path.pop();
+        score
+    }
+
+    #[test]
+    fn all_level_time_budgets_and_the_reply_pause_are_unchanged() {
+        let expected = [60, 100, 180, 250, 400, 650, 900, 1300, 1800, 2800];
+        for (index, millis) in expected.into_iter().enumerate() {
+            assert_eq!(level_settings(index as u8 + 1).budget_ms, millis);
+        }
+        assert_eq!(crate::games::session::DEFAULT_MIN_THINK_SECONDS, 0.6);
+    }
+
+    #[test]
+    fn alpha_beta_matches_full_minimax_and_cache_does_not_hide_repetition() {
+        let stop = AtomicBool::new(false);
+        for state in [
+            state("W:Wc3,e3:Bf6,d6", 24),
+            state("W:Wa3,h7:Be4", 78),
+            state("B:Wh8,e4:Ba1,d4", 159),
+        ] {
+            let mut search = Search {
+                stop: &stop,
+                deadline: Instant::now() + Duration::from_secs(10),
+                width: usize::MAX,
+                path: Vec::new(),
+                cache: HashMap::new(),
+            };
+            for depth in 1..=3 {
+                let expected = minimax(state, depth, &mut Vec::new());
+                assert_eq!(search.node(state, depth, -INFINITY, INFINITY), Some(expected));
+                for (alpha, beta) in [(expected - 10, expected - 1), (expected + 1, expected + 10)] {
+                    let result = search.node(state, depth, alpha, beta).unwrap();
+                    assert!(if expected >= beta {
+                        result >= beta
+                    } else {
+                        result <= alpha
+                    });
+                }
+            }
+            // Reuse the same ordering/evaluation cache with a different history.
+            let repeated = state.after(&state.legal_moves()[0]).pos;
+            search.path = vec![repeated, repeated];
+            let expected = minimax(state, 3, &mut search.path.clone());
+            assert_eq!(search.node(state, 3, -INFINITY, INFINITY), Some(expected));
+            search.path = vec![state.pos, state.pos];
+            assert_eq!(search.node(state, 3, -INFINITY, INFINITY), Some(0));
+        }
+    }
+
+    #[test]
+    fn search_can_be_cancelled_during_a_strong_move() {
+        use std::sync::Arc;
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let task = std::thread::spawn(move || {
+            choose_move(State::new(super::super::initial()), &[], 10, 739, &worker_stop)
+        });
+        std::thread::sleep(Duration::from_millis(2));
+        let cancelled = Instant::now();
+        stop.store(true, Ordering::Relaxed);
+        assert!(task.join().unwrap().is_none());
+        assert!(cancelled.elapsed() < Duration::from_secs(1));
+    }
 }

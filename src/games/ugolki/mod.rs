@@ -7,6 +7,7 @@
 //! not become newly locked without any step or jump by the moving player's pieces.
 
 pub mod ai;
+mod eval;
 
 use super::{squares_of, Color, FinishReason, GameKind, Move, Outcome, Position, Square};
 use std::collections::VecDeque;
@@ -221,6 +222,13 @@ impl State {
 
     #[must_use]
     pub fn outcome(self, occurrences: u32) -> Option<Outcome> {
+        self.adjudicate(occurrences)
+            .or_else(|| self.legal_moves().is_empty().then(|| self.no_moves_outcome()))
+    }
+
+    // Search checks these rules before generating moves, then reuses its move list
+    // to detect a blocked game. The public result and rule precedence stay the same.
+    fn adjudicate(self, occurrences: u32) -> Option<Outcome> {
         let white = self.arrived(Color::White) == PIECES as u32;
         let black = self.arrived(Color::Black) == PIECES as u32;
         let win = |winner, reason| Some(Outcome::Win { winner, reason });
@@ -255,13 +263,17 @@ impl State {
         if occurrences >= 3 {
             return Some(Outcome::Draw(FinishReason::Repetition));
         }
-        if self.legal_moves().is_empty() {
-            return if white {
-                win(Color::White, FinishReason::HomeFilled)
-            } else {
-                Some(Outcome::Draw(FinishReason::Blocked))
-            };
-        }
         None
+    }
+
+    fn no_moves_outcome(self) -> Outcome {
+        if self.arrived(Color::White) == PIECES as u32 {
+            Outcome::Win {
+                winner: Color::White,
+                reason: FinishReason::HomeFilled,
+            }
+        } else {
+            Outcome::Draw(FinishReason::Blocked)
+        }
     }
 }
