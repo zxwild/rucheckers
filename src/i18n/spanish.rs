@@ -9,6 +9,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "Reglas",
+        Text::GameMode => "Juego",
+        Text::Ugolki => "Esquinas (Ugolki)",
+        Text::GameAppliesNew => "La elección se aplica al iniciar una nueva partida.",
+        Text::UgolkiHint => "Lleve las 12 fichas a la casa opuesta. Pasos o cadenas de saltos solo horizontales y verticales, sin capturas. Elija la casilla final. Vacíe su casa antes de 40 jugadas; límite: 80. Las negras tienen la última respuesta. No se permite encerrar fichas rivales.",
+        Text::UgolkiHomeFilled => "Todas las fichas llegaron a la casa opuesta",
+        Text::UgolkiHomeDeadline => "La casa no se vació en 40 jugadas",
+        Text::UgolkiBothHomeDeadline => "Ambas casas conservan fichas propias después de 40 jugadas",
+        Text::UgolkiMoveLimit => "Límite de 80 jugadas: decide el número de fichas en la casa opuesta",
+        Text::UgolkiSimultaneous => "Ambos bandos llegaron en el mismo número de jugadas",
+        Text::UgolkiBlocked => "Sin movimientos legales: tablas",
         Text::AppTitle => "Damas rusas",
         Text::NewGame => "Nueva partida",
         Text::Open => "Abrir…",
@@ -87,10 +98,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "El archivo está vacío: no contiene ninguna partida.",
         Text::PdnNotPdn => "El archivo no parece una partida en formato PDN.",
         Text::PdnTooManyMoves => "La partida tiene demasiadas jugadas.",
-        Text::PdnWrongGameType => {
-            "Es una partida de otra variante de damas (GameType «{value}»). \
-             Solo se admiten las damas rusas (GameType 25)."
-        }
+        Text::PdnWrongGameType => "Tipo de juego no compatible: {value}. Se admiten las damas rusas (GameType 25) y Ugolki.",
         Text::PdnBadFen => "Posición inicial no válida en la etiqueta FEN: «{value}».",
         Text::PdnBadTag => "Línea {line}: el encabezado de la partida está dañado (etiqueta sin cerrar).",
         Text::PdnUnbalancedVariation => {

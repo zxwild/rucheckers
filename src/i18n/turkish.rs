@@ -9,6 +9,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "Kurallar",
+        Text::GameMode => "Oyun",
+        Text::Ugolki => "Köşeler (Ugolki)",
+        Text::GameAppliesNew => "Seçim yeni oyun başlatıldığında uygulanır.",
+        Text::UgolkiHint => "12 taşın tümünü karşı yuvaya taşıyın. Yalnız yatay ve dikey adım veya sıralı atlayışlar; taş alınmaz. Son kareyi seçin. Yuvanızı 40 hamlede boşaltın; sınır 80 hamledir. Siyahın son yanıt hakkı vardır. Rakip taşları hapsetmek yasaktır.",
+        Text::UgolkiHomeFilled => "Tüm taşlar karşı yuvaya ulaştı",
+        Text::UgolkiHomeDeadline => "Başlangıç yuvası 40 hamlede boşaltılmadı",
+        Text::UgolkiBothHomeDeadline => "40 hamle sonunda iki yuvada da kendi taşları kaldı",
+        Text::UgolkiMoveLimit => "80 hamle sınırı: karşı yuvadaki taş sayısı sonucu belirler",
+        Text::UgolkiSimultaneous => "İki taraf da aynı sayıda hamlede hedefe ulaştı",
+        Text::UgolkiBlocked => "Yasal hamle yok: beraberlik",
         Text::AppTitle => "Rus Daması",
         Text::NewGame => "Yeni oyun",
         Text::Open => "Aç…",
@@ -85,10 +96,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "Dosya boş: içinde oyun yok.",
         Text::PdnNotPdn => "Dosya PDN biçiminde bir oyun kaydına benzemiyor.",
         Text::PdnTooManyMoves => "Oyunda çok fazla hamle var.",
-        Text::PdnWrongGameType => {
-            "Bu, başka bir dama türünün oyunu (GameType “{value}”). \
-             Yalnızca Rus daması (GameType 25) desteklenir."
-        }
+        Text::PdnWrongGameType => "Desteklenmeyen oyun türü: {value}. Rus daması (GameType 25) ve Ugolki desteklenir.",
         Text::PdnBadFen => "FEN etiketindeki başlangıç konumu geçersiz: “{value}”.",
         Text::PdnBadTag => "Satır {line}: oyun başlığı bozuk (etiket kapatılmamış).",
         Text::PdnUnbalancedVariation => "Satır {line}: varyant parantezleri dengesiz.",

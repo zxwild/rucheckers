@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 rust-version = "1.85"
 resolver = "3"
-description = "Russian draughts: a game against the computer"
+description = "Russian draughts and Ugolki against the computer"
 publish = false
 
 [lib]

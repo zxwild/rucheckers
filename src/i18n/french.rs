@@ -10,6 +10,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "Règles",
+        Text::GameMode => "Jeu",
+        Text::Ugolki => "Coins (Ugolki)",
+        Text::GameAppliesNew => "Ce choix sera utilisé pour la prochaine partie.",
+        Text::UgolkiHint => "Amenez les 12 pions dans le camp opposé. Un pas ou une chaîne de sauts, horizontalement ou verticalement, sans prise. Choisissez la case finale. Videz votre camp en 40 coups ; limite : 80 coups. Les noirs ont la dernière réponse. Il est interdit de bloquer les pions adverses.",
+        Text::UgolkiHomeFilled => "Tous les pions ont atteint le camp opposé",
+        Text::UgolkiHomeDeadline => "Le camp initial n’a pas été vidé en 40 coups",
+        Text::UgolkiBothHomeDeadline => "Les deux camps contiennent encore leurs pions après 40 coups",
+        Text::UgolkiMoveLimit => "Limite de 80 coups : le nombre de pions dans le camp opposé décide",
+        Text::UgolkiSimultaneous => "Les deux camps sont atteints après le même nombre de coups",
+        Text::UgolkiBlocked => "Aucun coup légal : partie nulle",
         Text::AppTitle => "Dames russes",
         Text::NewGame => "Nouvelle partie",
         Text::Open => "Ouvrir…",
@@ -88,11 +99,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "Le fichier est vide\u{a0}: il ne contient aucune partie.",
         Text::PdnNotPdn => "Le fichier ne ressemble pas à une partie au format PDN.",
         Text::PdnTooManyMoves => "La partie contient trop de coups.",
-        Text::PdnWrongGameType => {
-            "Cette partie relève d'une autre variante du jeu de dames \
-             (GameType «\u{a0}{value}\u{a0}»). \
-             Seules les dames russes (GameType 25) sont prises en charge."
-        }
+        Text::PdnWrongGameType => "Type de jeu non pris en charge : {value}. Jeux pris en charge : dames russes (GameType 25) et Ugolki.",
         Text::PdnBadFen => "Position initiale invalide dans la balise FEN\u{a0}: «\u{a0}{value}\u{a0}».",
         Text::PdnBadTag => "Ligne {line}\u{a0}: l'en-tête de la partie est endommagé (balise non fermée).",
         Text::PdnUnbalancedVariation => {

@@ -9,6 +9,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "Regras",
+        Text::GameMode => "Jogo",
+        Text::Ugolki => "Cantos (Ugolki)",
+        Text::GameAppliesNew => "A escolha aplica-se ao iniciar uma nova partida.",
+        Text::UgolkiHint => "Leve as 12 peças à casa oposta. Passos ou sequências de saltos apenas na horizontal e vertical, sem capturas. Escolha a casa final. Esvazie a sua casa em 40 jogadas; limite: 80. As pretas têm a última resposta. É proibido bloquear peças adversárias.",
+        Text::UgolkiHomeFilled => "Todas as peças chegaram à casa oposta",
+        Text::UgolkiHomeDeadline => "A casa inicial não foi esvaziada em 40 jogadas",
+        Text::UgolkiBothHomeDeadline => "Ambas as casas ainda têm peças próprias após 40 jogadas",
+        Text::UgolkiMoveLimit => "Limite de 80 jogadas: decide o número de peças na casa oposta",
+        Text::UgolkiSimultaneous => "Ambos chegaram no mesmo número de jogadas",
+        Text::UgolkiBlocked => "Sem movimentos legais: empate",
         Text::AppTitle => "Damas russas",
         Text::NewGame => "Nova partida",
         Text::Open => "Abrir…",
@@ -87,10 +98,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "O arquivo está vazio: não contém nenhuma partida.",
         Text::PdnNotPdn => "O arquivo não parece uma partida no formato PDN.",
         Text::PdnTooManyMoves => "A partida tem lances demais.",
-        Text::PdnWrongGameType => {
-            "Esta é uma partida de outra variante de damas (GameType “{value}”). \
-             Somente as damas russas (GameType 25) são suportadas."
-        }
+        Text::PdnWrongGameType => "Tipo de jogo não suportado: {value}. São aceitos damas russas (GameType 25) e Ugolki.",
         Text::PdnBadFen => "Posição inicial inválida na tag FEN: “{value}”.",
         Text::PdnBadTag => "Linha {line}: o cabeçalho da partida está danificado (tag não fechada).",
         Text::PdnUnbalancedVariation => "Linha {line}: os parênteses das variantes não estão balanceados.",

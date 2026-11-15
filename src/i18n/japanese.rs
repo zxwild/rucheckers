@@ -9,6 +9,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "ルール",
+        Text::GameMode => "ゲーム",
+        Text::Ugolki => "ウゴルキ",
+        Text::GameAppliesNew => "この選択は新しい対局の開始時に適用されます。",
+        Text::UgolkiHint => "12個の駒を反対側の陣地へ移動させます。縦横の一歩、または連続ジャンプで進み、駒は取りません。最後の移動先を選んでください。40手で自陣を空け、上限は80手です。黒には最後の応手があります。相手の駒を閉じ込めてはいけません。",
+        Text::UgolkiHomeFilled => "すべての駒が相手の陣地に到着しました",
+        Text::UgolkiHomeDeadline => "40手以内に自陣を空けられませんでした",
+        Text::UgolkiBothHomeDeadline => "40手後も両者の自陣に自分の駒が残っています",
+        Text::UgolkiMoveLimit => "80手の上限：相手の陣地に入った駒の数で決まります",
+        Text::UgolkiSimultaneous => "両者が同じ手数で相手の陣地に到着しました",
+        Text::UgolkiBlocked => "合法手がないため引き分けです",
         Text::AppTitle => "ロシアンチェッカー",
         Text::NewGame => "新しい対局",
         Text::Open => "開く…",
@@ -84,10 +95,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "ファイルは空です：対局が含まれていません。",
         Text::PdnNotPdn => "ファイルは PDN 形式の対局記録ではないようです。",
         Text::PdnTooManyMoves => "対局の手数が多すぎます。",
-        Text::PdnWrongGameType => {
-            "これは別の種類のチェッカーの対局です（GameType「{value}」）。\
-             対応しているのはロシアンチェッカー（GameType 25）だけです。"
-        }
+        Text::PdnWrongGameType => "未対応のゲーム形式：{value}。ロシアンダム（GameType 25）とウゴルキに対応しています。",
         Text::PdnBadFen => "FEN タグの初期局面が正しくありません：「{value}」。",
         Text::PdnBadTag => "{line} 行目：対局のヘッダーが壊れています（タグが閉じられていません）。",
         Text::PdnUnbalancedVariation => "{line} 行目：変化の括弧が対応していません。",

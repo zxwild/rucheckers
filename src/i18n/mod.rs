@@ -182,6 +182,17 @@ macro_rules! text_keys {
 
 text_keys! {
     AppTitle,
+    GameRules,
+    GameMode,
+    Ugolki,
+    GameAppliesNew,
+    UgolkiHint,
+    UgolkiHomeFilled,
+    UgolkiHomeDeadline,
+    UgolkiBothHomeDeadline,
+    UgolkiMoveLimit,
+    UgolkiSimultaneous,
+    UgolkiBlocked,
     NewGame,
     Open,
     Save,

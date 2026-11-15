@@ -16,10 +16,7 @@ use search::{search, SearchParams};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-/// The weakest level.
-pub const MIN_LEVEL: u8 = 1;
-/// The strongest level.
-pub const MAX_LEVEL: u8 = 10;
+pub use crate::games::difficulty::{clamp_level, MAX_LEVEL, MIN_LEVEL};
 /// Time limit for a computer move on any level, ms.
 pub const MOVE_TIME_LIMIT_MS: u64 = 5_000;
 
@@ -59,12 +56,6 @@ const LEVELS: [Level; 10] = [
     Level { depth: 11, hard_time_ms: 4_000, soft_time_ms: 2_000, blunder: 0.0, careless: 0.0, noise: 0, jitter: 2, table_bits: 21 },
     Level { depth: 99, hard_time_ms: 4_500, soft_time_ms: 2_700, blunder: 0.0, careless: 0.0, noise: 0, jitter: 1, table_bits: 22 },
 ];
-
-/// Brings a level number into the allowed range.
-#[must_use]
-pub fn clamp_level(level: u8) -> u8 {
-    level.clamp(MIN_LEVEL, MAX_LEVEL)
-}
 
 /// Settings of the level `level` (the number is brought into the range 1–10).
 #[must_use]

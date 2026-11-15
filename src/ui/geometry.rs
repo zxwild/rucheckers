@@ -124,6 +124,13 @@ impl BoardLayout {
         Square::from_file_rank(file, rank)
     }
 
+    /// Any cell, including light squares used by games such as Ugolki.
+    #[must_use]
+    pub fn game_square_at(&self, px: f32, py: f32) -> Option<crate::games::Square> {
+        let (file, rank) = self.cell_at(px, py)?;
+        crate::games::Square::from_file_rank(file, rank)
+    }
+
     /// Top left corner of a cell.
     #[must_use]
     pub fn cell_origin(&self, file: u8, rank: u8) -> (f32, f32) {
@@ -133,7 +140,8 @@ impl BoardLayout {
 
     /// Centre of a square.
     #[must_use]
-    pub fn square_center(&self, sq: Square) -> (f32, f32) {
+    pub fn square_center(&self, sq: impl Into<crate::games::Square>) -> (f32, f32) {
+        let sq = sq.into();
         self.point_at(f32::from(sq.file()), f32::from(sq.rank()))
     }
 

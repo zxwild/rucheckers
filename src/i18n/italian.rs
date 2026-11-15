@@ -9,6 +9,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "Regole",
+        Text::GameMode => "Gioco",
+        Text::Ugolki => "Angoli (Ugolki)",
+        Text::GameAppliesNew => "La scelta si applica quando si avvia una nuova partita.",
+        Text::UgolkiHint => "Porta tutte le 12 pedine nella casa opposta. Passi o catene di salti solo orizzontali e verticali, senza catture. Scegli la casella finale. Libera la tua casa entro 40 mosse; limite: 80. Il nero ha l’ultima risposta. È vietato bloccare le pedine avversarie.",
+        Text::UgolkiHomeFilled => "Tutte le pedine hanno raggiunto la casa opposta",
+        Text::UgolkiHomeDeadline => "La casa iniziale non è stata liberata in 40 mosse",
+        Text::UgolkiBothHomeDeadline => "Entrambe le case contengono ancora pedine proprie dopo 40 mosse",
+        Text::UgolkiMoveLimit => "Limite di 80 mosse: decide il numero di pedine nella casa opposta",
+        Text::UgolkiSimultaneous => "Entrambi i giocatori sono arrivati nello stesso numero di mosse",
+        Text::UgolkiBlocked => "Nessuna mossa legale: patta",
         Text::AppTitle => "Dama russa",
         Text::NewGame => "Nuova partita",
         Text::Open => "Apri…",
@@ -87,10 +98,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "Il file è vuoto: non contiene alcuna partita.",
         Text::PdnNotPdn => "Il file non sembra una partita in formato PDN.",
         Text::PdnTooManyMoves => "La partita contiene troppe mosse.",
-        Text::PdnWrongGameType => {
-            "È una partita di un'altra variante della dama (GameType «{value}»). \
-             È supportata solo la dama russa (GameType 25)."
-        }
+        Text::PdnWrongGameType => "Tipo di gioco non supportato: {value}. Sono supportati dama russa (GameType 25) e Ugolki.",
         Text::PdnBadFen => "Posizione iniziale non valida nel tag FEN: «{value}».",
         Text::PdnBadTag => "Riga {line}: l'intestazione della partita è danneggiata (tag non chiuso).",
         Text::PdnUnbalancedVariation => "Riga {line}: le parentesi delle varianti non sono bilanciate.",

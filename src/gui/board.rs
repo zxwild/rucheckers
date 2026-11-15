@@ -6,7 +6,7 @@ use super::theme;
 use eframe::egui::{
     self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind,
 };
-use rucheckers::board::{Color, Kind, Piece, Square};
+use rucheckers::games::{Color, Kind, Piece, Square};
 use rucheckers::ui::fx::{self, DischargeFrame};
 use rucheckers::ui::geometry::BoardLayout;
 use rucheckers::ui::promotion::PromotionFrame;
@@ -355,6 +355,36 @@ pub fn draw_promotion(painter: &Painter, layout: &BoardLayout, frame: &Promotion
     painter.with_clip_rect(outer_rect(layout)).add(Shape::mesh(mesh));
 }
 
+/// Subtle home boundaries make both the departure and destination visible in Ugolki.
+pub fn draw_homes(painter: &Painter, layout: &BoardLayout) {
+    use rucheckers::games::{squares_of, ugolki};
+    for (color, tint, border) in [
+        (
+            Color::White,
+            Color32::from_rgba_unmultiplied(255, 238, 196, 28),
+            Color32::from_rgba_unmultiplied(248, 228, 176, 190),
+        ),
+        (
+            Color::Black,
+            Color32::from_rgba_unmultiplied(75, 48, 28, 22),
+            Color32::from_rgba_unmultiplied(81, 52, 31, 185),
+        ),
+    ] {
+        let mut rect = Rect::NOTHING;
+        for square in squares_of(ugolki::home(color)) {
+            let cell = cell_rect(layout, square.file(), square.rank());
+            painter.rect_filled(cell, 0.0, tint);
+            rect = rect.union(cell);
+        }
+        painter.rect_stroke(
+            rect.shrink(1.5),
+            2.0,
+            Stroke::new((layout.cell * 0.025).max(1.0), border),
+            StrokeKind::Inside,
+        );
+    }
+}
+
 /// The upper layer of the discharge: the sparks. They are drawn over all pieces.
 pub fn draw_sparks(painter: &Painter, layout: &BoardLayout, frame: &DischargeFrame, pixels_per_point: f32) {
     let cell = layout.cell;
@@ -553,7 +583,11 @@ mod tests {
                     pos2(layout.field_x, layout.field_y),
                     vec2(layout.field_size(), layout.field_size()),
                 );
-                let rose = Promotion::new(Square::parse(name).unwrap(), Color::White, 0.0);
+                let rose = Promotion::new(
+                    Square::parse(name).unwrap().draughts().unwrap(),
+                    Color::White,
+                    0.0,
+                );
                 let frame = rose.frame(0.25, flipped).unwrap();
                 let ctx = egui::Context::default();
                 let output = ctx.run(egui::RawInput::default(), |ctx| {
@@ -588,9 +622,10 @@ mod tests {
                 for size in [320.0, 440.0, 640.0] {
                     for ppp in [1.0, 1.25, 2.0] {
                         let layout = BoardLayout::fit(17.0, 23.0, size, size, flipped, ppp);
-                        let frame = Promotion::new(Square::parse(name).unwrap(), color, 0.0)
-                            .frame_at_scale(0.36, flipped, layout.cell * ppp)
-                            .unwrap();
+                        let frame =
+                            Promotion::new(Square::parse(name).unwrap().draughts().unwrap(), color, 0.0)
+                                .frame_at_scale(0.36, flipped, layout.cell * ppp)
+                                .unwrap();
                         let mut letters = [0; 4];
                         let mut bounds = [Rect::NOTHING; 4];
                         // Only the engraved ink reaches this opacity; rays and light

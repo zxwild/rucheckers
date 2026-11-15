@@ -9,6 +9,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "Rules",
+        Text::GameMode => "Game",
+        Text::Ugolki => "Ugolki",
+        Text::GameAppliesNew => "The game choice applies when starting a new game.",
+        Text::UgolkiHint => "Move all 12 pieces to the opposite home. Step or jump chains horizontally or vertically, without captures. Choose the final cell. Clear your home by move 40; the limit is 80 moves. Black gets the final reply. Locking enemy pieces is forbidden.",
+        Text::UgolkiHomeFilled => "All pieces have reached the opposite home",
+        Text::UgolkiHomeDeadline => "The home was not cleared within 40 moves",
+        Text::UgolkiBothHomeDeadline => "Both homes still contain their original pieces after 40 moves",
+        Text::UgolkiMoveLimit => "80-move limit: the number of pieces in the opposite home decides",
+        Text::UgolkiSimultaneous => "Both sides reached home in the same number of moves",
+        Text::UgolkiBlocked => "No legal moves: draw",
         Text::AppTitle => "Russian Draughts",
         Text::NewGame => "New game",
         Text::Open => "Open…",
@@ -83,10 +94,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "The file is empty: it contains no game.",
         Text::PdnNotPdn => "The file does not look like a PDN game record.",
         Text::PdnTooManyMoves => "The game has too many moves.",
-        Text::PdnWrongGameType => {
-            "This is a game of another draughts variant (GameType \"{value}\"). \
-             Only Russian draughts (GameType 25) is supported."
-        }
+        Text::PdnWrongGameType => "Unsupported game type: {value}. Supported games are Russian draughts (GameType 25) and Ugolki.",
         Text::PdnBadFen => "Invalid start position in the FEN tag: \"{value}\".",
         Text::PdnBadTag => "Line {line}: the game header is damaged (unterminated tag).",
         Text::PdnUnbalancedVariation => "Line {line}: variation parentheses are unbalanced.",

@@ -9,6 +9,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "규칙",
+        Text::GameMode => "게임",
+        Text::Ugolki => "우골키",
+        Text::GameAppliesNew => "새 게임을 시작할 때 적용됩니다.",
+        Text::UgolkiHint => "말 12개를 모두 반대편 진영으로 옮기세요. 가로나 세로로 한 칸 이동하거나 연속해서 뛰어넘으며 말을 잡지 않습니다. 마지막 도착 칸을 선택하세요. 40수 안에 자기 진영을 비워야 하며 최대 80수입니다. 흑은 마지막 응수 기회를 갖습니다. 상대 말을 가두면 안 됩니다.",
+        Text::UgolkiHomeFilled => "모든 말이 상대 진영에 도착했습니다",
+        Text::UgolkiHomeDeadline => "40수 안에 자기 진영을 비우지 못했습니다",
+        Text::UgolkiBothHomeDeadline => "40수 후 양쪽 자기 진영에 말이 남아 있습니다",
+        Text::UgolkiMoveLimit => "80수 제한: 상대 진영에 도착한 말의 수로 결정합니다",
+        Text::UgolkiSimultaneous => "양쪽이 같은 수에 상대 진영에 도착했습니다",
+        Text::UgolkiBlocked => "둘 수 있는 수가 없어 무승부입니다",
         Text::AppTitle => "러시아 체커",
         Text::NewGame => "새 대국",
         Text::Open => "열기…",
@@ -83,10 +94,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "파일이 비어 있습니다: 대국이 없습니다.",
         Text::PdnNotPdn => "PDN 형식의 대국 기록이 아닌 것 같습니다.",
         Text::PdnTooManyMoves => "대국의 수가 너무 많습니다.",
-        Text::PdnWrongGameType => {
-            "다른 종류의 체커 대국입니다 (GameType “{value}”). \
-             러시아 체커(GameType 25)만 지원합니다."
-        }
+        Text::PdnWrongGameType => "지원하지 않는 게임 종류: {value}. 러시아 체커(GameType 25)와 우골키를 지원합니다.",
         Text::PdnBadFen => "FEN 태그의 시작 국면이 올바르지 않습니다: “{value}”.",
         Text::PdnBadTag => "{line}번째 줄: 대국 머리말이 손상되었습니다 (태그가 닫히지 않음).",
         Text::PdnUnbalancedVariation => "{line}번째 줄: 변화의 괄호가 짝이 맞지 않습니다.",

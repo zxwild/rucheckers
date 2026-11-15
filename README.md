@@ -1,8 +1,8 @@
-# Russian Draughts
+# Russian Draughts and Ugolki
 
 [![CI](https://github.com/zxwild/rucheckers/actions/workflows/ci.yml/badge.svg)](https://github.com/zxwild/rucheckers/actions/workflows/ci.yml)
 
-A desktop game of Russian draughts (shashki) against the computer, written in Rust.
+Desktop Russian draughts (shashki) and Ugolki against the computer, written in Rust.
 It runs on Windows 10 and 11, on macOS and on the mainstream Linux distributions.
 
 *Русская версия этого файла: [README.ru.md](README.ru.md).*
@@ -11,9 +11,12 @@ It runs on Windows 10 and 11, on macOS and on the mainstream Linux distributions
 
 - The official rules of Russian draughts, including the Turkish strike and all five
   conditions of an automatic draw.
-- Ten levels of computer strength; on the tenth it thinks up to 4.5 s per move.
+- Ugolki with 12 pieces in 3×4 homes, orthogonal steps and jump chains; see the
+  [selected rules and sources](docs/ugolki-rules.md) (Russian).
+- One difficulty scale from 1 to 10, with an independent computer opponent for each game.
+  In Russian draughts the tenth level thinks up to 4.5 s per move.
 - The history of a game is a tree of variations; games are saved and loaded in the PDN
-  format (GameType 25).
+  format (GameType 25 for draughts; the application-specific `Ugolki` tag for Ugolki).
 - The interface is available in twelve languages and switches without a restart.
 - One self-contained executable. Images and sounds are made by the program; its only
   resource files are three small font subsets for Chinese, Japanese and Korean.
@@ -201,6 +204,7 @@ cargo test --test draws
 
 | File | What it checks |
 | --- | --- |
+| `tests/game_modes.rs` | Ugolki rules and endings, both game engines, level scale, files and saved game selection |
 | `tests/perft.rs` | reference for the move generator: depths 1–9 from the starting position |
 | `tests/rules.rs` | every rule of moving and capturing on concrete positions |
 | `tests/draws.rs` | every draw condition: the exact move it fires on and the reset of the counters |
@@ -331,7 +335,8 @@ The settings are kept in one file:
 | Linux | `~/.config/rucheckers/settings.conf`, or under `$XDG_CONFIG_HOME` if it is set |
 
 The file is plain text of `key=value` lines: `language` (a two-letter code such
-as `ru`, `en` or `ja`), `level` (1–10), `color` (`white` or `black`), and the switches
+as `ru`, `en` or `ja`), `game` (`russian` or `ugolki`), `level` (1–10),
+`color` (`white` or `black`), and the switches
 `sound`, `panel`, `effects` (the main switch of the special effects), `effect_lightning`,
 `effect_sparks` and `effect_flashes` with the values `on` and `off`. Missing and damaged
 lines are replaced with default values.
@@ -341,27 +346,26 @@ settings dialog — so nothing depends on how the program is closed. Writing is 
 (a temporary file replaces the old one in one step). If the file cannot be written, the
 program says so once and goes on working.
 
+Select the game in the settings or in the new-game dialog. The settings choice
+applies to the next game; the active game and its history stay available. Both modes
+remember the same level, colour, language and switches. Ugolki highlights both homes,
+shows the number of arrived pieces, and offers a short rules explanation in the panel.
+
 ## Structure
 
 The library `rucheckers` (`src/lib.rs`) does not depend on a window:
 
 | Module | Purpose |
 | --- | --- |
-| `board` | squares, pieces, a position (bit masks), FEN |
-| `moves` | moves, the move generator, making and taking back a move, perft |
-| `rules` | the end of a game, counters and limits of the draws (named constants) |
-| `notation` | Russian notation: `c3-d4`, `c3:e5:g7` |
-| `tree` | the game tree with variations |
-| `pdn` | writing and parsing PDN |
-| `ai` | evaluation, search, levels, the background calculation thread |
-| `ui::geometry` | placement of the board, mouse coordinates → square |
-| `ui::input` | choosing a move with clicks and dragging |
-| `ui::anim` | timing of animation frames |
-| `ui::fx` | the electric discharge of a multi-capture: lightning behind the piece, flashes, sparks |
-| `ui::promotion` | the procedural compass rose beneath a newly crowned king |
-| `ui::sprite` | the picture of a piece: computed pixel by pixel with anti-aliasing |
-| `ui::icon` | the application icon, drawn with the same code, and its `.ico` and `.png` files |
-| `ui::session` | a game against the computer: whose move it is, browsing the history, variations |
+| `games::russian` | Russian draughts: compact 32-cell board, move generator, rules, notation, search |
+| `games::ugolki` | Ugolki: 3×4 homes, orthogonal steps and jumps, race endings and independent search |
+| `games::{board,moves,state}` | shared 64-cell board presentation, routes and dispatch to game engines |
+| `games::{input,anim,session}` | shared input, move animation and cancellable computer sessions |
+| `games::{tree,record}` | variations, repetition tracking and mode-aware game files |
+| `games::difficulty` | shared difficulty range 1–10; search settings belong to each game |
+| `board`, `moves`, `rules`, `notation`, `tree`, `pdn`, `ai` | compatibility exports of the original Russian draughts API |
+| `ui::geometry` | board placement and mouse coordinates → cell |
+| `ui::{fx,promotion,sprite,icon}` | procedural effects, pieces and application icon |
 | `i18n` | interface texts: one module per language (`src/i18n/*.rs`) and the message templates |
 | `settings`, `sound`, `rng` | settings, sound synthesis, the random number generator |
 
@@ -414,6 +418,9 @@ cargo run --example icons
 ```
 
 ## Assumptions
+
+The following rule and search assumptions concern Russian draughts. Ugolki conventions
+are documented in [the mode rules](docs/ugolki-rules.md).
 
 Rules:
 

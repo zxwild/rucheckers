@@ -9,6 +9,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "Aturan",
+        Text::GameMode => "Permainan",
+        Text::Ugolki => "Sudut (Ugolki)",
+        Text::GameAppliesNew => "Pilihan berlaku saat memulai permainan baru.",
+        Text::UgolkiHint => "Pindahkan 12 bidak ke rumah seberang. Langkah atau rangkaian lompatan hanya mendatar dan tegak, tanpa menangkap. Pilih petak akhir. Kosongkan rumah dalam 40 giliran; batas 80 giliran. Hitam mendapat balasan terakhir. Dilarang mengurung bidak lawan.",
+        Text::UgolkiHomeFilled => "Semua bidak tiba di rumah seberang",
+        Text::UgolkiHomeDeadline => "Rumah tidak dikosongkan dalam 40 giliran",
+        Text::UgolkiBothHomeDeadline => "Kedua rumah masih berisi bidak sendiri setelah 40 giliran",
+        Text::UgolkiMoveLimit => "Batas 80 giliran: jumlah bidak di rumah seberang menentukan hasil",
+        Text::UgolkiSimultaneous => "Kedua pemain tiba dalam jumlah giliran yang sama",
+        Text::UgolkiBlocked => "Tidak ada langkah sah: seri",
         Text::AppTitle => "Dam Rusia",
         Text::NewGame => "Permainan baru",
         Text::Open => "Buka…",
@@ -85,10 +96,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "Berkas kosong: tidak berisi permainan.",
         Text::PdnNotPdn => "Berkas tidak tampak seperti catatan permainan berformat PDN.",
         Text::PdnTooManyMoves => "Permainan berisi terlalu banyak langkah.",
-        Text::PdnWrongGameType => {
-            "Ini permainan dari varian dam lain (GameType “{value}”). \
-             Hanya dam Rusia (GameType 25) yang didukung."
-        }
+        Text::PdnWrongGameType => "Jenis permainan tidak didukung: {value}. Permainan yang didukung: dam Rusia (GameType 25) dan Ugolki.",
         Text::PdnBadFen => "Posisi awal pada tag FEN tidak sah: “{value}”.",
         Text::PdnBadTag => "Baris {line}: kepala catatan permainan rusak (tag tidak ditutup).",
         Text::PdnUnbalancedVariation => "Baris {line}: tanda kurung variasi tidak seimbang.",

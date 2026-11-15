@@ -52,7 +52,7 @@ pub fn run() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(tr(lang, Text::AppTitle))
+            .with_title(tr(lang, settings.game.text_key()))
             .with_app_id("rucheckers")
             .with_inner_size([1120.0, 760.0])
             .with_min_inner_size([440.0, 380.0])

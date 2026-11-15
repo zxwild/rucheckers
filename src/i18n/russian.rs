@@ -9,6 +9,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "Правила",
+        Text::GameMode => "Игра",
+        Text::Ugolki => "Уголки",
+        Text::GameAppliesNew => "Выбор игры применяется при начале новой партии.",
+        Text::UgolkiHint => "Переведите 12 шашек в противоположный дом. Шаг или цепочка прыжков — только по горизонтали и вертикали, без взятий. Выберите конечную клетку. Свой дом нужно освободить за 40 ходов; предел — 80 ходов. Чёрные имеют право на последний ответный ход. Запирать шашки соперника нельзя.",
+        Text::UgolkiHomeFilled => "Все шашки переведены в дом соперника",
+        Text::UgolkiHomeDeadline => "Свой дом не освобождён за 40 ходов",
+        Text::UgolkiBothHomeDeadline => "После 40 ходов шашки остались в обоих своих домах",
+        Text::UgolkiMoveLimit => "Предел 80 ходов: результат определён по числу шашек в доме соперника",
+        Text::UgolkiSimultaneous => "Обе стороны заняли дом соперника за одинаковое число ходов",
+        Text::UgolkiBlocked => "Нет допустимых ходов — ничья",
         Text::AppTitle => "Русские шашки",
         Text::NewGame => "Новая партия",
         Text::Open => "Открыть…",
@@ -83,10 +94,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "Файл пуст: в нём нет партии.",
         Text::PdnNotPdn => "Файл не похож на запись партии в формате PDN.",
         Text::PdnTooManyMoves => "В партии слишком много ходов.",
-        Text::PdnWrongGameType => {
-            "Это партия другого вида шашек (GameType «{value}»). \
-             Поддерживаются только русские шашки (GameType 25)."
-        }
+        Text::PdnWrongGameType => "Неизвестный вид игры (GameType «{value}»). Поддерживаются русские шашки (GameType 25) и уголки.",
         Text::PdnBadFen => "Неверная начальная позиция в теге FEN: «{value}».",
         Text::PdnBadTag => "Строка {line}: повреждён заголовок партии (тег не закрыт).",
         Text::PdnUnbalancedVariation => "Строка {line}: скобки вариантов расставлены неверно.",

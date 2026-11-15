@@ -9,6 +9,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "Regeln",
+        Text::GameMode => "Spiel",
+        Text::Ugolki => "Ecken (Ugolki)",
+        Text::GameAppliesNew => "Die Spielwahl gilt ab der nächsten neuen Partie.",
+        Text::UgolkiHint => "Bringen Sie alle 12 Steine ins gegenüberliegende Haus. Schritte oder Sprungketten nur waagerecht und senkrecht, ohne Schlagen. Wählen Sie das Zielfeld. Das eigene Haus muss nach 40 Zügen leer sein; Grenze: 80 Züge. Schwarz darf zuletzt antworten. Gegnerische Steine dürfen nicht eingesperrt werden.",
+        Text::UgolkiHomeFilled => "Alle Steine haben das gegenüberliegende Haus erreicht",
+        Text::UgolkiHomeDeadline => "Das eigene Haus wurde nicht innerhalb von 40 Zügen geräumt",
+        Text::UgolkiBothHomeDeadline => "Nach 40 Zügen stehen noch eigene Steine in beiden Häusern",
+        Text::UgolkiMoveLimit => "80-Züge-Grenze: Steine im gegenüberliegenden Haus entscheiden",
+        Text::UgolkiSimultaneous => "Beide Seiten erreichten das Ziel nach gleich vielen Zügen",
+        Text::UgolkiBlocked => "Keine legalen Züge: remis",
         Text::AppTitle => "Russische Dame",
         Text::NewGame => "Neue Partie",
         Text::Open => "Öffnen…",
@@ -89,10 +100,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "Die Datei ist leer: Sie enthält keine Partie.",
         Text::PdnNotPdn => "Die Datei sieht nicht wie eine Partie im PDN-Format aus.",
         Text::PdnTooManyMoves => "Die Partie enthält zu viele Züge.",
-        Text::PdnWrongGameType => {
-            "Dies ist eine Partie einer anderen Damevariante (GameType „{value}“). \
-             Unterstützt wird nur Russische Dame (GameType 25)."
-        }
+        Text::PdnWrongGameType => "Nicht unterstützte Spielart: {value}. Unterstützt werden Russisch Dame (GameType 25) und Ugolki.",
         Text::PdnBadFen => "Ungültige Ausgangsstellung im FEN-Tag: „{value}“.",
         Text::PdnBadTag => "Zeile {line}: Der Partiekopf ist beschädigt (Tag nicht geschlossen).",
         Text::PdnUnbalancedVariation => "Zeile {line}: Die Klammern der Varianten sind nicht ausgeglichen.",

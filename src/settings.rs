@@ -4,8 +4,9 @@
 //! The file is plain text of the form `key=value`. Unknown keys and damaged values are
 //! ignored: the default values are used instead.
 
-use crate::ai::{clamp_level, MAX_LEVEL, MIN_LEVEL};
 use crate::board::Color;
+use crate::games::difficulty::{clamp_level, MAX_LEVEL, MIN_LEVEL};
+use crate::games::GameKind;
 use crate::i18n::Lang;
 use crate::ui::fx::EffectSet;
 use std::env;
@@ -24,6 +25,7 @@ const FILE_NAME: &str = "settings.conf";
 /// User settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Settings {
+    pub game: GameKind,
     pub lang: Lang,
     pub level: u8,
     pub human: Color,
@@ -38,6 +40,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            game: GameKind::default(),
             lang: Lang::DEFAULT,
             level: DEFAULT_LEVEL,
             human: Color::White,
@@ -90,8 +93,9 @@ impl Settings {
     #[must_use]
     pub fn to_text(&self) -> String {
         format!(
-            "# Russian Draughts settings\nlanguage={}\nlevel={}\ncolor={}\nsound={}\npanel={}\n\
+            "# rucheckers settings\ngame={}\nlanguage={}\nlevel={}\ncolor={}\nsound={}\npanel={}\n\
              effects={}\neffect_lightning={}\neffect_sparks={}\neffect_flashes={}\n",
+            self.game.code(),
             self.lang.code(),
             clamp_level(self.level),
             match self.human {
@@ -121,6 +125,11 @@ impl Settings {
             };
             let value = value.trim();
             match key.trim().to_ascii_lowercase().as_str() {
+                "game" => {
+                    if let Some(game) = GameKind::from_code(value) {
+                        settings.game = game;
+                    }
+                }
                 "language" => {
                     if let Some(lang) = Lang::from_code(value) {
                         settings.lang = lang;
@@ -334,6 +343,7 @@ mod tests {
                     for switches in 0..8u8 {
                         for effects in effect_sets() {
                             let settings = Settings {
+                                game: GameKind::default(),
                                 lang,
                                 level,
                                 human,
@@ -345,6 +355,7 @@ mod tests {
                             // The base differs from the saved value in every field, so
                             // a field that is not written or not read shows up.
                             let base = Settings {
+                                game: GameKind::default(),
                                 lang: if lang == Lang::En { Lang::Ru } else { Lang::En },
                                 level: if level == MIN_LEVEL { MAX_LEVEL } else { MIN_LEVEL },
                                 human: human.opponent(),
@@ -397,6 +408,7 @@ mod tests {
         assert_eq!(
             restart(),
             Settings {
+                game: GameKind::default(),
                 lang: Lang::Ja,
                 level: 10,
                 human: Color::Black,
@@ -447,6 +459,7 @@ mod tests {
         assert_eq!(
             old,
             Settings {
+                game: GameKind::default(),
                 lang: Lang::En,
                 level: 3,
                 human: Color::Black,
@@ -529,6 +542,7 @@ mod tests {
         assert_eq!(
             lines[1..],
             [
+                "game=russian",
                 "language=zh",
                 "level=9",
                 "color=black",
@@ -554,6 +568,7 @@ mod tests {
         let folder = dir.0.join("nested").join("deeper");
         let path = folder.join("settings.conf");
         let first = Settings {
+            game: GameKind::default(),
             lang: Lang::En,
             level: 8,
             human: Color::Black,

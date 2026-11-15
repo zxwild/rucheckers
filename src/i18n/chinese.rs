@@ -9,6 +9,17 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::GameRules => "规则",
+        Text::GameMode => "游戏",
+        Text::Ugolki => "角棋",
+        Text::GameAppliesNew => "此选择将在开始新对局时生效。",
+        Text::UgolkiHint => "将全部12枚棋子移到对面的营地。只能横向或纵向走一步或连续跳跃，不吃子。选择最终落点。须在40回合内清空己方营地；上限为80回合。黑方有最后应手权。禁止困住对方棋子。",
+        Text::UgolkiHomeFilled => "全部棋子已到达对方营地",
+        Text::UgolkiHomeDeadline => "未能在40回合内清空己方营地",
+        Text::UgolkiBothHomeDeadline => "40回合后双方营地均留有己方棋子",
+        Text::UgolkiMoveLimit => "达到80回合上限，按进入对方营地的棋子数决定结果",
+        Text::UgolkiSimultaneous => "双方以相同回合数到达对方营地",
+        Text::UgolkiBlocked => "没有合法着法，和棋",
         Text::AppTitle => "俄罗斯跳棋",
         Text::NewGame => "新对局",
         Text::Open => "打开…",
@@ -78,9 +89,7 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::PdnEmpty => "文件为空：其中没有对局。",
         Text::PdnNotPdn => "文件不像是 PDN 格式的对局记录。",
         Text::PdnTooManyMoves => "对局中的着法太多。",
-        Text::PdnWrongGameType => {
-            "这是另一种跳棋的对局（GameType“{value}”）。仅支持俄罗斯跳棋（GameType 25）。"
-        }
+        Text::PdnWrongGameType => "不支持的游戏类型：{value}。支持俄罗斯跳棋（GameType 25）和角落棋。",
         Text::PdnBadFen => "FEN 标签中的初始局面无效：“{value}”。",
         Text::PdnBadTag => "第 {line} 行：对局头部已损坏（标签未闭合）。",
         Text::PdnUnbalancedVariation => "第 {line} 行：变着的括号不配对。",

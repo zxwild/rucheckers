@@ -10,22 +10,21 @@ use eframe::egui::{
     self, pos2, Align, Align2, Color32, Context, CornerRadius, Id, Key, Layout, Margin, Order, Painter, Pos2,
     RichText, Stroke, Ui,
 };
-use rucheckers::ai::{MAX_LEVEL, MIN_LEVEL};
-use rucheckers::board::{squares_of, Color, Kind, Piece, Position, Square};
-use rucheckers::i18n::{level_label, outcome_reason, outcome_title, pdn_error_text, tr, Lang, Text};
-use rucheckers::moves::Move;
-use rucheckers::notation::format_move;
-use rucheckers::pdn;
+use rucheckers::games::anim::{segment_seconds, MoveAnimation, CAPTURED_ALPHA};
+use rucheckers::games::difficulty::{MAX_LEVEL, MIN_LEVEL};
+use rucheckers::games::input::InputEvent;
+use rucheckers::games::record as pdn;
+use rucheckers::games::session::{Nav, Session, SessionEvent};
+use rucheckers::games::tree::{GameTree, NodeId};
+use rucheckers::games::{format_move, outcome_reason, outcome_title};
+use rucheckers::games::{squares_of, Color, GameKind, Kind, Move, Piece, Position, Square};
+use rucheckers::i18n::{level_label, pdn_error_text, tr, Lang, Text};
 use rucheckers::rng::entropy_seed;
 use rucheckers::settings::Settings;
 use rucheckers::sound::Sound;
-use rucheckers::tree::{GameTree, NodeId};
-use rucheckers::ui::anim::{segment_seconds, MoveAnimation, CAPTURED_ALPHA};
 use rucheckers::ui::fx::{ease, Discharge};
 use rucheckers::ui::geometry::BoardLayout;
-use rucheckers::ui::input::InputEvent;
 use rucheckers::ui::promotion::Promotion;
-use rucheckers::ui::session::{Nav, Session, SessionEvent};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -62,7 +61,7 @@ struct Scene {
     /// The square whose piece is drawn separately because it is on the move.
     hidden: Option<Square>,
     /// The pieces captured so far by an unfinished step-by-step capture.
-    dimmed: u32,
+    dimmed: u64,
     /// The piece on the move: where it is, what it is and whether it is lifted.
     mover: Option<(Pos2, Piece, bool)>,
     /// The move whose first and last squares are highlighted.
@@ -71,6 +70,7 @@ struct Scene {
 
 /// Contents of the new game dialog.
 struct NewGameDraft {
+    game: GameKind,
     human: Color,
     level: u8,
 }
@@ -87,7 +87,7 @@ enum EffectKind {
 #[derive(Clone, Copy)]
 enum Action {
     AskNewGame,
-    StartGame(Color, u8),
+    StartGame(GameKind, Color, u8),
     CancelNewGame,
     Open,
     Save,
@@ -101,6 +101,7 @@ enum Action {
     /// A single special effect.
     ToggleEffect(EffectKind),
     SetLevel(u8),
+    SetGamePreference(GameKind),
     Navigate(Nav),
     Continue,
     DismissResult,
@@ -156,7 +157,7 @@ impl CheckersApp {
         let mut app = Self {
             settings,
             settings_path,
-            session: Session::new(settings.human, settings.level, entropy_seed()),
+            session: Session::for_game(settings.game, settings.human, settings.level, entropy_seed()),
             started: false,
             audio: Audio::new(),
             anims: VecDeque::new(),
@@ -166,8 +167,9 @@ impl CheckersApp {
             effects: Vec::new(),
             promotions: Vec::new(),
             sounds: Vec::new(),
-            // Before the first game the player chooses a colour and a level.
+            // Before the first game the player chooses a game, colour and level.
             new_game: Some(NewGameDraft {
+                game: settings.game,
                 human: settings.human,
                 level: settings.level,
             }),
@@ -185,6 +187,9 @@ impl CheckersApp {
                 app.new_game = None;
             }
         }
+        cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+            tr(app.lang(), app.session.game().text_key()).into(),
+        ));
         app
     }
 
@@ -239,8 +244,9 @@ impl CheckersApp {
         let input = self.session.input();
         if input.in_progress() {
             let human = self.session.human();
-            self.promotions
-                .retain(|promotion| promotion.color != human || !input.steps().contains(&promotion.square));
+            self.promotions.retain(|promotion| {
+                promotion.color != human || !input.steps().contains(&Square::from(promotion.square))
+            });
         }
         self.session.cancel_input();
         self.glide = None;
@@ -352,16 +358,21 @@ impl CheckersApp {
         match action {
             Action::AskNewGame => {
                 self.new_game = Some(NewGameDraft {
+                    game: self.settings.game,
                     human: self.settings.human,
                     level: self.settings.level,
                 });
             }
-            Action::StartGame(human, level) => {
+            Action::StartGame(game, human, level) => {
+                self.settings.game = game;
                 self.new_game = None;
                 self.settings.human = human;
                 self.settings.level = level;
                 self.save_settings();
-                self.session.new_game(human, level);
+                self.session.new_game(game, human, level);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+                    tr(self.lang(), game.text_key()).into(),
+                ));
                 self.started = true;
                 self.process_events(now);
             }
@@ -417,8 +428,14 @@ impl CheckersApp {
                     self.settings.lang = lang;
                     self.save_settings();
                     fonts::install(ctx, lang);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Title(tr(lang, Text::AppTitle).to_string()));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+                        tr(lang, self.session.game().text_key()).to_string(),
+                    ));
                 }
+            }
+            Action::SetGamePreference(game) => {
+                self.settings.game = game;
+                self.save_settings();
             }
             Action::SetLevel(level) => {
                 self.session.set_level(level);
@@ -484,6 +501,8 @@ impl CheckersApp {
                 }
                 Ok(game) => {
                     let human = game.human_color();
+                    self.settings.game = game.tree.root().position().game;
+                    self.save_settings();
                     self.session.load(game.tree, human);
                     self.started = true;
                     self.process_events(now);
@@ -585,7 +604,7 @@ impl CheckersApp {
             }
             return;
         }
-        let square_at = |point: Option<Pos2>| point.and_then(|p| layout.square_at(p.x, p.y));
+        let square_at = |point: Option<Pos2>| point.and_then(|p| layout.game_square_at(p.x, p.y));
         let promoted_before = self.session.input().promoted_so_far();
         let steps_before = self.session.input().steps().len();
 
@@ -651,8 +670,11 @@ impl CheckersApp {
                     })
                 };
                 if promoted && self.settings.effects_enabled {
-                    self.promotions
-                        .push(Promotion::new(to, self.session.human(), landing));
+                    self.promotions.push(Promotion::new(
+                        to.draughts().expect("promotion square"),
+                        self.session.human(),
+                        landing,
+                    ));
                 }
                 self.sounds.push((
                     landing,
@@ -674,8 +696,11 @@ impl CheckersApp {
                     && self.settings.effects_enabled
                     && mv.promotion_step().is_some_and(|step| step + 1 < mv.path().len())
                 {
-                    self.promotions
-                        .push(Promotion::new(mv.to(), self.session.human(), now));
+                    self.promotions.push(Promotion::new(
+                        mv.to().draughts().expect("promotion square"),
+                        self.session.human(),
+                        now,
+                    ));
                 }
                 self.process_events(now);
             }
@@ -693,6 +718,9 @@ impl CheckersApp {
     ) {
         let ppp = ctx.pixels_per_point();
         board::draw_board(painter, layout, ppp);
+        if self.session.game() == GameKind::Ugolki {
+            board::draw_homes(painter, layout);
+        }
         self.prepare_frame(ctx, layout, now);
         let Some(sprites) = self.sprites.as_ref() else {
             return;
@@ -888,7 +916,7 @@ impl CheckersApp {
         if !input.is_enabled() {
             return false;
         }
-        let hovered = pointer.and_then(|p| layout.square_at(p.x, p.y));
+        let hovered = pointer.and_then(|p| layout.game_square_at(p.x, p.y));
         let movable = input.movable();
         if input.must_capture() && !input.in_progress() {
             for &sq in &movable {
@@ -1108,6 +1136,24 @@ impl CheckersApp {
     fn panel_status(&self, ui: &mut Ui, actions: &mut Vec<Action>) {
         let lang = self.lang();
         let session = &self.session;
+        ui.label(RichText::new(tr(lang, session.game().text_key())).strong());
+        if session.game() == GameKind::Ugolki {
+            let pos = session.tree().current_node().position();
+            let arrived =
+                |color| (pos.pieces(color) & rucheckers::games::ugolki::home(color.opponent())).count_ones();
+            ui.label(format!(
+                "{}: {}/12 · {}: {}/12",
+                tr(lang, Text::White),
+                arrived(Color::White),
+                tr(lang, Text::Black),
+                arrived(Color::Black)
+            ));
+            egui::CollapsingHeader::new(tr(lang, Text::GameRules))
+                .id_salt("ugolki_rules")
+                .show(ui, |ui| {
+                    ui.label(tr(lang, Text::UgolkiHint));
+                });
+        }
         if let Some(outcome) = session.outcome() {
             ui.label(RichText::new(outcome_title(lang, &outcome, session.human())).strong());
             ui.label(RichText::new(outcome_reason(lang, &outcome)).color(theme::TEXT_WEAK));
@@ -1316,10 +1362,25 @@ impl CheckersApp {
             ui.heading(tr(lang, Text::NewGame));
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
+                ui.label(tr(lang, Text::GameMode));
+                for game in GameKind::ALL {
+                    ui.radio_value(&mut draft.game, game, tr(lang, game.text_key()));
+                }
+            });
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
                 ui.label(tr(lang, Text::YourColor));
                 ui.radio_value(&mut draft.human, Color::White, tr(lang, Text::White));
                 ui.radio_value(&mut draft.human, Color::Black, tr(lang, Text::Black));
             });
+            if draft.game == GameKind::Ugolki {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(tr(lang, Text::UgolkiHint))
+                        .small()
+                        .color(theme::TEXT_WEAK),
+                );
+            }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label(tr(lang, Text::Level));
@@ -1336,7 +1397,7 @@ impl CheckersApp {
             .inner
         });
         if start || ctx.input(|i| i.key_pressed(Key::Enter)) {
-            actions.push(Action::StartGame(draft.human, draft.level));
+            actions.push(Action::StartGame(draft.game, draft.human, draft.level));
         } else if modal.inner || modal.should_close() {
             actions.push(Action::CancelNewGame);
         }
@@ -1348,6 +1409,26 @@ impl CheckersApp {
         let modal = modal_window("settings_dialog").show(ctx, |ui| {
             ui.set_width(430.0);
             ui.heading(tr(lang, Text::Settings));
+            ui.add_space(8.0);
+            let mut game = settings.game;
+            ui.horizontal(|ui| {
+                ui.label(tr(lang, Text::GameMode));
+                egui::ComboBox::from_id_salt("game_mode_settings")
+                    .selected_text(tr(lang, game.text_key()))
+                    .show_ui(ui, |ui| {
+                        for value in GameKind::ALL {
+                            ui.selectable_value(&mut game, value, tr(lang, value.text_key()));
+                        }
+                    });
+            });
+            ui.label(
+                RichText::new(tr(lang, Text::GameAppliesNew))
+                    .small()
+                    .color(theme::TEXT_WEAK),
+            );
+            if game != settings.game {
+                actions.push(Action::SetGamePreference(game));
+            }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.label(tr(lang, Text::Language));
@@ -1448,9 +1529,15 @@ fn step_sound(mv: &Move, step: usize) -> Sound {
 impl eframe::App for CheckersApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let now = ctx.input(|i| i.time);
+        let before_game = self.session.game();
         let mut actions: Vec<Action> = Vec::new();
 
         self.poll_file_job(now);
+        if self.session.game() != before_game {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+                tr(self.lang(), self.session.game().text_key()).into(),
+            ));
+        }
         if self.started {
             self.session.update(now);
         }
@@ -1503,8 +1590,8 @@ impl eframe::App for CheckersApp {
 mod tests {
     use super::*;
     use eframe::egui::{vec2, Rect};
-    use rucheckers::board::Position;
-    use rucheckers::tree::GameTree;
+    use rucheckers::games::tree::GameTree;
+    use rucheckers::games::Position;
 
     fn square(name: &str) -> Square {
         Square::parse(name).unwrap()
@@ -1540,6 +1627,84 @@ mod tests {
     }
 
     #[test]
+    fn starting_another_game_remembers_mode_colour_level_and_other_preferences() {
+        let path = std::env::temp_dir().join(format!("rucheckers-modes-{}.conf", std::process::id()));
+        let ctx = Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let settings = Settings {
+            lang: Lang::Ru,
+            human: Color::White,
+            sound: false,
+            panel: false,
+            effects_enabled: false,
+            ..Settings::default()
+        };
+        let mut app = CheckersApp::new(&cc, settings, Some(path.clone()), None);
+        app.apply(Action::StartGame(GameKind::Ugolki, Color::Black, 8), &ctx, 0.0);
+        assert_eq!(app.session.game(), GameKind::Ugolki);
+        assert_eq!(app.session.human(), Color::Black);
+        assert_eq!(app.session.level(), 8);
+        let stored = Settings::load(&path, Settings::default());
+        assert_eq!(
+            stored,
+            Settings {
+                game: GameKind::Ugolki,
+                human: Color::Black,
+                level: 8,
+                ..settings
+            }
+        );
+        let restarted = CheckersApp::new(&cc, stored, None, None);
+        let draft = restarted.new_game.unwrap();
+        assert_eq!(
+            (draft.game, draft.human, draft.level),
+            (GameKind::Ugolki, Color::Black, 8)
+        );
+
+        app.apply(Action::SetGamePreference(GameKind::RussianDraughts), &ctx, 1.0);
+        assert_eq!(app.session.game(), GameKind::Ugolki);
+        app.apply(Action::AskNewGame, &ctx, 1.0);
+        assert_eq!(app.new_game.as_ref().unwrap().game, GameKind::RussianDraughts);
+        app.apply(
+            Action::StartGame(GameKind::RussianDraughts, Color::White, 8),
+            &ctx,
+            1.0,
+        );
+        assert_eq!(app.session.game(), GameKind::RussianDraughts);
+        assert_eq!(app.session.level(), 8);
+        assert_eq!(app.session.tree().len(), 1);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn opening_an_ugolki_record_switches_the_engine_and_keeps_level_and_preferences() {
+        let path = std::env::temp_dir().join(format!("rucheckers-ugolki-{}.pdn", std::process::id()));
+        let mut tree = GameTree::for_game(GameKind::Ugolki);
+        let mv = tree.current_node().state().legal_moves()[0];
+        tree.play(&mv).unwrap();
+        let tags = pdn::standard_tags(Color::Black, "Player", "Computer");
+        std::fs::write(&path, pdn::to_pdn(&tree, &tags)).unwrap();
+        let ctx = Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx);
+        let settings = Settings {
+            level: 7,
+            sound: false,
+            ..Settings::default()
+        };
+        let app = CheckersApp::new(&cc, settings, None, Some(path.clone()));
+        assert!(app.started);
+        assert!(app.new_game.is_none());
+        assert_eq!(app.session.game(), GameKind::Ugolki);
+        assert_eq!(app.session.human(), Color::Black);
+        assert_eq!(app.session.level(), 7);
+        assert_eq!(app.settings.game, GameKind::Ugolki);
+        assert!(app.session.tree().same_structure(&tree));
+        assert!(!app.session.is_live());
+        assert_eq!(app.session.tree().current(), app.session.tree().main_line_end());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn clicked_and_dropped_promotions_start_with_the_crown_for_both_colours() {
         for (fen, human, from, to) in [
             ("W:Wg7:BKa1", Color::White, "g7", "h8"),
@@ -1552,7 +1717,7 @@ mod tests {
                 assert_eq!(app.promotions.len(), 1);
                 let rose = app.promotions[0];
                 let anim = &app.anims.front().unwrap().anim;
-                assert_eq!(rose.square, square(to));
+                assert_eq!(Square::from(rose.square), square(to));
                 assert_eq!(rose.color, human);
                 assert_eq!(rose.start, 2.0 + anim.travel_seconds());
                 assert!(anim.frame(rose.start + 0.001).is_king);
@@ -1572,7 +1737,7 @@ mod tests {
             choose(&mut app, "f8", via_drop, 2.0);
             assert_eq!(app.promotions.len(), 1);
             let rose = app.promotions[0];
-            assert_eq!(rose.square, square("f8"));
+            assert_eq!(Square::from(rose.square), square("f8"));
             if !via_drop {
                 assert_eq!(
                     app.scene(&layout, None, rose.start - 0.001).mover.unwrap().1.kind,
@@ -1601,7 +1766,10 @@ mod tests {
             let mut app = app(fen, human);
             assert!(app.session.grab(square(from)));
             choose(&mut app, to, true, 2.0);
-            assert_eq!(app.promotions, vec![Promotion::new(square(to), human, 2.0)]);
+            assert_eq!(
+                app.promotions,
+                vec![Promotion::new(square(to).draughts().unwrap(), human, 2.0)]
+            );
         }
     }
 
@@ -1681,8 +1849,11 @@ mod tests {
         assert!(app.session.grab(square("g7")));
         choose(&mut app, "h8", true, 2.0);
         assert!(app.promotions.is_empty());
-        app.promotions
-            .push(Promotion::new(square("h8"), Color::White, 2.0));
+        app.promotions.push(Promotion::new(
+            square("h8").draughts().unwrap(),
+            Color::White,
+            2.0,
+        ));
         app.reset_view();
         assert!(app.promotions.is_empty());
     }
