@@ -49,6 +49,16 @@ fn mirror(mut state: State) -> State {
     };
     state
 }
+fn rotate_square(square: Square) -> Square {
+    Square::from_file_rank(7 - square.file(), 7 - square.rank()).unwrap()
+}
+fn rotate_and_swap(mut state: State) -> State {
+    let rotate = |bits| games::squares_of(bits).fold(0, |mask, sq| mask | rotate_square(sq).bit());
+    (state.pos.white, state.pos.black) = (rotate(state.pos.black), rotate(state.pos.white));
+    state.pos.side = state.pos.side.opponent();
+    state.ply ^= 1;
+    state
+}
 fn for_home(state: State, side: HomeSide) -> State {
     if side == HomeSide::Left {
         state
@@ -90,14 +100,10 @@ fn leg(board: &Board, from: usize, to: usize) -> u8 {
     }
 }
 fn ref_locked(board: &Board, square: usize, mover: Color) -> bool {
-    if (0..64).any(|to| leg(board, square, to) != 0) {
-        return false;
-    }
-    (0..64).any(|other| {
-        board[other] == Some(mover)
-            && (other / 8 == square / 8 || other % 8 == square % 8)
-            && (1..=2).contains(&(other.abs_diff(square) / 8 + other.abs_diff(square) % 8))
-    })
+    // Only the moving player's pieces may form the forbidden wall. Temporarily
+    // remove the victim's other pieces and test whether a step or jump is possible.
+    let blockers = std::array::from_fn(|i| board[i].filter(|&color| color == mover));
+    (0..64).all(|to| leg(&blockers, square, to) == 0)
 }
 fn ref_home(square: usize, color: Color, side: HomeSide) -> bool {
     let on_left = if color == Color::White {
@@ -422,6 +428,177 @@ fn new_enemy_locks_are_forbidden_in_the_middle_and_at_a_corner() {
                 }
             };
             assert!(find(state, map(from), map(to)).is_none());
+            assert_eq!(endpoints(state), reference(state));
+        }
+    }
+}
+
+#[test]
+fn reported_screenshot_positions_allow_f4_c6_and_e4() {
+    // Photos 1–2: after 13...a5-a3. Photo 3: after 24...a3-c3.
+    // Both games have the white home on the right; every piece is transcribed.
+    let early = "W:Wc2,d2,e2,f2,g2,c3,d3,f3,g3,e4,e5,d6:Ba3,a4,b4,c4,d4,b5,c5,d5,e6,e7,f7,d8";
+    let later = "W:Wc2,d2,e2,f2,d3,e3,c5,f5,b6,c6,e6,e7:Bf1,g2,b3,c3,g3,a4,b4,c4,d4,f4,d5,f7";
+    for (text, ply, from, expected) in [
+        (early, 26, "f2", "f1 f4 h2"),
+        (early, 26, "d6", "c6 d7 f6 f8"),
+        (later, 48, "e2", "e1 e4 g4"),
+    ] {
+        let mut original = fen(text);
+        original.pos.home_side = HomeSide::Right;
+        original.ply = ply;
+        for swap in [false, true] {
+            for reflect in [false, true] {
+                let mut state = if swap { rotate_and_swap(original) } else { original };
+                if reflect {
+                    state = mirror(state);
+                }
+                let map = |square| {
+                    let square = if swap { rotate_square(square) } else { square };
+                    if reflect {
+                        mirror_square(square)
+                    } else {
+                        square
+                    }
+                };
+                let from = map(sq(from));
+                let expected: BTreeSet<_> = expected.split_whitespace().map(|name| map(sq(name))).collect();
+                let actual: BTreeSet<_> = state
+                    .legal_moves()
+                    .iter()
+                    .filter(|mv| mv.from() == from)
+                    .map(Move::to)
+                    .collect();
+                assert_eq!(actual, expected, "{from}, swap={swap}, reflect={reflect}");
+                assert_eq!(endpoints(state), reference(state));
+                assert_routes(state);
+                assert_input(state);
+
+                for to in expected.iter().copied() {
+                    for drag in [false, true] {
+                        let mut session = Session::from_position(state.pos, state.pos.side, 7, 907);
+                        if drag {
+                            assert!(session.grab(from));
+                        } else {
+                            assert_eq!(session.click(from), InputEvent::Selected(from));
+                        }
+                        let hints: BTreeSet<_> = session
+                            .input()
+                            .targets()
+                            .into_iter()
+                            .chain(session.input().final_targets())
+                            .collect();
+                        assert_eq!(hints, expected);
+                        let event = if drag {
+                            session.drop_on(to)
+                        } else {
+                            session.click(to)
+                        };
+                        let InputEvent::Move(mv) = event else {
+                            panic!("reported destination was rejected: {from}-{to}: {event:?}");
+                        };
+                        assert_eq!(*session.tree().current_node().position(), state.after(&mv).pos);
+                        let record = games::record::to_pdn(session.tree(), &[]);
+                        let loaded = games::record::from_pdn(&record).unwrap();
+                        assert!(loaded.tree.same_structure(session.tree()));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn every_blocking_wall_colour_and_closing_square_is_checked_across_the_board() {
+    for victim in Square::all() {
+        let wall: Vec<_> = Square::all()
+            .filter(|sq| {
+                let dx = sq.file().abs_diff(victim.file());
+                let dy = sq.rank().abs_diff(victim.rank());
+                (dx == 0 || dy == 0) && (1..=2).contains(&(dx + dy))
+            })
+            .collect();
+        for &closing in &wall {
+            // Approach the last wall cell by a step from outside the cross.
+            let from = Square::all()
+                .find(|sq| {
+                    *sq != victim
+                        && !wall.contains(sq)
+                        && sq.file().abs_diff(closing.file()) + sq.rank().abs_diff(closing.rank()) == 1
+                })
+                .unwrap();
+            let remaining: Vec<_> = wall.iter().copied().filter(|&sq| sq != closing).collect();
+            for mover in [Color::White, Color::Black] {
+                for home in HomeSide::ALL {
+                    for colors in 0..(1 << remaining.len()) {
+                        let mut pos = empty(mover, home);
+                        put(&mut pos, victim, mover.opponent());
+                        put(&mut pos, from, mover);
+                        for (i, &square) in remaining.iter().enumerate() {
+                            put(
+                                &mut pos,
+                                square,
+                                if colors & (1 << i) == 0 {
+                                    mover
+                                } else {
+                                    mover.opponent()
+                                },
+                            );
+                        }
+                        // Only an entirely one-colour wall is forbidden. A victim's
+                        // own neighbour can be moved away on a later turn.
+                        assert_eq!(find(State::new(pos), from, closing).is_some(), colors != 0,
+                            "victim={victim}, closing={closing}, colours={colors}, mover={mover:?}, home={home:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_forbidden_lock_can_be_crossed_but_not_used_as_a_jump_endpoint() {
+    let original = fen("W:Wc4,b4,e4,f4,d3,d2,d5,b6,c6,e6:Bd4");
+    for swap in [false, true] {
+        let state = if swap { rotate_and_swap(original) } else { original };
+        for home in HomeSide::ALL {
+            let state = for_home(state, home);
+            let map = |square| {
+                let square = if swap { rotate_square(square) } else { square };
+                if home == HomeSide::Right {
+                    mirror_square(square)
+                } else {
+                    square
+                }
+            };
+            let from = map(sq("b6"));
+            let transit = map(sq("d6"));
+            let to = map(sq("f6"));
+            assert!(find(state, from, transit).is_none());
+            assert_eq!(find(state, from, to).unwrap().path(), &[transit, to]);
+            assert_eq!(endpoints(state), reference(state));
+            assert_routes(state);
+            assert_input(state);
+        }
+    }
+}
+
+#[test]
+fn a_preexisting_full_lock_does_not_forbid_other_moves_in_a_loaded_position() {
+    let original = fen("W:Wb1,c1,a2,a3,e4:Ba1,f4");
+    for swap in [false, true] {
+        let state = if swap { rotate_and_swap(original) } else { original };
+        for home in HomeSide::ALL {
+            let state = for_home(state, home);
+            let map = |square| {
+                let square = if swap { rotate_square(square) } else { square };
+                if home == HomeSide::Right {
+                    mirror_square(square)
+                } else {
+                    square
+                }
+            };
+            assert!(find(state, map(sq("e4")), map(sq("g4"))).is_some());
             assert_eq!(endpoints(state), reference(state));
         }
     }
