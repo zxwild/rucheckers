@@ -44,11 +44,10 @@ pub const fn jump_closure(start: u64, occupied: u64) -> u64 {
     }
 }
 
-/// Pieces of `enemies` that can neither step nor jump, with at least one piece of
-/// `mover` among the cells that hold them in. This is the condition of the rule
-/// against locking an opponent's piece.
+/// The cells from which a piece could neither step nor jump if exactly the cells of
+/// `occupied` were taken.
 #[must_use]
-pub const fn locked(occupied: u64, mover: u64, enemies: u64) -> u64 {
+pub const fn immobile(occupied: u64) -> u64 {
     // A direction is closed when there is no cell next to the piece, or the next cell
     // is occupied and the cell behind it is occupied or outside the board.
     let up = RANK_8 | ((occupied >> 8) & (RANK_7 | RANK_8 | (occupied >> 16)));
@@ -57,15 +56,15 @@ pub const fn locked(occupied: u64, mover: u64, enemies: u64) -> u64 {
         FILE_H | ((occupied >> 1) & !FILE_H & (FILE_G | FILE_H | ((occupied >> 2) & !(FILE_G | FILE_H))));
     let left =
         FILE_A | ((occupied << 1) & !FILE_A & (FILE_A | FILE_B | ((occupied << 2) & !(FILE_A | FILE_B))));
-    let involved = (mover >> 8)
-        | (mover >> 16)
-        | (mover << 8)
-        | (mover << 16)
-        | ((mover >> 1) & !FILE_H)
-        | ((mover >> 2) & !(FILE_G | FILE_H))
-        | ((mover << 1) & !FILE_A)
-        | ((mover << 2) & !(FILE_A | FILE_B));
-    enemies & up & down & right & left & involved
+    up & down & right & left
+}
+
+/// Pieces of `enemies` walled in by the pieces of `mover` and the edges of the board:
+/// they could not move even if every other enemy piece left. This is the condition
+/// of the rule against locking an opponent's piece.
+#[must_use]
+pub const fn locked(mover: u64, enemies: u64) -> u64 {
+    enemies & immobile(mover)
 }
 
 /// For every cell, the cells one or two steps away along its file and its rank: the
@@ -248,7 +247,7 @@ impl Rules {
             return false;
         }
         let change = (1u64 << from) | (1u64 << to);
-        locked(board.occupied() ^ change, board.own() ^ change, enemies) & !before != 0
+        locked(board.own() ^ change, enemies) & !before != 0
     }
 
     /// All legal moves of the side to move as pairs of end cells, one for each
@@ -258,7 +257,7 @@ impl Rules {
         let own = board.own();
         let occupied = board.occupied();
         let allowed = self.allowed_targets(board);
-        let before = locked(occupied, own, board.other());
+        let before = locked(own, board.other());
         let mut pieces = own;
         while pieces != 0 {
             let from = pieces.trailing_zeros() as u8;
@@ -283,7 +282,7 @@ impl Rules {
         let own = board.own();
         let occupied = board.occupied();
         let allowed = self.allowed_targets(board);
-        let before = locked(occupied, own, board.other());
+        let before = locked(own, board.other());
         let mut pieces = own;
         while pieces != 0 {
             let from = pieces.trailing_zeros() as u8;
