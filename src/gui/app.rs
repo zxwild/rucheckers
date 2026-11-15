@@ -141,6 +141,8 @@ enum Action {
     SetLevel(u8),
     SetGamePreference(GameKind),
     SetHomePreference(HomeSide),
+    /// Ugolki: whether the computer blocks the way out of the player's home.
+    ToggleBlockHomeExit,
     Navigate(Nav),
     Continue,
     DismissResult,
@@ -230,6 +232,7 @@ impl CheckersApp {
             scroll_to_current: false,
             sprites: None,
         };
+        app.session.set_style(settings.computer_style);
         if let Some(path) = initial_file {
             app.open_file(&path, 0.0);
             if app.started {
@@ -472,6 +475,36 @@ impl CheckersApp {
                     self.file_job = Some(FileJob::start(FileAction::Save(text), lang, &name));
                 }
             }
+            Action::OpenSettings => self.settings_open = true,
+            Action::CloseSettings => self.settings_open = false,
+            Action::ToggleSound
+            | Action::TogglePanel
+            | Action::ToggleEffects
+            | Action::ToggleEffect(_)
+            | Action::SetLang(_)
+            | Action::SetGamePreference(_)
+            | Action::SetHomePreference(_)
+            | Action::ToggleBlockHomeExit => self.apply_preference(action, ctx),
+            Action::SetLevel(level) => {
+                self.session.set_level(level);
+                self.settings.level = self.session.level();
+                self.save_settings();
+            }
+            Action::Navigate(nav) => {
+                self.session.navigate(nav);
+                self.process_events(now);
+            }
+            Action::Continue => {
+                self.session.continue_from_here();
+            }
+            Action::DismissResult => self.dismissed_result = Some(self.session.tree().current()),
+            Action::CloseMessage => self.message = None,
+        }
+    }
+
+    /// Changes a preference of the settings dialog; each change is saved at once.
+    fn apply_preference(&mut self, action: Action, ctx: &Context) {
+        match action {
             Action::ToggleSound => {
                 self.settings.sound = !self.settings.sound;
                 self.save_settings();
@@ -497,8 +530,6 @@ impl CheckersApp {
                 }
                 self.save_settings();
             }
-            Action::OpenSettings => self.settings_open = true,
-            Action::CloseSettings => self.settings_open = false,
             Action::SetLang(lang) => {
                 if lang != self.settings.lang {
                     self.settings.lang = lang;
@@ -517,20 +548,14 @@ impl CheckersApp {
                 self.settings.ugolki_home_side = side;
                 self.save_settings();
             }
-            Action::SetLevel(level) => {
-                self.session.set_level(level);
-                self.settings.level = self.session.level();
+            Action::ToggleBlockHomeExit => {
+                let style = &mut self.settings.computer_style;
+                style.block_home_exit = !style.block_home_exit;
+                // The style changes no rule: it applies from the computer's next move.
+                self.session.set_style(self.settings.computer_style);
                 self.save_settings();
             }
-            Action::Navigate(nav) => {
-                self.session.navigate(nav);
-                self.process_events(now);
-            }
-            Action::Continue => {
-                self.session.continue_from_here();
-            }
-            Action::DismissResult => self.dismissed_result = Some(self.session.tree().current()),
-            Action::CloseMessage => self.message = None,
+            _ => {}
         }
     }
 
@@ -1612,6 +1637,51 @@ impl CheckersApp {
         }
     }
 
+    /// The game chosen for the next game, its home side and, for Ugolki, the computer's
+    /// style.
+    fn game_settings(&self, ui: &mut egui::Ui, lang: Lang, actions: &mut Vec<Action>) {
+        let mut game = self.settings.game;
+        ui.horizontal(|ui| {
+            ui.label(tr(lang, Text::GameMode));
+            egui::ComboBox::from_id_salt("game_mode_settings")
+                .selected_text(tr(lang, game.text_key()))
+                .show_ui(ui, |ui| {
+                    for value in GameKind::ALL {
+                        ui.selectable_value(&mut game, value, tr(lang, value.text_key()));
+                    }
+                });
+        });
+        ui.label(
+            RichText::new(tr(lang, Text::GameAppliesNew))
+                .small()
+                .color(theme::TEXT_WEAK),
+        );
+        if game == GameKind::Ugolki {
+            let mut home_side = self.settings.ugolki_home_side;
+            home_side_choice(ui, lang, &mut home_side);
+            if home_side != self.settings.ugolki_home_side {
+                actions.push(Action::SetHomePreference(home_side));
+            }
+        }
+        if game != self.settings.game {
+            actions.push(Action::SetGamePreference(game));
+        }
+        // The style matters for the game being played or chosen for the next one.
+        if game == GameKind::Ugolki || self.session.game() == GameKind::Ugolki {
+            ui.add_space(8.0);
+            ui.label(RichText::new(tr(lang, Text::PlayStyle)).strong());
+            let mut block = self.settings.computer_style.block_home_exit;
+            if ui.checkbox(&mut block, tr(lang, Text::BlockHomeExit)).changed() {
+                actions.push(Action::ToggleBlockHomeExit);
+            }
+            ui.label(
+                RichText::new(tr(lang, Text::BlockHomeExitHint))
+                    .small()
+                    .color(theme::TEXT_WEAK),
+            );
+        }
+    }
+
     fn settings_dialog(&self, ctx: &Context, actions: &mut Vec<Action>) {
         let lang = self.lang();
         let settings = &self.settings;
@@ -1619,32 +1689,7 @@ impl CheckersApp {
             ui.set_width(430.0);
             ui.heading(tr(lang, Text::Settings));
             ui.add_space(8.0);
-            let mut game = settings.game;
-            ui.horizontal(|ui| {
-                ui.label(tr(lang, Text::GameMode));
-                egui::ComboBox::from_id_salt("game_mode_settings")
-                    .selected_text(tr(lang, game.text_key()))
-                    .show_ui(ui, |ui| {
-                        for value in GameKind::ALL {
-                            ui.selectable_value(&mut game, value, tr(lang, value.text_key()));
-                        }
-                    });
-            });
-            ui.label(
-                RichText::new(tr(lang, Text::GameAppliesNew))
-                    .small()
-                    .color(theme::TEXT_WEAK),
-            );
-            if game == GameKind::Ugolki {
-                let mut home_side = settings.ugolki_home_side;
-                home_side_choice(ui, lang, &mut home_side);
-                if home_side != settings.ugolki_home_side {
-                    actions.push(Action::SetHomePreference(home_side));
-                }
-            }
-            if game != settings.game {
-                actions.push(Action::SetGamePreference(game));
-            }
+            self.game_settings(ui, lang, actions);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.label(tr(lang, Text::Language));
@@ -2358,6 +2403,30 @@ mod tests {
             vec![primary(away, true), primary(away, false)],
         );
         assert_eq!(app.session.input().origin(), None);
+    }
+
+    #[test]
+    fn the_blocking_style_is_a_saved_setting_that_reaches_the_computer() {
+        let path = std::env::temp_dir().join(format!("rucheckers-style-{}.conf", std::process::id()));
+        let ctx = Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let settings = Settings {
+            sound: false,
+            ..Settings::default()
+        };
+        let mut app = CheckersApp::new(&cc, settings, Some(path.clone()), None);
+        assert!(app.session.style().block_home_exit, "on by default");
+        app.apply(Action::ToggleBlockHomeExit, &ctx, 0.0);
+        assert!(!app.settings.computer_style.block_home_exit);
+        assert!(
+            !app.session.style().block_home_exit,
+            "it applies to the game being played"
+        );
+        let stored = Settings::load(&path, Settings::default());
+        assert!(!stored.computer_style.block_home_exit);
+        let restarted = CheckersApp::new(&cc, stored, None, None);
+        assert!(!restarted.session.style().block_home_exit);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

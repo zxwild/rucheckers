@@ -2,6 +2,22 @@
 
 use super::{russian, ugolki, Color, GameKind, Move, Position};
 
+/// How the computer plays, apart from its level. Each game uses what applies to it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Style {
+    /// Ugolki: block the way out of the opponent's home, so that pieces left there
+    /// cannot get out by the deadline. The rules allow it while they can still move.
+    pub block_home_exit: bool,
+}
+
+impl Default for Style {
+    fn default() -> Self {
+        Self {
+            block_home_exit: true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FinishReason {
     HomeFilled,
@@ -102,6 +118,7 @@ pub fn choose_move(
     state: GameState,
     history: &[Position],
     level: u8,
+    style: Style,
     seed: u64,
     stop: &std::sync::atomic::AtomicBool,
 ) -> Option<Move> {
@@ -111,6 +128,9 @@ pub fn choose_move(
             russian::ai::choose_move(&native, &history, level, seed, stop)
                 .map(|choice| Move::from_russian(choice.mv))
         }
-        NativeState::Ugolki(native) => ugolki::ai::choose_move(native, history, level, seed, stop),
+        NativeState::Ugolki(native) => {
+            let settings = ugolki::ai::level_settings(level);
+            ugolki::ai::choose_move_with(native, history, settings, style, seed, stop)
+        }
     }
 }

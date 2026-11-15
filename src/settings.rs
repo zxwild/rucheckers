@@ -7,7 +7,7 @@
 use crate::board::Color;
 use crate::games::difficulty::{clamp_level, MAX_LEVEL, MIN_LEVEL};
 use crate::games::ugolki::HomeSide;
-use crate::games::GameKind;
+use crate::games::{GameKind, Style};
 use crate::i18n::Lang;
 use crate::ui::fx::EffectSet;
 use std::env;
@@ -28,6 +28,8 @@ const FILE_NAME: &str = "settings.conf";
 pub struct Settings {
     pub game: GameKind,
     pub ugolki_home_side: HomeSide,
+    /// How the computer plays.
+    pub computer_style: Style,
     pub lang: Lang,
     pub level: u8,
     pub human: Color,
@@ -44,6 +46,7 @@ impl Default for Settings {
         Self {
             game: GameKind::default(),
             ugolki_home_side: HomeSide::default(),
+            computer_style: Style::default(),
             lang: Lang::DEFAULT,
             level: DEFAULT_LEVEL,
             human: Color::White,
@@ -96,10 +99,11 @@ impl Settings {
     #[must_use]
     pub fn to_text(&self) -> String {
         format!(
-            "# rucheckers settings\ngame={}\nugolki_home={}\nlanguage={}\nlevel={}\ncolor={}\nsound={}\npanel={}\n\
-             effects={}\neffect_lightning={}\neffect_sparks={}\neffect_flashes={}\n",
+            "# rucheckers settings\ngame={}\nugolki_home={}\nugolki_block_exit={}\nlanguage={}\nlevel={}\ncolor={}\n\
+             sound={}\npanel={}\neffects={}\neffect_lightning={}\neffect_sparks={}\neffect_flashes={}\n",
             self.game.code(),
             self.ugolki_home_side.code(),
+            switch(self.computer_style.block_home_exit),
             self.lang.code(),
             clamp_level(self.level),
             match self.human {
@@ -137,6 +141,11 @@ impl Settings {
                 "ugolki_home" => {
                     if let Some(side) = HomeSide::from_code(value) {
                         settings.ugolki_home_side = side;
+                    }
+                }
+                "ugolki_block_exit" => {
+                    if let Some(on) = parse_switch(value) {
+                        settings.computer_style.block_home_exit = on;
                     }
                 }
                 "language" => {
@@ -349,11 +358,14 @@ mod tests {
         for lang in Lang::ALL {
             for level in MIN_LEVEL..=MAX_LEVEL {
                 for human in [Color::White, Color::Black] {
-                    for switches in 0..8u8 {
+                    for switches in 0..16u8 {
                         for effects in effect_sets() {
                             let settings = Settings {
                                 game: GameKind::default(),
                                 ugolki_home_side: HomeSide::default(),
+                                computer_style: Style {
+                                    block_home_exit: switches & 8 != 0,
+                                },
                                 lang,
                                 level,
                                 human,
@@ -367,6 +379,9 @@ mod tests {
                             let base = Settings {
                                 game: GameKind::default(),
                                 ugolki_home_side: HomeSide::default(),
+                                computer_style: Style {
+                                    block_home_exit: !settings.computer_style.block_home_exit,
+                                },
                                 lang: if lang == Lang::En { Lang::Ru } else { Lang::En },
                                 level: if level == MIN_LEVEL { MAX_LEVEL } else { MIN_LEVEL },
                                 human: human.opponent(),
@@ -386,7 +401,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(checked, 12 * 10 * 2 * 8 * 8);
+        assert_eq!(checked, 12 * 10 * 2 * 16 * 8);
     }
 
     #[test]
@@ -397,8 +412,9 @@ mod tests {
         let restart = || Settings::load(&path, Settings::default());
         assert_eq!(restart(), Settings::default(), "first start: no file yet");
 
-        let changes: [fn(&mut Settings); 9] = [
+        let changes: [fn(&mut Settings); 10] = [
             |s| s.level = 7,
+            |s| s.computer_style.block_home_exit = false,
             |s| s.human = Color::Black,
             |s| s.lang = Lang::Ja,
             |s| s.sound = false,
@@ -421,6 +437,9 @@ mod tests {
             Settings {
                 game: GameKind::default(),
                 ugolki_home_side: HomeSide::default(),
+                computer_style: Style {
+                    block_home_exit: false,
+                },
                 lang: Lang::Ja,
                 level: 10,
                 human: Color::Black,
@@ -444,6 +463,7 @@ mod tests {
             "\0\0\0",
             "level=abc\nlanguage=xx\ncolor=green\nsound=maybe\npanel=",
             "effects=sometimes\neffect_lightning=\neffect_sparks=2\neffect_flashes=はい",
+            "ugolki_block_exit=sometimes\nugolki_block_exit=",
             "level=0\nlevel=11\nlevel=-3\nlevel=999999999999",
             "====\n=\nlevel\n# comment",
             "レベル=5",
@@ -473,6 +493,7 @@ mod tests {
             Settings {
                 game: GameKind::default(),
                 ugolki_home_side: HomeSide::default(),
+                computer_style: Style::default(),
                 lang: Lang::En,
                 level: 3,
                 human: Color::Black,
@@ -557,6 +578,7 @@ mod tests {
             [
                 "game=russian",
                 "ugolki_home=left",
+                "ugolki_block_exit=on",
                 "language=zh",
                 "level=9",
                 "color=black",
@@ -584,6 +606,9 @@ mod tests {
         let first = Settings {
             game: GameKind::default(),
             ugolki_home_side: HomeSide::default(),
+            computer_style: Style {
+                block_home_exit: false,
+            },
             lang: Lang::En,
             level: 8,
             human: Color::Black,

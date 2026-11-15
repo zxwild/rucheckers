@@ -23,4 +23,4 @@ pub use moves::Move;
 pub use notation::{format_move, parse_move};
 pub use pieces::{Color, Kind, Piece};
 pub use presentation::{outcome_reason, outcome_title};
-pub use state::{choose_move, legal_moves, FinishReason, GameState, Outcome};
+pub use state::{choose_move, legal_moves, FinishReason, GameState, Outcome, Style};

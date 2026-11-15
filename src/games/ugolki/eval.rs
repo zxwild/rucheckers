@@ -145,6 +145,9 @@ pub struct Evaluator {
     goal: [[[[i32; 8]; 2]; PIECES + 1]; 2],
     /// Extra price of a piece of each side on each cell.
     lag: [[i32; 64]; 2],
+    /// The side whose danger of failing the deadline of the home is left out. The side
+    /// playing against it then gains nothing by blocking its way out of the home.
+    spared: Option<Color>,
 }
 
 /// The cells of the goal of `color`, from the far corner outwards.
@@ -201,7 +204,16 @@ impl Evaluator {
             weights,
             goal,
             lag,
+            spared: None,
         }
+    }
+
+    /// The same evaluation without the deadline danger of `spared`. The value stays the
+    /// opposite for the two sides, so the search remains consistent.
+    #[must_use]
+    pub const fn sparing(mut self, spared: Option<Color>) -> Self {
+        self.spared = spared;
+        self
     }
 
     #[must_use]
@@ -236,6 +248,9 @@ impl Evaluator {
         let home = self.rules.home[side_index(color)];
         let mut staying = pieces & home;
         if staying == 0 || ply < self.weights.rush_from || ply >= HOME_DEADLINE * 2 {
+            return 0;
+        }
+        if self.spared == Some(color) {
             return 0;
         }
         let occupied = board.occupied();
@@ -469,6 +484,29 @@ mod tests {
         assert!(danger("W:Wd3,h8:Bd4,d5,e3,f3", 78) > boxed + evaluator.weights.crisis);
         assert_eq!(danger("W:Wd3,h8:Bd4,d5,e3,f3", 20), 0);
         assert_eq!(danger("W:We4,h8:Bd4,d5,e3,f3", 72), 0);
+    }
+
+    #[test]
+    fn sparing_a_side_drops_only_its_deadline_danger() {
+        // Black to move; White's piece d3 is boxed in at home with few moves left.
+        let board = board(state("B:Wd3,h8:Bd4,d5,e3,f3,a1", 77));
+        let full = Evaluator::new(HomeSide::Left);
+        let danger = full.rush(Color::White, board.white, &board);
+        assert!(danger > full.weights.crisis);
+        let spared = Evaluator::new(HomeSide::Left).sparing(Some(Color::White));
+        assert_eq!(spared.rush(Color::White, board.white, &board), 0);
+        assert_eq!(full.evaluate(&board) - spared.evaluate(&board), danger);
+        // Black has no piece at home here: sparing Black changes nothing.
+        let black_spared = Evaluator::new(HomeSide::Left).sparing(Some(Color::Black));
+        assert_eq!(black_spared.evaluate(&board), full.evaluate(&board));
+        // The value stays the opposite for the two sides to move.
+        let mut white_to_move = board;
+        white_to_move.side = Color::White;
+        white_to_move.ply += 1;
+        assert_eq!(
+            full.evaluate(&white_to_move) - spared.evaluate(&white_to_move),
+            -full.rush(Color::White, white_to_move.white, &white_to_move)
+        );
     }
 
     #[test]

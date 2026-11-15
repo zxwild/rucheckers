@@ -1,6 +1,6 @@
 //! Cancellable background search shared by game modes.
 
-use super::{choose_move, GameState, Move, Position};
+use super::{choose_move, GameState, Move, Position, Style};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
@@ -20,14 +20,14 @@ pub struct SearchJob {
 }
 impl SearchJob {
     #[must_use]
-    pub fn start(state: GameState, history: Vec<Position>, level: u8, seed: u64) -> Self {
+    pub fn start(state: GameState, history: Vec<Position>, level: u8, style: Style, seed: u64) -> Self {
         let (sender, receiver) = channel();
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         let _ = thread::Builder::new()
             .name("board-game-ai".into())
             .spawn(move || {
-                let answer = choose_move(state, &history, level, seed, &flag);
+                let answer = choose_move(state, &history, level, style, seed, &flag);
                 let _ = sender.send(answer);
             });
         Self { receiver, stop }

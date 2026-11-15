@@ -10,7 +10,7 @@
 use super::bits::{side_index, Board, Finish, Rules};
 use super::eval::Evaluator;
 use super::State;
-use crate::games::{Color, Move, Position};
+use crate::games::{Color, Move, Position, Style};
 use crate::rng::Rng;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -175,6 +175,7 @@ struct Search<'a> {
 impl<'a> Search<'a> {
     fn new(
         layout: super::HomeSide,
+        eval: Evaluator,
         history: &[Position],
         stop: &'a AtomicBool,
         deadline: Instant,
@@ -182,7 +183,7 @@ impl<'a> Search<'a> {
     ) -> Self {
         let mut search = Self {
             rules: Rules::new(layout),
-            eval: Evaluator::new(layout),
+            eval,
             stop,
             deadline,
             nodes: 0,
@@ -530,12 +531,14 @@ impl Search<'_> {
     }
 }
 
-/// Searches with the given settings; `choose_move` takes them from the level.
+/// Searches with the given settings and style; `choose_move` takes the settings from
+/// the level and plays in the default style.
 #[must_use]
 pub fn choose_move_with(
     state: State,
     history: &[Position],
     settings: Level,
+    style: Style,
     seed: u64,
     stop: &AtomicBool,
 ) -> Option<Move> {
@@ -555,7 +558,11 @@ pub fn choose_move_with(
         ply: state.ply,
     };
     let table_bits = if settings.budget_ms >= 1000 { 20 } else { 18 };
-    let mut search = Search::new(state.pos.home_side, history, stop, deadline, table_bits);
+    // Without blocking the opponent's way out of its home, the computer still counts
+    // its own deadline but sees no gain in the opponent's pieces being late.
+    let spared = (!style.block_home_exit).then(|| state.pos.side.opponent());
+    let eval = Evaluator::new(state.pos.home_side).sparing(spared);
+    let mut search = Search::new(state.pos.home_side, eval, history, stop, deadline, table_bits);
     let key = key_of(&board);
     search.order(&board, 0, None);
     let mut roots: Vec<RootMove> = search.ordered[0]
@@ -583,7 +590,8 @@ pub fn choose_move_with(
         .copied()
 }
 
-/// Searches all first moves of `state` within the time of the level.
+/// Searches all first moves of `state` within the time of the level, in the default
+/// style.
 #[must_use]
 pub fn choose_move(
     state: State,
@@ -592,7 +600,14 @@ pub fn choose_move(
     seed: u64,
     stop: &AtomicBool,
 ) -> Option<Move> {
-    choose_move_with(state, history, level_settings(level), seed, stop)
+    choose_move_with(
+        state,
+        history,
+        level_settings(level),
+        Style::default(),
+        seed,
+        stop,
+    )
 }
 
 #[cfg(test)]
@@ -669,7 +684,8 @@ mod tests {
             for history in [vec![], vec![repeated, repeated], vec![state.pos, state.pos]] {
                 for depth in 1..=3 {
                     let deadline = Instant::now() + Duration::from_secs(30);
-                    let mut search = Search::new(state.pos.home_side, &history, &stop, deadline, 12);
+                    let eval = Evaluator::new(state.pos.home_side);
+                    let mut search = Search::new(state.pos.home_side, eval, &history, &stop, deadline, 12);
                     search.selective = false;
                     let expected = minimax(state, depth, &mut history.clone());
                     let key = key_of(&board(state));
@@ -733,6 +749,65 @@ mod tests {
             assert_eq!(mv.from(), Square::parse("d3").unwrap(), "level {level}");
             assert_eq!(home & mv.to().bit(), 0, "level {level}");
         }
+    }
+
+    #[test]
+    fn without_the_blocking_style_the_opponents_way_out_stays_open() {
+        // White's last piece at home, a2, gets out in two moves: to b2, then over c2 and
+        // e2. White has three moves left before the deadline. d4-d2 closes that way and
+        // leaves a2 five moves; without the style the computer fills the corner instead.
+        let stop = AtomicBool::new(false);
+        let fixed = Level {
+            depth: 3,
+            budget_ms: 60_000,
+            noise: 0,
+            blunder: 0.0,
+        };
+        let original = state(
+            "B:Wf1,g1,a2,e2,e3,f3,h4,d5,a6,e6,b7,e8:Be1,c2,b3,c3,d3,a4,b4,d4,a5,f5,a7,d7",
+            73,
+        );
+        for layout in super::super::HomeSide::ALL {
+            let right = layout == super::super::HomeSide::Right;
+            let at = |name: &str| {
+                let square = Square::parse(name).unwrap();
+                if right {
+                    Square::from_file_rank(7 - square.file(), square.rank()).unwrap()
+                } else {
+                    square
+                }
+            };
+            let mut position = original;
+            if right {
+                let reflect = |bits| {
+                    crate::games::squares_of(bits).fold(0, |mask, sq| {
+                        mask | Square::from_file_rank(7 - sq.file(), sq.rank()).unwrap().bit()
+                    })
+                };
+                position.pos.white = reflect(position.pos.white);
+                position.pos.black = reflect(position.pos.black);
+                position.pos.home_side = layout;
+            }
+            let chosen = |block_home_exit| {
+                let style = Style { block_home_exit };
+                let mv = choose_move_with(position, &[], fixed, style, 1, &stop).unwrap();
+                (mv.from(), mv.to())
+            };
+            assert_eq!(chosen(true), (at("d4"), at("d2")), "{layout:?}");
+            assert_eq!(chosen(false), (at("a5"), at("a1")), "{layout:?}");
+        }
+
+        // The computer still minds its own deadline without the style.
+        let own = state(
+            "W:Wd3,e8,f8,g8,h8,e7,f7,g7,h7,f6,g6,h6:Bc4,d5,e3,f3,a1,b1,c1,a2,b2,c2,a3,b3",
+            76,
+        );
+        let style = Style {
+            block_home_exit: false,
+        };
+        let mv = choose_move_with(own, &[], level_settings(6), style, 5, &stop).unwrap();
+        assert_eq!(mv.from(), Square::parse("d3").unwrap());
+        assert_eq!(super::super::home(Color::White) & mv.to().bit(), 0);
     }
 
     #[test]

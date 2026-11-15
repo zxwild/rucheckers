@@ -342,8 +342,9 @@ The settings are kept in one file:
 The file is plain text of `key=value` lines: `language` (a two-letter code such
 as `ru`, `en` or `ja`), `game` (`russian` or `ugolki`), `level` (1–10),
 `ugolki_home` (`left` or `right`), `color` (`white` or `black`), and the switches
-`sound`, `panel`, `effects` (the main switch of the special effects), `effect_lightning`,
-`effect_sparks` and `effect_flashes` with the values `on` and `off`. Missing and damaged
+`ugolki_block_exit` (whether the computer blocks the way out of the player's home in
+Ugolki), `sound`, `panel`, `effects` (the main switch of the special effects),
+`effect_lightning`, `effect_sparks` and `effect_flashes` with the values `on` and `off`. Missing and damaged
 lines are replaced with default values.
 
 The file is written after every change — a new game, the level list, any switch in the
@@ -355,7 +356,11 @@ Select the game in the settings or in the new-game dialog. The settings choice
 applies to the next game; the active game and its history stay available. Both modes
 remember the same level, colour, language and switches. Ugolki also offers a left or
 right home, relative to the player; this choice is saved in settings and game files.
-The panel shows the number of arrived pieces and a short rules explanation.
+The panel shows the number of arrived pieces and a short rules explanation. Under
+"Ugolki: computer's playing style" the settings have the switch "Block the way out of
+your home" (on by default): with it, the computer surrounds the player's pieces still
+at home so that they miss the move-40 deadline. Switched off, the computer still minds
+its own deadline; the switch applies from the computer's next move.
 
 ## Structure
 

@@ -9,6 +9,7 @@ use super::tree::{GameTree, NodeId};
 use super::worker::{JobStatus, SearchJob};
 use super::Move;
 use super::Outcome;
+use super::Style;
 use super::{Color, Square};
 use crate::games::difficulty::clamp_level;
 use crate::rng::Rng;
@@ -70,6 +71,7 @@ pub struct Session {
     rng: Rng,
     events: Vec<SessionEvent>,
     min_think: f64,
+    style: Style,
     /// When the board finishes showing the last move played; see [`Self::hold_reply_until`].
     shown_at: f64,
 }
@@ -98,6 +100,7 @@ impl Session {
             rng: Rng::new(seed),
             events: Vec::new(),
             min_think: DEFAULT_MIN_THINK_SECONDS,
+            style: Style::default(),
             shown_at: f64::NEG_INFINITY,
         };
         session.refresh_input();
@@ -163,6 +166,21 @@ impl Session {
         let level = clamp_level(level);
         if level != self.level {
             self.level = level;
+            self.thinking = None;
+        }
+    }
+
+    /// How the computer plays.
+    #[must_use]
+    pub const fn style(&self) -> Style {
+        self.style
+    }
+
+    /// Changes how the computer plays. If the computer is thinking, the calculation
+    /// restarts in the new style.
+    pub fn set_style(&mut self, style: Style) {
+        if style != self.style {
+            self.style = style;
             self.thinking = None;
         }
     }
@@ -372,7 +390,7 @@ impl Session {
             let node = self.tree.current();
             let state = *self.tree.current_node().state();
             let history = self.tree.history_before(node);
-            let job = SearchJob::start(state, history, self.level, self.rng.next_u64());
+            let job = SearchJob::start(state, history, self.level, self.style, self.rng.next_u64());
             self.thinking = Some(Thinking {
                 job,
                 node,
