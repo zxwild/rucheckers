@@ -7,6 +7,7 @@
 //! not become newly locked without any step or jump by the moving player's pieces.
 
 pub mod ai;
+mod bits;
 mod eval;
 
 use super::{squares_of, Color, FinishReason, GameKind, Move, Outcome, Position, Square};
