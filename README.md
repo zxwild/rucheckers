@@ -264,6 +264,10 @@ lints of its own.
 ## Controls
 
 - A move: click a piece, then a square; or drag the piece.
+- The press itself acts: it selects a piece or makes the move to a marked square, even
+  while the mouse is moving. A piece is dropped on another square only after it has been
+  dragged for at least 0.2 s; a quicker press is a click on the square where the button
+  went down. A click made while a move is still being shown acts once the piece lands.
 - A multi-capture can be made one jump at a time (then, with several routes, the player
   chooses the next square) or by pointing at the final square at once (it is marked
   with a ring). Only a square whose capture is determined unambiguously can be pointed
@@ -500,6 +504,8 @@ Play
 - [ ] The player's colour is at the bottom; when playing Black the board is turned and
       the computer moves first.
 - [ ] Moves by clicks and by dragging; a piece dropped elsewhere returns to its place.
+- [ ] A click made while the mouse moves selects the piece; a click during a move
+      animation acts after the landing.
 - [ ] A multi-capture goes step by step or with one click on the final square (marked
       with a ring); captured pieces dim and disappear at the end of the move.
 - [ ] While the computer is thinking the interface responds and the indicator is

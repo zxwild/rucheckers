@@ -38,6 +38,12 @@ const PANEL_MIN_WIDTH: f32 = 250.0;
 const LIST_HEIGHT: f32 = 440.0;
 /// Pause between the last move of a game and the sound of its end, s.
 const END_SOUND_DELAY: f64 = 0.45;
+/// Distance the pointer travels with the button held before the piece follows it, points.
+const DRAG_START_DISTANCE: f32 = 6.0;
+/// A press released sooner than this is a click on the pressed square wherever the pointer
+/// has gone, s: a click made while the mouse still moves selects the piece instead of
+/// dropping it on the next square. Dragging a piece to a square takes longer.
+const MIN_DROP_SECONDS: f64 = 0.2;
 
 /// Animation of a move that has been made: the position before the move and the travel of
 /// the piece.
@@ -53,6 +59,35 @@ struct Glide {
     start: f64,
     /// The piece first becomes a king at the end of this glide.
     promotes: bool,
+}
+
+/// A press of the primary button on the board, followed until the button comes up.
+#[derive(Clone, Copy)]
+struct Press {
+    /// The square under the pointer when the button went down.
+    square: Square,
+    /// Where and when the button went down.
+    origin: Pos2,
+    time: f64,
+    /// The piece was selected before the press: released without a drag, the press is a
+    /// click on the selected piece and clears the selection.
+    was_selected: bool,
+}
+
+/// A press made while a move was still being shown. It acts as soon as the board takes
+/// input again, so a click that comes a moment early is not lost.
+#[derive(Clone, Copy)]
+struct EarlyPress {
+    at: Pos2,
+    /// The button has come up meanwhile: the press is a click.
+    released: bool,
+}
+
+/// A change of the primary button over the board, in the order of the window events.
+#[derive(Clone, Copy, Debug)]
+enum Button {
+    Down(Pos2),
+    Up(Pos2),
 }
 
 /// What the board shows in one frame.
@@ -127,6 +162,8 @@ pub struct CheckersApp {
     anims: VecDeque<Playing>,
     glide: Option<Glide>,
     dragging: Option<Square>,
+    press: Option<Press>,
+    early_press: Option<EarlyPress>,
     /// How many jumps of the human's move were already shown on the board when it was completed.
     human_first_step: Option<usize>,
     /// The electric discharges visible on the board now.
@@ -172,6 +209,8 @@ impl CheckersApp {
             anims: VecDeque::new(),
             glide: None,
             dragging: None,
+            press: None,
+            early_press: None,
             human_first_step: None,
             effects: Vec::new(),
             promotions: Vec::new(),
@@ -243,6 +282,8 @@ impl CheckersApp {
         self.promotions.clear();
         self.glide = None;
         self.dragging = None;
+        self.press = None;
+        self.early_press = None;
         self.sounds.clear();
         self.dismissed_result = None;
         self.scroll_to_current = true;
@@ -261,6 +302,8 @@ impl CheckersApp {
         self.session.cancel_input();
         self.glide = None;
         self.dragging = None;
+        self.press = None;
+        self.early_press = None;
     }
 
     // -----------------------------------------------------------------------
@@ -628,58 +671,180 @@ impl CheckersApp {
         pointer: Option<Pos2>,
         now: f64,
     ) {
-        if !self.started || self.modal_open() || !self.anims.is_empty() {
+        // The primary button is read from the window events. egui counts a click only
+        // while the pointer stands still, and a press released a frame or two after the
+        // pointer moved on is neither a click nor a drag for it: a click made while the
+        // mouse was moving used to select nothing.
+        let (events, held) = ctx.input(|i| {
+            let events: Vec<(Pos2, bool)> = i
+                .events
+                .iter()
+                .filter_map(|event| match *event {
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        ..
+                    } => Some((pos, pressed)),
+                    _ => None,
+                })
+                .collect();
+            (events, i.pointer.primary_down())
+        });
+        // Only presses on the board itself count, not on a window or a menu above it.
+        let on_board = |pos: Pos2| {
+            response.rect.contains(pos) && ctx.layer_id_at(pos).is_none_or(|top| top == response.layer_id)
+        };
+        let buttons: Vec<Button> = events
+            .into_iter()
+            .filter_map(|(pos, pressed)| {
+                if pressed {
+                    on_board(pos).then_some(Button::Down(pos))
+                } else {
+                    Some(Button::Up(pos))
+                }
+            })
+            .collect();
+        self.board_buttons(&buttons, held, layout, pointer, now);
+        if response.secondary_clicked() && self.started && !self.modal_open() && !self.animating(now) {
+            self.cancel_board_input();
+        }
+    }
+
+    /// Whether a move is still being animated.
+    fn animating(&self, now: f64) -> bool {
+        self.anims.iter().any(|playing| !playing.anim.frame(now).finished)
+    }
+
+    /// Whether a move or a capture step made with a click is still being shown. A press
+    /// waits for the landing: a quick second click must not crown the piece early and
+    /// leave the rose behind.
+    fn showing_move(&self, now: f64) -> bool {
+        self.animating(now)
+            || self
+                .glide
+                .as_ref()
+                .is_some_and(|glide| now < glide.start + segment_seconds(glide.from, glide.to))
+    }
+
+    /// Applies the primary-button events of one frame. A press acts at once: it selects a
+    /// piece, makes the move to a marked square or clears the selection. The release drops
+    /// a dragged piece, or clears the selection after a click on the selected piece.
+    /// `held` tells whether the button is still down after these events.
+    fn board_buttons(
+        &mut self,
+        buttons: &[Button],
+        held: bool,
+        layout: &BoardLayout,
+        pointer: Option<Pos2>,
+        now: f64,
+    ) {
+        if !self.started || self.modal_open() {
+            self.press = None;
+            self.early_press = None;
             self.dragging = None;
             return;
         }
-        // Finish the visible landing before accepting another capture step. Otherwise
-        // a quick second click can crown the piece early and leave the rose behind.
-        if self
-            .glide
-            .as_ref()
-            .is_some_and(|glide| now < glide.start + segment_seconds(glide.from, glide.to))
-        {
-            if response.secondary_clicked() {
-                self.cancel_board_input();
-            }
-            return;
-        }
-        let square_at = |point: Option<Pos2>| point.and_then(|p| layout.game_square_at(p.x, p.y));
-        let promoted_before = self.session.input().promoted_so_far();
-        let steps_before = self.session.input().steps().len();
-
-        if response.drag_started() {
-            let origin = ctx.input(|i| i.pointer.press_origin()).or(pointer);
-            if let Some(sq) = square_at(origin) {
-                if self.session.grab(sq) {
-                    self.dragging = Some(sq);
-                    self.glide = None;
-                }
-            }
-        }
-        if response.drag_stopped() && self.dragging.take().is_some() {
-            if let Some(sq) = square_at(pointer) {
-                let event = self.session.drop_on(sq);
-                self.after_input(event, true, promoted_before, steps_before, now);
-            }
-        }
-        if response.clicked() {
-            match square_at(response.interact_pointer_pos().or(pointer)) {
-                Some(sq) => {
-                    let event = self.session.click(sq);
-                    self.after_input(event, false, promoted_before, steps_before, now);
-                }
-                None => {
-                    // A click off the playing squares clears the selection but does not
-                    // break off a capture in progress.
-                    if !self.session.input().in_progress() {
-                        self.session.cancel_input();
+        for &button in buttons {
+            if self.showing_move(now) {
+                match button {
+                    Button::Down(at) => self.early_press = Some(EarlyPress { at, released: false }),
+                    Button::Up(_) => {
+                        if let Some(early) = &mut self.early_press {
+                            early.released = true;
+                        }
                     }
                 }
+                continue;
+            }
+            self.apply_early_press(layout, now);
+            match button {
+                Button::Down(at) => self.press_at(at, layout, now),
+                Button::Up(at) => self.release_at(at, layout, now),
             }
         }
-        if response.secondary_clicked() {
-            self.cancel_board_input();
+        if !self.showing_move(now) {
+            self.apply_early_press(layout, now);
+        }
+        if let Some(press) = self.press {
+            if !held {
+                // The button came up where the window could not see it, for instance
+                // after switching to another window: nothing is dropped.
+                self.press = None;
+                self.dragging = None;
+            } else if self.dragging.is_none()
+                && pointer.is_some_and(|p| p.distance(press.origin) > DRAG_START_DISTANCE)
+            {
+                self.dragging = Some(press.square);
+                self.glide = None;
+            }
+        }
+    }
+
+    fn apply_early_press(&mut self, layout: &BoardLayout, now: f64) {
+        if let Some(early) = self.early_press.take() {
+            self.press_at(early.at, layout, now);
+            if early.released {
+                self.release_at(early.at, layout, now);
+            }
+        }
+    }
+
+    /// The primary button went down at `at`.
+    fn press_at(&mut self, at: Pos2, layout: &BoardLayout, now: f64) {
+        self.press = None;
+        self.dragging = None;
+        let input = self.session.input();
+        let Some(square) = layout.game_square_at(at.x, at.y) else {
+            // A press off the playing squares clears the selection but does not break off
+            // a capture in progress.
+            if !input.in_progress() {
+                self.session.cancel_input();
+            }
+            return;
+        };
+        if input.current_square() == Some(square) {
+            // The selected piece may be dragged on; released in place, it is a click.
+            self.press = Some(Press {
+                square,
+                origin: at,
+                time: now,
+                was_selected: true,
+            });
+            return;
+        }
+        let promoted_before = input.promoted_so_far();
+        let steps_before = input.steps().len();
+        let event = self.session.click(square);
+        let selected = matches!(event, InputEvent::Selected(_));
+        self.after_input(event, false, promoted_before, steps_before, now);
+        if selected {
+            self.press = Some(Press {
+                square,
+                origin: at,
+                time: now,
+                was_selected: false,
+            });
+        }
+    }
+
+    /// The primary button came up at `at`.
+    fn release_at(&mut self, at: Pos2, layout: &BoardLayout, now: f64) {
+        let Some(press) = self.press.take() else {
+            return;
+        };
+        let dragged = self.dragging.take().is_some() && now - press.time >= MIN_DROP_SECONDS;
+        let input = self.session.input();
+        let promoted_before = input.promoted_so_far();
+        let steps_before = input.steps().len();
+        if dragged {
+            if let Some(square) = layout.game_square_at(at.x, at.y) {
+                let event = self.session.drop_on(square);
+                self.after_input(event, true, promoted_before, steps_before, now);
+            }
+        } else if press.was_selected {
+            let event = self.session.click(press.square);
+            self.after_input(event, false, promoted_before, steps_before, now);
         }
     }
 
@@ -1952,6 +2117,247 @@ mod tests {
         assert_eq!(app.session.input().steps(), &[square("f8")]);
         assert_eq!(app.scene(&layout, None, 2.04).mover.unwrap().1.kind, Kind::Man);
         assert_eq!(app.promotions.len(), 1);
+    }
+
+    fn primary(at: Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        }
+    }
+
+    /// One frame of the board with the given window events, as `board_panel` runs it.
+    fn board_frame(app: &mut CheckersApp, ctx: &Context, now: f64, events: Vec<egui::Event>) {
+        let layout = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 640.0))),
+                time: Some(now),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let response =
+                        ui.interact(ui.max_rect(), Id::new("board"), egui::Sense::click_and_drag());
+                    let pointer = ctx.input(|i| i.pointer.latest_pos());
+                    app.handle_board_input(ctx, &response, &layout, pointer, now);
+                });
+            },
+        );
+    }
+
+    /// The Ugolki start with the human playing White, a context that has already shown
+    /// the board once (as in the running window), and the centres of two cells.
+    fn ugolki_app(from: &str, to: &str) -> (CheckersApp, Context, Pos2, Pos2) {
+        let mut app = app("W:Wd6:Be7,g7", Color::White);
+        app.session.start_game(
+            Position::initial_with_home(GameKind::Ugolki, HomeSide::Left),
+            Color::White,
+            1,
+        );
+        app.process_events(0.0);
+        let ctx = Context::default();
+        board_frame(&mut app, &ctx, 0.5, Vec::new());
+        let layout = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        let at = |name| board::square_center(&layout, square(name));
+        (app, ctx, at(from), at(to))
+    }
+
+    #[test]
+    fn a_click_made_while_the_mouse_moves_selects_the_piece() {
+        // The pointer passes over c3, the button goes down and comes up 18 points further
+        // on, all within one frame: egui reports neither a click nor a drag for this.
+        let (mut app, ctx, c3, _) = ugolki_app("c3", "c4");
+        let events = vec![
+            egui::Event::PointerMoved(c3 - vec2(15.0, 0.0)),
+            primary(c3, true),
+            egui::Event::PointerMoved(c3 + vec2(18.0, 0.0)),
+            primary(c3 + vec2(18.0, 0.0), false),
+        ];
+        board_frame(&mut app, &ctx, 1.0, events);
+        assert_eq!(app.session.input().origin(), Some(square("c3")));
+        assert_eq!(app.session.tree().len(), 1);
+    }
+
+    #[test]
+    fn a_quick_press_that_slides_onto_a_target_is_a_click_not_a_drop() {
+        // Down on c3 and up over c4 a tenth of a second later: a sloppy click, not a move.
+        let (mut app, ctx, c3, c4) = ugolki_app("c3", "c4");
+        board_frame(
+            &mut app,
+            &ctx,
+            1.0,
+            vec![egui::Event::PointerMoved(c3), primary(c3, true)],
+        );
+        let middle = c3 + (c4 - c3) * 0.5;
+        board_frame(&mut app, &ctx, 1.04, vec![egui::Event::PointerMoved(middle)]);
+        assert_eq!(app.dragging, Some(square("c3")), "the piece follows the pointer");
+        board_frame(
+            &mut app,
+            &ctx,
+            1.1,
+            vec![egui::Event::PointerMoved(c4), primary(c4, false)],
+        );
+        assert_eq!(app.session.tree().len(), 1, "no move was made");
+        assert_eq!(app.session.input().origin(), Some(square("c3")));
+        assert_eq!(app.dragging, None);
+    }
+
+    #[test]
+    fn a_deliberate_drag_still_moves_the_piece() {
+        let (mut app, ctx, c3, c4) = ugolki_app("c3", "c4");
+        board_frame(
+            &mut app,
+            &ctx,
+            1.0,
+            vec![egui::Event::PointerMoved(c3), primary(c3, true)],
+        );
+        board_frame(
+            &mut app,
+            &ctx,
+            1.1,
+            vec![egui::Event::PointerMoved(c3 + (c4 - c3) * 0.5)],
+        );
+        board_frame(
+            &mut app,
+            &ctx,
+            1.3,
+            vec![egui::Event::PointerMoved(c4), primary(c4, false)],
+        );
+        assert_eq!(app.session.tree().len(), 2);
+        let mv = *app.session.tree().current_node().mv().unwrap();
+        assert_eq!((mv.from(), mv.to()), (square("c3"), square("c4")));
+    }
+
+    #[test]
+    fn a_press_acts_at_once_and_a_click_on_the_selected_piece_clears_it() {
+        let (mut app, ctx, c3, c4) = ugolki_app("c3", "c4");
+        board_frame(
+            &mut app,
+            &ctx,
+            1.0,
+            vec![egui::Event::PointerMoved(c3), primary(c3, true)],
+        );
+        assert_eq!(
+            app.session.input().origin(),
+            Some(square("c3")),
+            "selected while the button is still down"
+        );
+        board_frame(&mut app, &ctx, 1.05, vec![primary(c3, false)]);
+        board_frame(&mut app, &ctx, 1.5, vec![primary(c3, true)]);
+        assert_eq!(
+            app.session.input().origin(),
+            Some(square("c3")),
+            "kept for a drag"
+        );
+        board_frame(&mut app, &ctx, 1.55, vec![primary(c3, false)]);
+        assert_eq!(
+            app.session.input().origin(),
+            None,
+            "a click on it clears the selection"
+        );
+
+        board_frame(&mut app, &ctx, 2.0, vec![primary(c3, true), primary(c3, false)]);
+        board_frame(
+            &mut app,
+            &ctx,
+            2.5,
+            vec![egui::Event::PointerMoved(c4), primary(c4, true)],
+        );
+        assert_eq!(
+            app.session.tree().len(),
+            2,
+            "the move to a marked cell is made on the press"
+        );
+    }
+
+    #[test]
+    fn a_press_during_a_move_animation_acts_once_the_piece_has_landed() {
+        let (mut app, ctx, c3, _) = ugolki_app("c3", "c4");
+        let before = *app.session.tree().current_node().position();
+        let mv = app.session.input().moves()[0];
+        let piece = before.piece_at(mv.from()).unwrap();
+        app.anims.push_back(Playing {
+            anim: MoveAnimation::new(mv, piece, 0, 1.0),
+            before,
+        });
+        board_frame(&mut app, &ctx, 1.05, vec![primary(c3, true), primary(c3, false)]);
+        assert_eq!(app.session.input().origin(), None, "the piece is still in flight");
+        board_frame(&mut app, &ctx, 1.1, Vec::new());
+        assert_eq!(app.session.input().origin(), None);
+        board_frame(&mut app, &ctx, 1.3, Vec::new());
+        assert_eq!(app.session.input().origin(), Some(square("c3")));
+    }
+
+    #[test]
+    fn a_click_during_a_capture_step_glide_is_kept_for_the_landing() {
+        let mut app = app("W:Wd6:Be7,g7", Color::White);
+        assert!(app.session.grab(square("d6")));
+        choose(&mut app, "f8", false, 2.0);
+        let layout = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        let h6 = board::square_center(&layout, square("h6"));
+        let ctx = Context::default();
+        board_frame(&mut app, &ctx, 2.01, Vec::new());
+        board_frame(
+            &mut app,
+            &ctx,
+            2.05,
+            vec![egui::Event::PointerMoved(h6), primary(h6, true)],
+        );
+        board_frame(&mut app, &ctx, 2.08, vec![primary(h6, false)]);
+        assert_eq!(
+            app.session.input().steps(),
+            &[square("f8")],
+            "the landing comes first"
+        );
+        board_frame(&mut app, &ctx, 2.3, Vec::new());
+        assert_eq!(app.session.tree().len(), 2, "then the second jump is made");
+        assert_eq!(app.session.tree().current_node().mv().unwrap().to(), square("h6"));
+    }
+
+    #[test]
+    fn presses_beside_the_board_or_over_a_window_do_not_reach_it() {
+        let (mut app, ctx, c3, _) = ugolki_app("c3", "c4");
+        let layout = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        // The first frame only shows the window: egui finds it from the next frame on.
+        for (now, click) in [(1.0, false), (1.1, true)] {
+            let mut events = vec![egui::Event::PointerMoved(c3)];
+            if click {
+                events.extend([primary(c3, true), primary(c3, false)]);
+            }
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 640.0))),
+                    time: Some(now),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::Window::new("over the board")
+                        .fixed_pos(c3 - vec2(40.0, 40.0))
+                        .fixed_size(vec2(80.0, 80.0))
+                        .show(ctx, |ui| ui.label("…"));
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let response =
+                            ui.interact(ui.max_rect(), Id::new("board"), egui::Sense::click_and_drag());
+                        let pointer = ctx.input(|i| i.pointer.latest_pos());
+                        app.handle_board_input(ctx, &response, &layout, pointer, now);
+                    });
+                },
+            );
+        }
+        assert_eq!(app.session.input().origin(), None, "the window took the click");
+        let away = Pos2::new(c3.x, 700.0);
+        board_frame(
+            &mut app,
+            &ctx,
+            2.0,
+            vec![primary(away, true), primary(away, false)],
+        );
+        assert_eq!(app.session.input().origin(), None);
     }
 
     #[test]
