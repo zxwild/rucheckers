@@ -449,7 +449,9 @@ The computer:
 8. The weakness of the lower levels is a small depth, a random error in the evaluation,
    "careless" moves that do not check the capture in reply, and now and then a random
    move.
-9. A pause of at least 0.6 s is kept before the computer's reply.
+9. A pause of at least 0.6 s is kept before the computer's reply. It counts from the
+   moment the player's move has been shown on the board; the calculation runs during
+   the animation as well.
 10. The search is single-threaded.
 
 Files:

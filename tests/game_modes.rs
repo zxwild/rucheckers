@@ -1,9 +1,11 @@
-use rucheckers::games::session::Session;
+use rucheckers::games::session::{Nav, Session};
 use rucheckers::games::tree::GameTree;
 use rucheckers::games::ugolki::{self, State};
 use rucheckers::games::{self, Color, FinishReason, GameKind, Kind, Move, Outcome, Position, Square};
 use rucheckers::settings::Settings;
 use std::sync::atomic::AtomicBool;
+use std::thread::sleep;
+use std::time::Duration;
 
 fn sq(name: &str) -> Square {
     Square::parse(name).unwrap()
@@ -235,6 +237,62 @@ fn shared_session_accepts_light_cells_and_cancels_the_old_games_search() {
         .position()
         .piece_at(sq("c3"))
         .is_some());
+}
+
+/// Whether the computer has answered the human's first move by `now`, giving its search
+/// up to a few seconds of real time.
+fn answered_by(session: &mut Session, now: f64) -> bool {
+    for _ in 0..500 {
+        session.update(now);
+        if session.tree().len() == 3 {
+            return true;
+        }
+        sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+#[test]
+fn the_reply_pause_counts_from_the_end_of_the_move_animation() {
+    let start = |hold: Option<f64>| {
+        let mut session = Session::for_game(GameKind::Ugolki, Color::White, 1, 77);
+        session.set_min_think(0.5);
+        assert!(session.grab(sq("c3")));
+        session.drop_on(sq("c4"));
+        session.update(10.0);
+        if let Some(time) = hold {
+            session.hold_reply_until(time);
+        }
+        // The first level answers within milliseconds; the reply is then held back.
+        sleep(Duration::from_millis(400));
+        session
+    };
+
+    let mut session = start(None);
+    session.update(10.49);
+    assert_eq!(session.tree().len(), 2);
+    assert!(
+        answered_by(&mut session, 10.5),
+        "without an animation the pause starts with the search"
+    );
+
+    // The board shows the human's move until 10.75: the reply comes 0.5 s after that.
+    let mut session = start(Some(10.75));
+    session.update(11.24);
+    assert_eq!(
+        session.tree().len(),
+        2,
+        "the pause after the animation is not over"
+    );
+    assert!(session.is_thinking());
+    assert!(answered_by(&mut session, 11.25));
+
+    // Browsing drops the hold: "Continue from here" waits only the usual pause.
+    let mut session = start(Some(50.0));
+    assert!(session.navigate(Nav::Back) && session.navigate(Nav::Forward));
+    assert!(session.continue_from_here());
+    session.update(20.0);
+    assert!(answered_by(&mut session, 20.5));
 }
 
 #[test]

@@ -13,7 +13,8 @@ use super::{Color, Square};
 use crate::games::difficulty::clamp_level;
 use crate::rng::Rng;
 
-/// Shortest pause before the computer's reply, s: an instant reply looks unnatural.
+/// Shortest pause before the computer's reply, s, counted once the board has shown the
+/// move it answers: an instant reply looks unnatural.
 pub const DEFAULT_MIN_THINK_SECONDS: f64 = 0.6;
 
 /// A step through the history of the game.
@@ -69,6 +70,8 @@ pub struct Session {
     rng: Rng,
     events: Vec<SessionEvent>,
     min_think: f64,
+    /// When the board finishes showing the last move played; see [`Self::hold_reply_until`].
+    shown_at: f64,
 }
 
 impl Session {
@@ -95,6 +98,7 @@ impl Session {
             rng: Rng::new(seed),
             events: Vec::new(),
             min_think: DEFAULT_MIN_THINK_SECONDS,
+            shown_at: f64::NEG_INFINITY,
         };
         session.refresh_input();
         session
@@ -108,6 +112,7 @@ impl Session {
     /// Starts a game with the selected layout and cancels any previous calculation.
     pub fn start_game(&mut self, position: super::Position, human: Color, level: u8) {
         self.thinking = None;
+        self.shown_at = f64::NEG_INFINITY;
         self.tree = GameTree::from_position(position);
         self.human = human;
         self.level = clamp_level(level);
@@ -119,6 +124,7 @@ impl Session {
     /// Replaces the game with a loaded one. The end of the main line is shown, in browsing mode.
     pub fn load(&mut self, mut tree: GameTree, human: Option<Color>) {
         self.thinking = None;
+        self.shown_at = f64::NEG_INFINITY;
         let end = tree.main_line_end();
         tree.go_to(end);
         self.tree = tree;
@@ -168,6 +174,13 @@ impl Session {
         } else {
             0.0
         };
+    }
+
+    /// The move just played stays in motion on the board until `time`. The pause before
+    /// the computer's reply then counts from that moment: otherwise a long chain of
+    /// jumps uses the pause up and the reply follows the landing at once.
+    pub const fn hold_reply_until(&mut self, time: f64) {
+        self.shown_at = time;
     }
 
     /// Whether the game is being played (not browsed).
@@ -307,6 +320,7 @@ impl Session {
             return false;
         }
         self.thinking = None;
+        self.shown_at = f64::NEG_INFINITY;
         self.live = false;
         self.refresh_input();
         self.events.push(SessionEvent::Jumped);
@@ -331,7 +345,8 @@ impl Session {
                 }
             }
             if let Reply::Ready(answer) = thinking.reply {
-                if now - thinking.started >= self.min_think {
+                // The search may run during the animation, the pause may not.
+                if now - thinking.started.max(self.shown_at) >= self.min_think {
                     let node = thinking.node;
                     self.thinking = None;
                     if let Some(mv) = answer {

@@ -304,6 +304,10 @@ impl CheckersApp {
         let start = queued_end.map_or(now, |end| end.max(now));
         let effects = self.settings.active_effects();
         let anim = MoveAnimation::new(mv, piece, first_step, start).with_discharge(effects.any());
+        if !by_computer {
+            // The pause before the reply starts once this move has been shown in full.
+            self.session.hold_reply_until(start + anim.total_seconds());
+        }
 
         if self.settings.effects_enabled {
             if let Some(promotion) = anim.promotion() {
@@ -1647,6 +1651,7 @@ impl eframe::App for CheckersApp {
 mod tests {
     use super::*;
     use eframe::egui::{vec2, Rect};
+    use rucheckers::games::session::DEFAULT_MIN_THINK_SECONDS;
     use rucheckers::games::tree::GameTree;
     use rucheckers::games::Position;
 
@@ -1774,6 +1779,41 @@ mod tests {
         assert!(!app.session.is_live());
         assert_eq!(app.session.tree().current(), app.session.tree().main_line_end());
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn the_reply_waits_a_whole_pause_after_a_long_human_chain_lands() {
+        // Three jumps a1-a3-c3-c5 take 0.63 s to show, longer than the pause itself. The
+        // first level answers within milliseconds, yet its piece starts a full pause
+        // after the human's piece has landed.
+        let mut app = app("W:Wd6:Be7,g7", Color::White);
+        let position = Position::from_fen_for(GameKind::Ugolki, "W:Wa1,h1:Ba2,b3,c4,h8").unwrap();
+        app.session.start_game(position, Color::White, 1);
+        app.process_events(0.0);
+        assert_eq!(
+            app.session.click(square("a1")),
+            InputEvent::Selected(square("a1"))
+        );
+        choose(&mut app, "c5", false, 1.0);
+        let human = &app.anims.front().unwrap().anim;
+        let landed = human.start() + human.total_seconds();
+        assert!((landed - 1.63).abs() < 1e-9, "{landed}");
+        app.session.update(1.0);
+        std::thread::sleep(Duration::from_millis(400));
+        app.session.update(landed + 0.55);
+        app.process_events(landed + 0.55);
+        assert_eq!(app.anims.len(), 1, "the pause after the landing is not over");
+        let now = landed + DEFAULT_MIN_THINK_SECONDS + 0.01;
+        for _ in 0..500 {
+            app.session.update(now);
+            app.process_events(now);
+            if app.anims.len() == 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(app.anims.len(), 2, "the computer has answered");
+        assert!(app.anims[1].anim.start() - landed >= DEFAULT_MIN_THINK_SECONDS);
     }
 
     #[test]
