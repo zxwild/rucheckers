@@ -293,6 +293,10 @@ the coordinate frame and is clipped at the board's outer edge. Like the lightnin
 the rose is computed as coloured triangles and drawn through OpenGL. The main
 special-effects switch also turns off this effect.
 
+Small serif N, E, S and W are engraved into the cardinal tips, with the light dimmed
+beneath each letter for contrast. Their outlines are computed as triangles too, fit
+within the rose even at board corners, and share its outward reveal and uniform fade.
+
 ### Languages
 
 The language is chosen in the settings from a list of native names:

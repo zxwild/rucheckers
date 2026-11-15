@@ -10,6 +10,9 @@ use super::geometry::screen_cell;
 use crate::board::{Color, Square};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
+mod letters;
+use letters::Inlay;
+
 /// Total lifetime, including the outward ignition and the fade, s.
 pub const DURATION_SECONDS: f64 = 1.2;
 /// Time for the light to reach the tips, s.
@@ -65,6 +68,13 @@ impl Promotion {
     /// The same time always gives the same mesh, regardless of previous frames.
     #[must_use]
     pub fn frame(self, now: f64, flipped: bool) -> Option<PromotionFrame> {
+        self.frame_at_scale(now, flipped, 72.0)
+    }
+
+    /// A frame for the actual physical cell size. On small boards the inscriptions
+    /// keep a six-pixel cap height while staying inside the original ray tips.
+    #[must_use]
+    pub fn frame_at_scale(self, now: f64, flipped: bool, cell_pixels: f32) -> Option<PromotionFrame> {
         let age = now - self.start;
         if !age.is_finite() || now < self.start || self.is_finished(now) {
             return None;
@@ -81,11 +91,13 @@ impl Promotion {
         let mut mesh = MeshBuilder {
             frame: PromotionFrame {
                 center,
-                vertices: Vec::with_capacity(15_000),
-                indices: Vec::with_capacity(30_000),
+                vertices: Vec::with_capacity(18_000),
+                indices: Vec::with_capacity(40_000),
             },
             intensity,
             front,
+            inlays: Inlay::all(cell_pixels),
+            engraving: false,
         };
 
         // An engraved circle and small azimuth marks make this a compass rose rather
@@ -136,6 +148,13 @@ impl Promotion {
                 mesh.stroke(a, b, 0.006, palette.light, 0.18, true);
             }
         }
+        // Upright Roman capitals live inside the ends of the four cardinal rays.
+        // Their outlines, light rims and glow are triangles in the same mesh, so
+        // they ignite with the rays and share the sign's uniform fade.
+        mesh.engraving = true;
+        for inlay in mesh.inlays {
+            mesh.letter(inlay, &palette);
+        }
         Some(mesh.frame)
     }
 }
@@ -145,6 +164,8 @@ struct Palette {
     face_dark: [f32; 3],
     ink: [f32; 3],
     light: [f32; 3],
+    letter_ink: [f32; 3],
+    letter_edge: [f32; 3],
 }
 
 impl Palette {
@@ -155,12 +176,16 @@ impl Palette {
                 face_dark: [0.69, 0.51, 0.27],
                 ink: [0.36, 0.25, 0.12],
                 light: [1.00, 0.91, 0.68],
+                letter_ink: [0.58, 0.39, 0.145],
+                letter_edge: [1.00, 0.925, 0.72],
             },
             Color::Black => Self {
                 face_light: [0.51, 0.36, 0.25],
                 face_dark: [0.19, 0.13, 0.10],
                 ink: [0.10, 0.065, 0.045],
                 light: [0.92, 0.72, 0.48],
+                letter_ink: [0.32, 0.21, 0.115],
+                letter_edge: [0.937, 0.765, 0.498],
             },
         }
     }
@@ -183,6 +208,8 @@ struct MeshBuilder {
     frame: PromotionFrame,
     intensity: f32,
     front: f32,
+    inlays: [Inlay; 4],
+    engraving: bool,
 }
 
 impl MeshBuilder {
@@ -191,7 +218,14 @@ impl MeshBuilder {
         let revealed = ease(f64::from(
             (self.front + FRONT_SOFTNESS - radius) / (2.0 * FRONT_SOFTNESS),
         )) as f32;
-        let alpha = opacity * revealed * self.intensity;
+        let transmission = if self.engraving {
+            1.0
+        } else {
+            self.inlays
+                .iter()
+                .fold(1.0f32, |light, inlay| light.min(inlay.ray_transmission(point)))
+        };
+        let alpha = opacity * transmission * revealed * self.intensity;
         let index = self.frame.vertices.len() as u32;
         self.frame.vertices.push(Vertex {
             point: (self.frame.center.0 + point.0, self.frame.center.1 + point.1),
@@ -265,6 +299,77 @@ impl MeshBuilder {
             );
         }
     }
+
+    fn letter(&mut self, inlay: Inlay, palette: &Palette) {
+        let points: Vec<Point> = inlay
+            .glyph
+            .outline
+            .iter()
+            .map(|p| {
+                (
+                    p.0 * inlay.scale + inlay.center.0,
+                    p.1 * inlay.scale + inlay.center.1,
+                )
+            })
+            .collect();
+        self.letter_band(
+            &points,
+            &inlay.glyph.edge_offsets,
+            0.009,
+            palette.letter_edge,
+            0.22,
+            true,
+        );
+        self.letter_band(
+            &points,
+            &inlay.glyph.edge_offsets,
+            0.004,
+            palette.letter_edge,
+            0.74,
+            false,
+        );
+        self.letter_band(
+            &points,
+            &inlay.glyph.edge_offsets,
+            0.0015,
+            palette.letter_ink,
+            0.92,
+            false,
+        );
+        let first = self.frame.vertices.len() as u32;
+        for point in points {
+            self.vertex(point, palette.letter_ink, 0.92, false);
+        }
+        self.frame
+            .indices
+            .extend(inlay.glyph.indices.iter().map(|&i| first + i));
+    }
+
+    fn letter_band(
+        &mut self,
+        points: &[Point],
+        offsets: &[Point],
+        width: f32,
+        color: [f32; 3],
+        opacity: f32,
+        emissive: bool,
+    ) {
+        let first = self.frame.vertices.len() as u32;
+        for (&p, &offset) in points.iter().zip(offsets) {
+            self.vertex(p, color, opacity, emissive);
+            self.vertex(
+                (p.0 + offset.0 * width, p.1 + offset.1 * width),
+                color,
+                0.0,
+                emissive,
+            );
+        }
+        for i in 0..points.len() as u32 {
+            let a = first + i * 2;
+            let b = first + ((i + 1) % points.len() as u32) * 2;
+            self.quad([a, a + 1, b + 1, b]);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -330,13 +435,28 @@ mod tests {
     }
 
     #[test]
+    fn engraved_letters_ignite_with_the_outer_part_of_the_rays() {
+        let rose = effect(Color::White);
+        let early = rose.frame(10.0 + REVEAL_SECONDS * 0.5, false).unwrap();
+        let full = rose.frame(10.0 + REVEAL_SECONDS, false).unwrap();
+        let mut ink_vertices = 0;
+        for (early, lit) in early.vertices.iter().zip(&full.vertices) {
+            if lit.rgba[3] > 0.90 {
+                assert_eq!(early.rgba[3], 0.0, "letters do not precede the outward ignition");
+                ink_vertices += 1;
+            }
+        }
+        assert!(ink_vertices >= 100);
+    }
+
+    #[test]
     fn mesh_is_finite_bounded_and_reproducible_in_both_orientations() {
         for color in [Color::White, Color::Black] {
             let rose = effect(color);
             for flipped in [false, true] {
                 let frame = rose.frame(10.25, flipped).unwrap();
                 assert_eq!(frame, rose.frame(10.25, flipped).unwrap());
-                assert!(frame.vertices.len() < 16_000);
+                assert!(frame.vertices.len() < 18_000);
                 assert_eq!(frame.indices.len() % 3, 0);
                 assert!(frame.indices.iter().all(|&i| (i as usize) < frame.vertices.len()));
                 for vertex in &frame.vertices {

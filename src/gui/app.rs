@@ -715,7 +715,7 @@ impl CheckersApp {
         // while it fades after the move animation itself has ended.
         if self.settings.effects_enabled {
             for promotion in &self.promotions {
-                if let Some(frame) = promotion.frame(now, layout.flipped) {
+                if let Some(frame) = promotion.frame_at_scale(now, layout.flipped, layout.cell * ppp) {
                     board::draw_promotion(painter, layout, &frame);
                 }
             }

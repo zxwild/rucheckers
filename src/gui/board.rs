@@ -580,4 +580,54 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn all_four_letters_fit_at_promotion_corners_on_either_board_orientation() {
+        for (name, color) in [("h8", Color::White), ("a1", Color::Black)] {
+            for flipped in [false, true] {
+                for size in [320.0, 440.0, 640.0] {
+                    for ppp in [1.0, 1.25, 2.0] {
+                        let layout = BoardLayout::fit(17.0, 23.0, size, size, flipped, ppp);
+                        let frame = Promotion::new(Square::parse(name).unwrap(), color, 0.0)
+                            .frame_at_scale(0.36, flipped, layout.cell * ppp)
+                            .unwrap();
+                        let mut letters = [0; 4];
+                        let mut bounds = [Rect::NOTHING; 4];
+                        // Only the engraved ink reaches this opacity; rays and light
+                        // rims remain translucent. Check the actual rendered vertices.
+                        for vertex in frame.vertices.iter().filter(|v| v.rgba[3] > 0.90) {
+                            let (x, y) = layout.cell_to_point(vertex.point);
+                            assert!(
+                                outer_rect(&layout).contains(pos2(x, y)),
+                                "letter clipped at {name}, flipped={flipped}, size={size}, ppp={ppp}"
+                            );
+                            let dx = vertex.point.0 - frame.center.0;
+                            let dy = vertex.point.1 - frame.center.1;
+                            let direction = if dy.abs() > dx.abs() {
+                                if dy < 0.0 {
+                                    0
+                                } else {
+                                    2
+                                }
+                            } else if dx > 0.0 {
+                                1
+                            } else {
+                                3
+                            };
+                            letters[direction] += 1;
+                            bounds[direction].extend_with(pos2(x, y));
+                        }
+                        assert!(
+                            letters.iter().all(|&count| count >= 20),
+                            "N, E, S and W are all present"
+                        );
+                        assert!(
+                            bounds.iter().all(|letter| letter.height() * ppp >= 5.999),
+                            "the letter faces stay at least six physical pixels tall"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
