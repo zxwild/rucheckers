@@ -99,11 +99,23 @@ fn leg(board: &Board, from: usize, to: usize) -> u8 {
         _ => 0,
     }
 }
-fn ref_locked(board: &Board, square: usize, mover: Color) -> bool {
-    // Only the moving player's pieces may form the forbidden wall. Temporarily
-    // remove the victim's other pieces and test whether a step or jump is possible.
-    let blockers = std::array::from_fn(|i| board[i].filter(|&color| color == mover));
-    (0..64).all(|to| leg(&blockers, square, to) == 0)
+fn ref_locked(board: &Board, mover: Color) -> BTreeSet<usize> {
+    // Enemy pieces that stay without a step or a jump after every enemy piece that
+    // can move has left: remove such movable pieces until none is left. A wall of the
+    // mover's pieces may hold one piece or several that block each other.
+    let enemy = Some(mover.opponent());
+    let mut board = *board;
+    loop {
+        let free: Vec<usize> = (0..64)
+            .filter(|&s| board[s] == enemy && (0..64).any(|to| leg(&board, s, to) != 0))
+            .collect();
+        if free.is_empty() {
+            return (0..64).filter(|&s| board[s] == enemy).collect();
+        }
+        for s in free {
+            board[s] = None;
+        }
+    }
 }
 fn ref_home(square: usize, color: Color, side: HomeSide) -> bool {
     let on_left = if color == Color::White {
@@ -128,6 +140,7 @@ fn ref_from(state: State, origin: usize) -> BTreeSet<(Square, Square)> {
         }
     }
     let before = board(state.pos);
+    let locked_before = ref_locked(&before, state.pos.side);
     let mut vacant = before;
     vacant[origin] = None;
     let mut seen = [false; 64];
@@ -141,9 +154,7 @@ fn ref_from(state: State, origin: usize) -> BTreeSet<(Square, Square)> {
             }
             let mut after = vacant;
             after[to] = Some(state.pos.side);
-            (0..64)
-                .filter(|&s| before[s] == Some(state.pos.side.opponent()))
-                .all(|s| !ref_locked(&after, s, state.pos.side) || ref_locked(&before, s, state.pos.side))
+            ref_locked(&after, state.pos.side).is_subset(&locked_before)
         })
         .map(|to| {
             (
@@ -581,6 +592,49 @@ fn a_forbidden_lock_can_be_crossed_but_not_used_as_a_jump_endpoint() {
             assert_input(state);
         }
     }
+}
+
+#[test]
+fn enemy_pieces_that_block_each_other_inside_a_wall_are_locked_together() {
+    // Each piece of such a group has a piece of its own colour on one side, so a wall
+    // of the mover's pieces is not complete around either of them. Still, the opponent
+    // could never move them again: the move that closes the last gap is forbidden.
+    for (text, from, to) in [
+        ("W:Wf7,f8,g7,g8,h6,h4:Bh7,h8", "h4", "h5"),
+        ("W:We8,f8,g6,g7,h7,h5:Bg8,h8", "h5", "h6"),
+        ("W:We8,f8,f7,g7,g6,h6,h4:Bg8,h7,h8", "h4", "h5"),
+    ] {
+        let original = State { ply: 60, ..fen(text) };
+        for swap in [false, true] {
+            let state = if swap { rotate_and_swap(original) } else { original };
+            for home in HomeSide::ALL {
+                let state = for_home(state, home);
+                let map = |square| {
+                    let square = if swap { rotate_square(square) } else { square };
+                    if home == HomeSide::Right {
+                        mirror_square(square)
+                    } else {
+                        square
+                    }
+                };
+                assert!(
+                    find(state, map(sq(from)), map(sq(to))).is_none(),
+                    "{text}: {from}-{to}"
+                );
+                assert_eq!(endpoints(state), reference(state), "{text}");
+                assert_input(state);
+            }
+        }
+    }
+    // Once such a group exists, moves elsewhere stay legal and the wall may open.
+    let held = State {
+        ply: 60,
+        ..fen("W:Wf7,f8,g7,g8,h6,h5,c4:Bh7,h8,d4")
+    };
+    for (from, to) in [("c4", "c5"), ("c4", "e4"), ("h5", "h4")] {
+        assert!(find(held, sq(from), sq(to)).is_some(), "{from}-{to}");
+    }
+    assert_eq!(endpoints(held), reference(held));
 }
 
 #[test]

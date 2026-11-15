@@ -3,8 +3,9 @@
 //! A turn is one orthogonal step or any nonempty chain of jumps over adjacent
 //! pieces of either colour. No pieces are captured. White starts and Black gets
 //! the equalising final reply. Homes must be cleared by move 40; move 80 compares
-//! the number of arrived pieces. A third occurrence is a draw. A player cannot
-//! surround an enemy piece with a complete two-deep wall of their own pieces.
+//! the number of arrived pieces. A third occurrence is a draw. A move must not wall
+//! in enemy pieces: leave some that could not move even after every other enemy
+//! piece got out of their way.
 
 pub mod ai;
 mod bits;
@@ -113,28 +114,33 @@ fn moved(mut pos: Position, mv: &Move) -> Position {
     pos
 }
 
-fn locked_by(pos: Position, square: Square, mover: Color) -> bool {
-    // The forbidden wall must consist entirely of the mover's pieces. The
-    // victim's own neighbours may temporarily block it, but can be moved away;
-    // counting them here incorrectly forbids ordinary moves in a mixed crowd.
-    let blockers = pos.pieces(mover);
-    for (dx, dy) in DIRECTIONS {
-        // At an edge the board itself closes the off-board cells.
-        for distance in 1..=2 {
-            if let Some(cell) = neighbour(square, dx * distance, dy * distance) {
-                if blockers & cell.bit() == 0 {
-                    return false;
-                }
-            }
-        }
-    }
-    true
+/// Whether a piece on `square` has a step or a jump when exactly `occupied` is taken.
+fn can_move(occupied: u64, square: Square) -> bool {
+    DIRECTIONS.iter().any(|&(dx, dy)| {
+        neighbour(square, dx, dy).is_some_and(|next| {
+            occupied & next.bit() == 0
+                || neighbour(next, dx, dy).is_some_and(|landing| occupied & landing.bit() == 0)
+        })
+    })
 }
 
+/// Enemy pieces walled in by `mover`. They can neither step nor jump even after every
+/// enemy piece that can move has got out of the way: only the mover's pieces, the
+/// edges of the board and other such enemy pieces hold them. A crowd of the enemy's
+/// own movable pieces is temporary and locks nothing, but two enemy pieces that block
+/// each other inside the mover's wall are locked together.
 fn locked_enemies(pos: Position, mover: Color) -> u64 {
-    squares_of(pos.pieces(mover.opponent()))
-        .filter(|&sq| locked_by(pos, sq, mover))
-        .fold(0, |mask, sq| mask | sq.bit())
+    let walls = pos.pieces(mover);
+    let mut held = pos.pieces(mover.opponent());
+    loop {
+        let still = squares_of(held)
+            .filter(|&sq| !can_move(walls | held, sq))
+            .fold(0, |mask, sq| mask | sq.bit());
+        if still == held {
+            return held;
+        }
+        held = still;
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -195,8 +201,8 @@ impl State {
             }
         }
         let own_home = home_for(self.pos.side, self.pos.home_side);
-        // A loaded/custom position may already contain a full lock. Only a new
-        // lock caused by this move is forbidden; unrelated moves remain legal.
+        // A lock may already exist: in a loaded position, or one the opponent walked
+        // into. Only a lock this move creates is forbidden; other moves stay legal.
         let already_locked = locked_enemies(self.pos, self.pos.side);
         moves.retain(|mv| {
             (self.ply < HOME_DEADLINE * 2 || own_home & mv.to().bit() == 0)

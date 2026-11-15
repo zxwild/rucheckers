@@ -59,12 +59,22 @@ pub const fn immobile(occupied: u64) -> u64 {
     up & down & right & left
 }
 
-/// Pieces of `enemies` walled in by the pieces of `mover` and the edges of the board:
-/// they could not move even if every other enemy piece left. This is the condition
+/// Pieces of `enemies` walled in by `mover`: they could neither step nor jump even
+/// after every enemy piece able to move had left. Only the pieces of `mover`, the
+/// edges of the board and other such enemy pieces hold them. This is the condition
 /// of the rule against locking an opponent's piece.
 #[must_use]
 pub const fn locked(mover: u64, enemies: u64) -> u64 {
-    enemies & immobile(mover)
+    // Fewer pieces never take a move away, so dropping the pieces that can move until
+    // none is left finds the largest set of pieces that hold one another.
+    let mut held = enemies;
+    loop {
+        let still = held & immobile(mover | held);
+        if still == held {
+            return held;
+        }
+        held = still;
+    }
 }
 
 /// For every cell, the cells one or two steps away along its file and its rank: the
@@ -243,11 +253,19 @@ impl Rules {
     /// the opponent that was free. `before` is `locked` for the position itself.
     const fn locks(board: &Board, from: u8, to: u8, before: u64) -> bool {
         let enemies = board.other();
-        if enemies & NEAR[to as usize] == 0 {
+        let near = enemies & NEAR[to as usize];
+        if near == 0 {
             return false;
         }
         let change = (1u64 << from) | (1u64 << to);
-        locked(board.own() ^ change, enemies) & !before != 0
+        let mover = board.own() ^ change;
+        // The arriving piece changes only the freedom of the pieces near it, and the
+        // cell it leaves frees pieces. A new lock therefore holds a piece near `to`
+        // that cannot move on the full board.
+        if near & immobile(mover | enemies) == 0 {
+            return false;
+        }
+        locked(mover, enemies) & !before != 0
     }
 
     /// All legal moves of the side to move as pairs of end cells, one for each
@@ -362,16 +380,84 @@ mod tests {
         state
     }
 
+    /// Enemy pieces in a corner, the mover's pieces around them with gaps, and a few
+    /// of the mover's pieces elsewhere: moves that close a wall around one enemy piece
+    /// or around several that hold each other.
+    fn walled_state(rng: &mut Rng, layout: HomeSide) -> State {
+        let mut state = random_state(rng, layout);
+        let (flip_file, flip_rank) = (rng.chance(0.5), rng.chance(0.5));
+        let (mut mover, mut enemies) = (0u64, 0u64);
+        for rank in 0..4u8 {
+            for file in 0..4u8 {
+                let square = Square::from_file_rank(
+                    if flip_file { 7 - file } else { file },
+                    if flip_rank { 7 - rank } else { rank },
+                )
+                .unwrap();
+                let roll = rng.below(100);
+                if rank + file <= 1 && roll < 70 {
+                    enemies |= square.bit();
+                } else if (1..=4).contains(&(rank + file)) && roll < 80 {
+                    mover |= square.bit();
+                }
+            }
+        }
+        let mut cells: Vec<_> = Square::all()
+            .filter(|sq| (mover | enemies) & sq.bit() == 0)
+            .collect();
+        rng.shuffle(&mut cells);
+        let extra = rng.below(3).min(12 - mover.count_ones() as usize);
+        mover |= cells[..extra].iter().fold(0, |mask, sq| mask | sq.bit());
+        (state.pos.white, state.pos.black) = match state.pos.side {
+            Color::White => (mover, enemies),
+            Color::Black => (enemies, mover),
+        };
+        state
+    }
+
+    #[test]
+    fn enemy_pieces_that_hold_each_other_inside_a_wall_are_locked_together() {
+        let cells = |names: &[&str]| {
+            names
+                .iter()
+                .fold(0, |mask, name| mask | Square::parse(name).unwrap().bit())
+        };
+        let pair = cells(&["h8", "h7"]);
+        let wall = cells(&["g8", "f8", "g7", "f7", "h6"]);
+        assert_eq!(locked(wall, pair), 0, "h7 can still jump to h5");
+        assert_eq!(locked(wall | cells(&["h5"]), pair), pair, "neither can move");
+        // A movable enemy piece in the wall leaves, and the pieces behind it follow.
+        let crowd = cells(&["g8", "f8", "g7", "f7", "h5"]);
+        assert_eq!(locked(crowd, pair | cells(&["h6"])), 0);
+
+        let board = Board {
+            white: wall | cells(&["h4"]),
+            black: pair,
+            side: Color::White,
+            ply: 60,
+        };
+        let mut moves = Vec::new();
+        Rules::new(HomeSide::Left).moves(&board, &mut moves);
+        let h4 = Square::parse("h4").unwrap().index() as u8;
+        let targets: BTreeSet<_> = moves.iter().filter(|m| m.0 == h4).map(|m| m.1).collect();
+        let expected: BTreeSet<_> = ["h3", "g4"]
+            .iter()
+            .map(|name| Square::parse(name).unwrap().index() as u8)
+            .collect();
+        assert_eq!(targets, expected, "h4-h5 would lock h8 and h7 together");
+    }
+
     #[test]
     fn the_fast_rules_match_the_rules_of_the_game() {
         let mut rng = Rng::new(0x5EED_F00D);
         let mut moves = Vec::new();
         for iteration in 0..6000 {
             let layout = HomeSide::ALL[iteration % 2];
-            let state = if iteration % 3 == 0 {
-                crowded_state(&mut rng, layout)
-            } else {
-                random_state(&mut rng, layout)
+            // Three kinds of positions and two layouts: every pairing occurs.
+            let state = match iteration % 3 {
+                0 => crowded_state(&mut rng, layout),
+                1 => walled_state(&mut rng, layout),
+                _ => random_state(&mut rng, layout),
             };
             let rules = Rules::new(layout);
             let board = board(state);
