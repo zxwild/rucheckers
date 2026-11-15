@@ -118,6 +118,11 @@ impl MoveInput {
         let mut squares: Vec<Square> = Vec::new();
         let next = self.steps.len();
         for mv in self.candidates() {
+            // A non-capturing chain is chosen by its endpoint. A transit cell may
+            // be forbidden as a stopping point (e.g. the old Ugolki home after 40).
+            if !mv.is_capture() && mv.path().len() > 1 {
+                continue;
+            }
             if let Some(&sq) = mv.path().get(next) {
                 if !squares.contains(&sq) {
                     squares.push(sq);

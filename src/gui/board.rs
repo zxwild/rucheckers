@@ -355,36 +355,6 @@ pub fn draw_promotion(painter: &Painter, layout: &BoardLayout, frame: &Promotion
     painter.with_clip_rect(outer_rect(layout)).add(Shape::mesh(mesh));
 }
 
-/// Subtle home boundaries make both the departure and destination visible in Ugolki.
-pub fn draw_homes(painter: &Painter, layout: &BoardLayout) {
-    use rucheckers::games::{squares_of, ugolki};
-    for (color, tint, border) in [
-        (
-            Color::White,
-            Color32::from_rgba_unmultiplied(255, 238, 196, 28),
-            Color32::from_rgba_unmultiplied(248, 228, 176, 190),
-        ),
-        (
-            Color::Black,
-            Color32::from_rgba_unmultiplied(75, 48, 28, 22),
-            Color32::from_rgba_unmultiplied(81, 52, 31, 185),
-        ),
-    ] {
-        let mut rect = Rect::NOTHING;
-        for square in squares_of(ugolki::home(color)) {
-            let cell = cell_rect(layout, square.file(), square.rank());
-            painter.rect_filled(cell, 0.0, tint);
-            rect = rect.union(cell);
-        }
-        painter.rect_stroke(
-            rect.shrink(1.5),
-            2.0,
-            Stroke::new((layout.cell * 0.025).max(1.0), border),
-            StrokeKind::Inside,
-        );
-    }
-}
-
 /// The upper layer of the discharge: the sparks. They are drawn over all pieces.
 pub fn draw_sparks(painter: &Painter, layout: &BoardLayout, frame: &DischargeFrame, pixels_per_point: f32) {
     let cell = layout.cell;

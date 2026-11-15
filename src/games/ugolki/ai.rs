@@ -1,7 +1,7 @@
 //! Race-specific search: match pieces to destination cells, clear the home in time,
 //! and search useful jump routes. Difficulty uses the application's shared 1–10 scale.
 
-use super::{home, State, HOME_DEADLINE};
+use super::{home_for, State, HOME_DEADLINE};
 use crate::games::{squares_of, Color, Move, Position, Square};
 use crate::rng::Rng;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -41,7 +41,7 @@ fn distance(a: Square, b: Square) -> i32 {
 /// This prevents the computer from advancing everyone towards the same corner cell.
 fn assignment(pos: Position, color: Color) -> i32 {
     let pieces: Vec<_> = squares_of(pos.pieces(color)).collect();
-    let goals: Vec<_> = squares_of(home(color.opponent())).collect();
+    let goals: Vec<_> = squares_of(home_for(color.opponent(), pos.home_side)).collect();
     let mut u = [0i32; 13];
     let mut v = [0i32; 13];
     let mut matched = [0usize; 13];
@@ -99,7 +99,7 @@ fn assignment(pos: Position, color: Color) -> i32 {
 pub fn evaluate(state: State, color: Color) -> i32 {
     let score = |side| {
         let arrived = state.arrived(side) as i32;
-        let at_home = (state.pos.pieces(side) & home(side)).count_ones() as i32;
+        let at_home = (state.pos.pieces(side) & home_for(side, state.pos.home_side)).count_ones() as i32;
         let urgency = 20 + i32::from(state.ply.min(HOME_DEADLINE * 2)) * 3;
         arrived * 110 - assignment(state.pos, side) * 24 - at_home * urgency
     };

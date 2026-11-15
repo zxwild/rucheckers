@@ -4,7 +4,7 @@
 //! pieces of either colour. No pieces are captured. White starts and Black gets
 //! the equalising final reply. Homes must be cleared by move 40; move 80 compares
 //! the number of arrived pieces. A third occurrence is a draw. Enemy pieces must
-//! not be locked without any step or jump by the moving player's pieces.
+//! not become newly locked without any step or jump by the moving player's pieces.
 
 pub mod ai;
 
@@ -16,24 +16,79 @@ pub const HOME_DEADLINE: u16 = 40;
 pub const MOVE_LIMIT: u16 = 80;
 const DIRECTIONS: [(i8, i8); 4] = [(0, 1), (1, 0), (0, -1), (-1, 0)];
 
+/// Side of each player's home when that player's colour is at the bottom.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum HomeSide {
+    #[default]
+    Left,
+    Right,
+}
+
+impl HomeSide {
+    pub const ALL: [Self; 2] = [Self::Left, Self::Right];
+
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+
+    #[must_use]
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code.trim().to_ascii_lowercase().as_str() {
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn text_key(self) -> crate::i18n::Text {
+        match self {
+            Self::Left => crate::i18n::Text::HomeLeft,
+            Self::Right => crate::i18n::Text::HomeRight,
+        }
+    }
+}
+
 #[must_use]
 pub fn home(color: Color) -> u64 {
+    home_for(color, HomeSide::Left)
+}
+
+#[must_use]
+pub fn home_for(color: Color, side: HomeSide) -> u64 {
     Square::all()
-        .filter(|sq| match color {
-            Color::White => sq.file() < 4 && sq.rank() < 3,
-            Color::Black => sq.file() >= 4 && sq.rank() >= 5,
+        .filter(|sq| {
+            let file = if side == HomeSide::Left {
+                sq.file()
+            } else {
+                7 - sq.file()
+            };
+            match color {
+                Color::White => file < 4 && sq.rank() < 3,
+                Color::Black => file >= 4 && sq.rank() >= 5,
+            }
         })
         .fold(0, |mask, sq| mask | sq.bit())
 }
 
 #[must_use]
 pub fn initial() -> Position {
+    initial_with_home(HomeSide::Left)
+}
+
+#[must_use]
+pub fn initial_with_home(home_side: HomeSide) -> Position {
     Position {
-        white: home(Color::White),
-        black: home(Color::Black),
+        white: home_for(Color::White, home_side),
+        black: home_for(Color::Black, home_side),
         kings: 0,
         side: Color::White,
         game: GameKind::Ugolki,
+        home_side,
     }
 }
 
@@ -77,8 +132,10 @@ fn locked_by(pos: Position, square: Square, mover: Color) -> bool {
     participates
 }
 
-fn no_enemy_lock(pos: Position, mover: Color) -> bool {
-    squares_of(pos.pieces(mover.opponent())).all(|sq| !locked_by(pos, sq, mover))
+fn locked_enemies(pos: Position, mover: Color) -> u64 {
+    squares_of(pos.pieces(mover.opponent()))
+        .filter(|&sq| locked_by(pos, sq, mover))
+        .fold(0, |mask, sq| mask | sq.bit())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -138,10 +195,13 @@ impl State {
                 }
             }
         }
-        let own_home = home(self.pos.side);
+        let own_home = home_for(self.pos.side, self.pos.home_side);
+        // An opponent can close an exit of their own piece. Such an existing lock
+        // must not invalidate our unrelated steps and jumps on the next turn.
+        let already_locked = locked_enemies(self.pos, self.pos.side);
         moves.retain(|mv| {
             (self.ply < HOME_DEADLINE * 2 || own_home & mv.to().bit() == 0)
-                && no_enemy_lock(moved(self.pos, mv), self.pos.side)
+                && locked_enemies(moved(self.pos, mv), self.pos.side) & !already_locked == 0
         });
         moves
     }
@@ -156,7 +216,7 @@ impl State {
 
     #[must_use]
     pub fn arrived(self, color: Color) -> u32 {
-        (self.pos.pieces(color) & home(color.opponent())).count_ones()
+        (self.pos.pieces(color) & home_for(color.opponent(), self.pos.home_side)).count_ones()
     }
 
     #[must_use]
@@ -176,8 +236,8 @@ impl State {
         // Deadlines are assessed after Black's reply, so both players get equally
         // many turns. A forbidden late return to one's home is not offered by input.
         if self.ply >= HOME_DEADLINE * 2 && self.pos.side == Color::White {
-            let left_white = self.pos.white & home(Color::White) != 0;
-            let left_black = self.pos.black & home(Color::Black) != 0;
+            let left_white = self.pos.white & home_for(Color::White, self.pos.home_side) != 0;
+            let left_black = self.pos.black & home_for(Color::Black, self.pos.home_side) != 0;
             match (left_white, left_black) {
                 (true, true) => return Some(Outcome::Draw(FinishReason::HomeDeadline)),
                 (true, false) => return win(Color::Black, FinishReason::HomeDeadline),

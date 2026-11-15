@@ -80,8 +80,13 @@ impl Session {
 
     #[must_use]
     pub fn for_game(game: super::GameKind, human: Color, level: u8, seed: u64) -> Self {
+        Self::from_position(super::Position::initial_for(game), human, level, seed)
+    }
+
+    #[must_use]
+    pub fn from_position(position: super::Position, human: Color, level: u8, seed: u64) -> Self {
         let mut session = Self {
-            tree: GameTree::for_game(game),
+            tree: GameTree::from_position(position),
             human,
             level: clamp_level(level),
             live: true,
@@ -97,8 +102,13 @@ impl Session {
 
     /// Starts a new game in the same session.
     pub fn new_game(&mut self, game: super::GameKind, human: Color, level: u8) {
+        self.start_game(super::Position::initial_for(game), human, level);
+    }
+
+    /// Starts a game with the selected layout and cancels any previous calculation.
+    pub fn start_game(&mut self, position: super::Position, human: Color, level: u8) {
         self.thinking = None;
-        self.tree = GameTree::for_game(game);
+        self.tree = GameTree::from_position(position);
         self.human = human;
         self.level = clamp_level(level);
         self.live = true;

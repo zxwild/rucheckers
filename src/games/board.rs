@@ -105,6 +105,8 @@ pub struct Position {
     pub kings: u64,
     pub side: Color,
     pub game: GameKind,
+    /// Ugolki layout; always `Left` for Russian draughts.
+    pub home_side: ugolki::HomeSide,
 }
 
 impl Position {
@@ -114,9 +116,13 @@ impl Position {
     }
     #[must_use]
     pub fn initial_for(game: GameKind) -> Self {
+        Self::initial_with_home(game, ugolki::HomeSide::Left)
+    }
+    #[must_use]
+    pub fn initial_with_home(game: GameKind, home_side: ugolki::HomeSide) -> Self {
         match game {
             GameKind::RussianDraughts => Self::from_russian(russian::board::Position::initial()),
-            GameKind::Ugolki => ugolki::initial(),
+            GameKind::Ugolki => ugolki::initial_with_home(home_side),
         }
     }
     #[must_use]
@@ -127,6 +133,7 @@ impl Position {
             kings: 0,
             side,
             game,
+            home_side: ugolki::HomeSide::Left,
         }
     }
     #[must_use]
@@ -139,6 +146,7 @@ impl Position {
             kings: expand(pos.kings),
             side: pos.side,
             game: GameKind::RussianDraughts,
+            home_side: ugolki::HomeSide::Left,
         }
     }
     #[must_use]
@@ -206,6 +214,11 @@ impl Position {
         self.white.wrapping_mul(0x9E37_79B9_7F4A_7C15)
             ^ self.black.rotate_left(23)
             ^ self.kings.rotate_left(41)
+            ^ if self.home_side == ugolki::HomeSide::Right {
+                0xA9BC_23D5_817E_4F60
+            } else {
+                0
+            }
             ^ if self.side == Color::White {
                 0
             } else {

@@ -182,6 +182,9 @@ macro_rules! text_keys {
 
 text_keys! {
     AppTitle,
+    YourHome,
+    HomeLeft,
+    HomeRight,
     GameRules,
     GameMode,
     Ugolki,

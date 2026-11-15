@@ -11,6 +11,7 @@
 
 use super::russian::notation::NotationError;
 use super::tree::{GameTree, Node, NodeId, TreeError};
+use super::ugolki::HomeSide;
 use super::Outcome;
 use super::{format_move, parse_move};
 use super::{Color, Position};
@@ -154,7 +155,7 @@ pub fn to_pdn(tree: &GameTree, tags: &[(String, String)]) -> String {
     let root_pos = *tree.root().position();
     let mut out = String::new();
 
-    let reserved = ["result", "gametype", "fen", "setup"];
+    let reserved = ["result", "gametype", "fen", "setup", "ugolkihome"];
     let mut write_tag = |name: &str, value: &str| {
         out.push('[');
         out.push_str(name);
@@ -177,7 +178,10 @@ pub fn to_pdn(tree: &GameTree, tags: &[(String, String)]) -> String {
             GAME_TYPE
         },
     );
-    if root_pos != Position::initial_for(root_pos.game) {
+    if root_pos.game == super::GameKind::Ugolki {
+        write_tag("UgolkiHome", root_pos.home_side.code());
+    }
+    if root_pos != Position::initial_with_home(root_pos.game, root_pos.home_side) {
         write_tag("SetUp", "1");
         write_tag("FEN", &root_pos.to_fen());
     }
@@ -447,10 +451,21 @@ fn start_position(tags: &[(String, String)]) -> Result<Position, PdnError> {
         }
         Some(value) => return Err(PdnError::WrongGameType(printable(value))),
     };
-    match find_tag(tags, "FEN") {
-        Some(fen) => Position::from_fen_for(game, fen).map_err(|_| PdnError::BadFen(printable(fen))),
-        None => Ok(Position::initial_for(game)),
-    }
+    let home_side = if game == super::GameKind::Ugolki {
+        match find_tag(tags, "UgolkiHome") {
+            None => HomeSide::Left,
+            Some(value) => HomeSide::from_code(value)
+                .ok_or_else(|| PdnError::WrongGameType(format!("Ugolki; UgolkiHome={}", printable(value))))?,
+        }
+    } else {
+        HomeSide::Left
+    };
+    let mut position = match find_tag(tags, "FEN") {
+        Some(fen) => Position::from_fen_for(game, fen).map_err(|_| PdnError::BadFen(printable(fen)))?,
+        None => Position::initial_with_home(game, home_side),
+    };
+    position.home_side = home_side;
+    Ok(position)
 }
 
 /// Builds the game tree from the move text: moves, variations and the result.

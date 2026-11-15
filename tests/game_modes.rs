@@ -328,7 +328,8 @@ fn random_ugolki_games_keep_all_pieces_and_restore_counters_from_records() {
     use rucheckers::rng::Rng;
     let mut rng = Rng::new(739);
     for game in 0..40 {
-        let mut tree = GameTree::for_game(GameKind::Ugolki);
+        let home = ugolki::HomeSide::ALL[game % 2];
+        let mut tree = GameTree::from_position(ugolki::initial_with_home(home));
         let mut finished = false;
         for _ in 0..=160 {
             let node = tree.current_node();

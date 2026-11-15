@@ -16,6 +16,7 @@ use rucheckers::games::input::InputEvent;
 use rucheckers::games::record as pdn;
 use rucheckers::games::session::{Nav, Session, SessionEvent};
 use rucheckers::games::tree::{GameTree, NodeId};
+use rucheckers::games::ugolki::{self, HomeSide};
 use rucheckers::games::{format_move, outcome_reason, outcome_title};
 use rucheckers::games::{squares_of, Color, GameKind, Kind, Move, Piece, Position, Square};
 use rucheckers::i18n::{level_label, pdn_error_text, tr, Lang, Text};
@@ -69,8 +70,10 @@ struct Scene {
 }
 
 /// Contents of the new game dialog.
+#[derive(Clone, Copy)]
 struct NewGameDraft {
     game: GameKind,
+    home_side: HomeSide,
     human: Color,
     level: u8,
 }
@@ -87,7 +90,7 @@ enum EffectKind {
 #[derive(Clone, Copy)]
 enum Action {
     AskNewGame,
-    StartGame(GameKind, Color, u8),
+    StartGame(GameKind, HomeSide, Color, u8),
     CancelNewGame,
     Open,
     Save,
@@ -102,6 +105,7 @@ enum Action {
     ToggleEffect(EffectKind),
     SetLevel(u8),
     SetGamePreference(GameKind),
+    SetHomePreference(HomeSide),
     Navigate(Nav),
     Continue,
     DismissResult,
@@ -157,7 +161,12 @@ impl CheckersApp {
         let mut app = Self {
             settings,
             settings_path,
-            session: Session::for_game(settings.game, settings.human, settings.level, entropy_seed()),
+            session: Session::from_position(
+                Position::initial_with_home(settings.game, settings.ugolki_home_side),
+                settings.human,
+                settings.level,
+                entropy_seed(),
+            ),
             started: false,
             audio: Audio::new(),
             anims: VecDeque::new(),
@@ -170,6 +179,7 @@ impl CheckersApp {
             // Before the first game the player chooses a game, colour and level.
             new_game: Some(NewGameDraft {
                 game: settings.game,
+                home_side: settings.ugolki_home_side,
                 human: settings.human,
                 level: settings.level,
             }),
@@ -354,27 +364,46 @@ impl CheckersApp {
     // Actions
     // -----------------------------------------------------------------------
 
+    fn start_game(&mut self, draft: NewGameDraft, ctx: &Context, now: f64) {
+        self.settings.game = draft.game;
+        self.settings.ugolki_home_side = draft.home_side;
+        self.settings.human = draft.human;
+        self.settings.level = draft.level;
+        self.new_game = None;
+        self.save_settings();
+        self.session.start_game(
+            Position::initial_with_home(draft.game, draft.home_side),
+            draft.human,
+            draft.level,
+        );
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+            tr(self.lang(), draft.game.text_key()).into(),
+        ));
+        self.started = true;
+        self.process_events(now);
+    }
+
     fn apply(&mut self, action: Action, ctx: &Context, now: f64) {
         match action {
             Action::AskNewGame => {
                 self.new_game = Some(NewGameDraft {
                     game: self.settings.game,
+                    home_side: self.settings.ugolki_home_side,
                     human: self.settings.human,
                     level: self.settings.level,
                 });
             }
-            Action::StartGame(game, human, level) => {
-                self.settings.game = game;
-                self.new_game = None;
-                self.settings.human = human;
-                self.settings.level = level;
-                self.save_settings();
-                self.session.new_game(game, human, level);
-                ctx.send_viewport_cmd(egui::ViewportCommand::Title(
-                    tr(self.lang(), game.text_key()).into(),
-                ));
-                self.started = true;
-                self.process_events(now);
+            Action::StartGame(game, home_side, human, level) => {
+                self.start_game(
+                    NewGameDraft {
+                        game,
+                        home_side,
+                        human,
+                        level,
+                    },
+                    ctx,
+                    now,
+                );
             }
             Action::CancelNewGame => {
                 self.new_game = None;
@@ -435,6 +464,10 @@ impl CheckersApp {
             }
             Action::SetGamePreference(game) => {
                 self.settings.game = game;
+                self.save_settings();
+            }
+            Action::SetHomePreference(side) => {
+                self.settings.ugolki_home_side = side;
                 self.save_settings();
             }
             Action::SetLevel(level) => {
@@ -502,6 +535,9 @@ impl CheckersApp {
                 Ok(game) => {
                     let human = game.human_color();
                     self.settings.game = game.tree.root().position().game;
+                    if self.settings.game == GameKind::Ugolki {
+                        self.settings.ugolki_home_side = game.tree.root().position().home_side;
+                    }
                     self.save_settings();
                     self.session.load(game.tree, human);
                     self.started = true;
@@ -718,9 +754,6 @@ impl CheckersApp {
     ) {
         let ppp = ctx.pixels_per_point();
         board::draw_board(painter, layout, ppp);
-        if self.session.game() == GameKind::Ugolki {
-            board::draw_homes(painter, layout);
-        }
         self.prepare_frame(ctx, layout, now);
         let Some(sprites) = self.sprites.as_ref() else {
             return;
@@ -1140,7 +1173,7 @@ impl CheckersApp {
         if session.game() == GameKind::Ugolki {
             let pos = session.tree().current_node().position();
             let arrived =
-                |color| (pos.pieces(color) & rucheckers::games::ugolki::home(color.opponent())).count_ones();
+                |color| (pos.pieces(color) & ugolki::home_for(color.opponent(), pos.home_side)).count_ones();
             ui.label(format!(
                 "{}: {}/12 · {}: {}/12",
                 tr(lang, Text::White),
@@ -1374,6 +1407,8 @@ impl CheckersApp {
                 ui.radio_value(&mut draft.human, Color::Black, tr(lang, Text::Black));
             });
             if draft.game == GameKind::Ugolki {
+                ui.add_space(8.0);
+                home_side_choice(ui, lang, &mut draft.home_side);
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new(tr(lang, Text::UgolkiHint))
@@ -1397,7 +1432,12 @@ impl CheckersApp {
             .inner
         });
         if start || ctx.input(|i| i.key_pressed(Key::Enter)) {
-            actions.push(Action::StartGame(draft.game, draft.human, draft.level));
+            actions.push(Action::StartGame(
+                draft.game,
+                draft.home_side,
+                draft.human,
+                draft.level,
+            ));
         } else if modal.inner || modal.should_close() {
             actions.push(Action::CancelNewGame);
         }
@@ -1426,6 +1466,13 @@ impl CheckersApp {
                     .small()
                     .color(theme::TEXT_WEAK),
             );
+            if game == GameKind::Ugolki {
+                let mut home_side = settings.ugolki_home_side;
+                home_side_choice(ui, lang, &mut home_side);
+                if home_side != settings.ugolki_home_side {
+                    actions.push(Action::SetHomePreference(home_side));
+                }
+            }
             if game != settings.game {
                 actions.push(Action::SetGamePreference(game));
             }
@@ -1513,6 +1560,16 @@ fn modal_window(id: &str) -> egui::Modal {
     egui::Modal::new(Id::new(id))
         .frame(frame)
         .backdrop_color(Color32::from_black_alpha(90))
+}
+
+/// The side is relative to the player, independent of their colour.
+fn home_side_choice(ui: &mut Ui, lang: Lang, side: &mut HomeSide) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(tr(lang, Text::YourHome));
+        for value in HomeSide::ALL {
+            ui.radio_value(side, value, tr(lang, value.text_key()));
+        }
+    });
 }
 
 /// The sound of a step of a move: a promotion, a capture or a quiet move.
@@ -1640,7 +1697,11 @@ mod tests {
             ..Settings::default()
         };
         let mut app = CheckersApp::new(&cc, settings, Some(path.clone()), None);
-        app.apply(Action::StartGame(GameKind::Ugolki, Color::Black, 8), &ctx, 0.0);
+        app.apply(
+            Action::StartGame(GameKind::Ugolki, HomeSide::Right, Color::Black, 8),
+            &ctx,
+            0.0,
+        );
         assert_eq!(app.session.game(), GameKind::Ugolki);
         assert_eq!(app.session.human(), Color::Black);
         assert_eq!(app.session.level(), 8);
@@ -1649,6 +1710,7 @@ mod tests {
             stored,
             Settings {
                 game: GameKind::Ugolki,
+                ugolki_home_side: HomeSide::Right,
                 human: Color::Black,
                 level: 8,
                 ..settings
@@ -1657,16 +1719,25 @@ mod tests {
         let restarted = CheckersApp::new(&cc, stored, None, None);
         let draft = restarted.new_game.unwrap();
         assert_eq!(
-            (draft.game, draft.human, draft.level),
-            (GameKind::Ugolki, Color::Black, 8)
+            (draft.game, draft.home_side, draft.human, draft.level),
+            (GameKind::Ugolki, HomeSide::Right, Color::Black, 8)
         );
 
+        assert_eq!(app.session.tree().root().position().home_side, HomeSide::Right);
+        app.apply(Action::SetHomePreference(HomeSide::Left), &ctx, 1.0);
+        assert_eq!(app.session.tree().root().position().home_side, HomeSide::Right);
+        app.apply(Action::AskNewGame, &ctx, 1.0);
+        assert_eq!(app.new_game.as_ref().unwrap().home_side, HomeSide::Left);
+        assert_eq!(
+            Settings::load(&path, Settings::default()).ugolki_home_side,
+            HomeSide::Left
+        );
         app.apply(Action::SetGamePreference(GameKind::RussianDraughts), &ctx, 1.0);
         assert_eq!(app.session.game(), GameKind::Ugolki);
         app.apply(Action::AskNewGame, &ctx, 1.0);
         assert_eq!(app.new_game.as_ref().unwrap().game, GameKind::RussianDraughts);
         app.apply(
-            Action::StartGame(GameKind::RussianDraughts, Color::White, 8),
+            Action::StartGame(GameKind::RussianDraughts, HomeSide::Left, Color::White, 8),
             &ctx,
             1.0,
         );
@@ -1679,7 +1750,7 @@ mod tests {
     #[test]
     fn opening_an_ugolki_record_switches_the_engine_and_keeps_level_and_preferences() {
         let path = std::env::temp_dir().join(format!("rucheckers-ugolki-{}.pdn", std::process::id()));
-        let mut tree = GameTree::for_game(GameKind::Ugolki);
+        let mut tree = GameTree::from_position(ugolki::initial_with_home(HomeSide::Right));
         let mv = tree.current_node().state().legal_moves()[0];
         tree.play(&mv).unwrap();
         let tags = pdn::standard_tags(Color::Black, "Player", "Computer");
@@ -1698,6 +1769,7 @@ mod tests {
         assert_eq!(app.session.human(), Color::Black);
         assert_eq!(app.session.level(), 7);
         assert_eq!(app.settings.game, GameKind::Ugolki);
+        assert_eq!(app.settings.ugolki_home_side, HomeSide::Right);
         assert!(app.session.tree().same_structure(&tree));
         assert!(!app.session.is_live());
         assert_eq!(app.session.tree().current(), app.session.tree().main_line_end());

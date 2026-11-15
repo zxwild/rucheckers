@@ -204,6 +204,7 @@ cargo test --test draws
 
 | File | What it checks |
 | --- | --- |
+| `tests/ugolki.rs` | exhaustive local jump checks, array-board reference, both colours and homes, input, endings, AI and files |
 | `tests/game_modes.rs` | Ugolki rules and endings, both game engines, level scale, files and saved game selection |
 | `tests/perft.rs` | reference for the move generator: depths 1–9 from the starting position |
 | `tests/rules.rs` | every rule of moving and capturing on concrete positions |
@@ -336,7 +337,7 @@ The settings are kept in one file:
 
 The file is plain text of `key=value` lines: `language` (a two-letter code such
 as `ru`, `en` or `ja`), `game` (`russian` or `ugolki`), `level` (1–10),
-`color` (`white` or `black`), and the switches
+`ugolki_home` (`left` or `right`), `color` (`white` or `black`), and the switches
 `sound`, `panel`, `effects` (the main switch of the special effects), `effect_lightning`,
 `effect_sparks` and `effect_flashes` with the values `on` and `off`. Missing and damaged
 lines are replaced with default values.
@@ -348,8 +349,9 @@ program says so once and goes on working.
 
 Select the game in the settings or in the new-game dialog. The settings choice
 applies to the next game; the active game and its history stay available. Both modes
-remember the same level, colour, language and switches. Ugolki highlights both homes,
-shows the number of arrived pieces, and offers a short rules explanation in the panel.
+remember the same level, colour, language and switches. Ugolki also offers a left or
+right home, relative to the player; this choice is saved in settings and game files.
+The panel shows the number of arrived pieces and a short rules explanation.
 
 ## Structure
 

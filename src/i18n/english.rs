@@ -9,6 +9,9 @@ use super::Text;
 
 pub(super) const fn text(key: Text) -> &'static str {
     match key {
+        Text::YourHome => "Your home",
+        Text::HomeLeft => "Left",
+        Text::HomeRight => "Right",
         Text::GameRules => "Rules",
         Text::GameMode => "Game",
         Text::Ugolki => "Ugolki",
