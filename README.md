@@ -284,6 +284,23 @@ While the history is being browsed the computer does not move. The game resumes 
 move by the human (if it differs from the recorded one, a variation is created) or with
 "Continue from here".
 
+### Board
+
+The look of the board is chosen in the settings, in the "Board" list: Standard (the
+board of the earlier versions, used by default), Maple and walnut, Beech and mahogany,
+Oak and smoked oak, Ash and cherry parquet, and Birch under amber lacquer. The choice
+applies at once and is remembered.
+
+The wooden boards use no pictures. Each cell and each of the four mitred strips of the
+frame is a mesh with a colour at every vertex, computed from a model of a piece of wood:
+growth rings of uneven width that darken towards their end, fine fibres along the grain,
+broader lighter and darker zones, and ribbon stripes in the mahogany. Every cell is cut
+from its own place in the log. A soft reflection of the lacquer lies over the board from
+the top left: it is strongest on the beech and mahogany and on the amber birch, and
+hardly visible on the oak. The meshes are computed when the look, the size of the board
+or the screen density changes (about 15–30 ms) and are reused while these stay the
+same; a board has 80 to 135 thousand vertices whatever its size.
+
 ### Special effects
 
 A capture of two or more pieces in one move comes with an electric discharge: a
@@ -341,7 +358,9 @@ The settings are kept in one file:
 
 The file is plain text of `key=value` lines: `language` (a two-letter code such
 as `ru`, `en` or `ja`), `game` (`russian` or `ugolki`), `level` (1–10),
-`ugolki_home` (`left` or `right`), `color` (`white` or `black`), and the switches
+`ugolki_home` (`left` or `right`), `color` (`white` or `black`), `board` (the look of
+the board: `standard`, `maple_walnut`, `beech_mahogany`, `oak`, `ash_cherry` or
+`amber_birch`), and the switches
 `ugolki_block_exit` (whether the computer blocks the way out of the player's home in
 Ugolki), `sound`, `panel`, `effects` (the main switch of the special effects),
 `effect_lightning`, `effect_sparks` and `effect_flashes` with the values `on` and `off`. Missing and damaged
@@ -377,6 +396,7 @@ The library `rucheckers` (`src/lib.rs`) does not depend on a window:
 | `board`, `moves`, `rules`, `notation`, `tree`, `pdn`, `ai` | compatibility exports of the original Russian draughts API |
 | `ui::geometry` | board placement and mouse coordinates → cell |
 | `ui::{fx,promotion,sprite,icon}` | procedural effects, pieces and application icon |
+| `ui::wood` | the looks of the board: wooden boards computed as coloured meshes |
 | `i18n` | interface texts: one module per language (`src/i18n/*.rs`) and the message templates |
 | `settings`, `sound`, `rng` | settings, sound synthesis, the random number generator |
 
@@ -541,8 +561,10 @@ Files and settings
       automatically.
 - [ ] A saved game with variations opens without losses.
 - [ ] A foreign or damaged file gives a clear message, and the game does not change.
-- [ ] The language, level, colour, sound, panel visibility and the choice of special
-      effects are restored after a restart.
+- [ ] The language, level, colour, sound, panel visibility, the board and the choice of
+      special effects are restored after a restart.
+- [ ] The "Board" list in the settings offers six looks; a choice changes the board at
+      once, and "Standard" is the board of the earlier versions.
 - [ ] The language list shows all twelve languages; choosing one changes every text at
       once, including the window title.
 - [ ] At the very first start the interface is in the language of the system.
