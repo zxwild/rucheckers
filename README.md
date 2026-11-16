@@ -297,9 +297,11 @@ growth rings of uneven width that darken towards their end, fine fibres along th
 broader lighter and darker zones, and ribbon stripes in the mahogany. Every cell is cut
 from its own place in the log. A soft reflection of the lacquer lies over the board from
 the top left: it is strongest on the beech and mahogany and on the amber birch, and
-hardly visible on the oak. The meshes are computed when the look, the size of the board
-or the screen density changes (about 15–30 ms) and are reused while these stay the
-same; a board has 80 to 135 thousand vertices whatever its size.
+hardly visible on the oak. A board has 80 to 135 thousand vertices whatever its size.
+The meshes are computed when the look or the screen density changes (about 15–30 ms)
+and then reused. While the window is being resized, the computed meshes are stretched to
+each new size, which takes a fraction of a millisecond, and computed anew once the size
+has stayed the same for a quarter of a second.
 
 ### Special effects
 
@@ -565,6 +567,8 @@ Files and settings
       special effects are restored after a restart.
 - [ ] The "Board" list in the settings offers six looks; a choice changes the board at
       once, and "Standard" is the board of the earlier versions.
+- [ ] With a wooden board the window resizes as smoothly as with the standard one, and
+      the board looks the same during and after resizing.
 - [ ] The language list shows all twelve languages; choosing one changes every text at
       once, including the window title.
 - [ ] At the very first start the interface is in the language of the system.

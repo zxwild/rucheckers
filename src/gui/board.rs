@@ -15,6 +15,7 @@ use rucheckers::ui::sprite::{self, PIECE_RADIUS};
 use rucheckers::ui::wood::{self, BoardStyle, ColorMesh, Look};
 use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// A colour with a changed opacity (0…1).
 fn faded(color: Color32, alpha: f32) -> Color32 {
@@ -40,6 +41,14 @@ fn noise(key: u32) -> f32 {
 pub fn cell_rect(layout: &BoardLayout, file: u8, rank: u8) -> Rect {
     let (x, y) = layout.cell_origin(file, rank);
     Rect::from_min_size(pos2(x, y), vec2(layout.cell, layout.cell))
+}
+
+/// Rectangle of the playing field: the 64 cells without the frame.
+fn field_rect(layout: &BoardLayout) -> Rect {
+    Rect::from_min_size(
+        pos2(layout.field_x, layout.field_y),
+        vec2(layout.field_size(), layout.field_size()),
+    )
 }
 
 /// Rectangle of the whole board with its frame.
@@ -74,8 +83,10 @@ fn wood_grain(painter: &Painter, rect: Rect, key: u32, color: Color32, count: u3
 
 /// The board: the frame with coordinates and the 64 cells, in the chosen look.
 ///
-/// `art` keeps the meshes of a wooden board between frames; they are computed again only
-/// when the look, the placement or the screen density changes.
+/// `art` keeps the meshes of a wooden board between frames. They are computed again at
+/// once when the look or the screen density changes. While the window is being resized
+/// they are stretched to each new size, and computed for the new size once it has stayed
+/// the same for [`SETTLE_SECONDS`].
 pub fn draw_board(
     painter: &Painter,
     layout: &BoardLayout,
@@ -85,44 +96,125 @@ pub fn draw_board(
 ) {
     match style.look() {
         None => draw_standard_board(painter, layout, pixels_per_point),
-        Some(look) => draw_wooden_board(
-            painter,
-            layout,
-            pixels_per_point,
-            look,
-            art.meshes(style, look, layout, pixels_per_point),
-        ),
+        Some(look) => {
+            let now = painter.ctx().input(|input| input.time);
+            let meshes = art.meshes(style, look, layout, pixels_per_point, now);
+            if let Some(wait) = meshes.settle_in {
+                // A frame for the exact meshes, in case nothing else redraws the window.
+                painter.ctx().request_repaint_after(wait);
+            }
+            draw_wooden_board(painter, layout, pixels_per_point, look, meshes);
+        }
     }
 }
 
-/// The meshes of a wooden board for one look and one placement. Computing them takes
-/// milliseconds; drawing them again takes no computation at all.
+/// How long, in seconds, the board must keep its size before its meshes are computed
+/// for that size; until then the meshes of the last computed size are stretched to it.
+pub const SETTLE_SECONDS: f64 = 0.25;
+
+/// The meshes of a wooden board.
+///
+/// Computing them takes milliseconds, which is too long for every frame of a window
+/// being resized. Stretching the computed meshes to a new size only moves their
+/// vertices, and the wood scales with the board anyway: its pattern is measured in cells.
+/// What stretching loses until the meshes are computed again is only the alignment of the
+/// cell borders to whole pixels.
 #[derive(Default)]
 pub struct BoardArt {
-    key: Option<(BoardStyle, BoardLayout, u32)>,
+    /// The look, placement and screen density the meshes were computed for.
+    computed: Option<(BoardStyle, BoardLayout, u32)>,
+    frame: Arc<Mesh>,
+    cells: Arc<Mesh>,
+    /// The computed meshes stretched to a placement that has not settled yet.
+    stretched: Option<Stretched>,
+}
+
+/// The computed meshes moved to another placement of the board.
+struct Stretched {
+    layout: BoardLayout,
+    /// When the board took this placement.
+    since: f64,
     frame: Arc<Mesh>,
     cells: Arc<Mesh>,
 }
 
 impl BoardArt {
-    /// The frame and cell meshes for `style` at `layout`.
+    /// The frame and cell meshes for `style` at `layout`, at the time `now` (seconds).
     fn meshes(
         &mut self,
         style: BoardStyle,
         look: &Look,
         layout: &BoardLayout,
         pixels_per_point: f32,
+        now: f64,
     ) -> WoodMeshes {
         let key = (style, *layout, pixels_per_point.to_bits());
-        if self.key != Some(key) {
+        if let Some((computed_style, computed_layout, density)) = self.computed {
+            if computed_style == style && density == key.2 && computed_layout != *layout {
+                let since = match &self.stretched {
+                    Some(stretched) if stretched.layout == *layout => stretched.since,
+                    _ => now,
+                };
+                let left = SETTLE_SECONDS - (now - since);
+                if left > 0.0 {
+                    return self.stretch(computed_layout, layout, since, left);
+                }
+            }
+        }
+        if self.computed != Some(key) {
             self.frame = Arc::new(egui_mesh(look.frame_mesh(layout, pixels_per_point)));
             self.cells = Arc::new(egui_mesh(look.cells_mesh(layout, pixels_per_point)));
-            self.key = Some(key);
+            self.computed = Some(key);
         }
+        self.stretched = None;
         WoodMeshes {
             frame: Arc::clone(&self.frame),
             cells: Arc::clone(&self.cells),
+            settle_in: None,
         }
+    }
+
+    /// The meshes computed for `computed` moved and scaled to `layout`: the frame from
+    /// the old outer edge to the new one, the cells from the old field to the new one.
+    fn stretch(&mut self, computed: BoardLayout, layout: &BoardLayout, since: f64, left: f64) -> WoodMeshes {
+        let stretched = self.stretched.get_or_insert_with(|| Stretched {
+            layout: computed,
+            since,
+            frame: Arc::new(Mesh::clone(&self.frame)),
+            cells: Arc::new(Mesh::clone(&self.cells)),
+        });
+        if stretched.layout != *layout {
+            // The shapes of the previous frame are gone by now, so this reuses the copy
+            // made at the start of the resizing instead of making a new one.
+            move_vertices(
+                Arc::make_mut(&mut stretched.frame),
+                &self.frame,
+                outer_rect(&computed),
+                outer_rect(layout),
+            );
+            move_vertices(
+                Arc::make_mut(&mut stretched.cells),
+                &self.cells,
+                field_rect(&computed),
+                field_rect(layout),
+            );
+            stretched.layout = *layout;
+        }
+        stretched.since = since;
+        WoodMeshes {
+            frame: Arc::clone(&stretched.frame),
+            cells: Arc::clone(&stretched.cells),
+            settle_in: Some(Duration::from_secs_f64(left)),
+        }
+    }
+}
+
+/// Puts into `target`, a copy of `source`, the vertices of `source` moved from the square
+/// `from` to the square `to`.
+fn move_vertices(target: &mut Mesh, source: &Mesh, from: Rect, to: Rect) {
+    let scale = to.width() / from.width().max(1e-6);
+    for (vertex, original) in target.vertices.iter_mut().zip(&source.vertices) {
+        vertex.pos = to.min + (original.pos - from.min) * scale;
     }
 }
 
@@ -130,6 +222,9 @@ impl BoardArt {
 struct WoodMeshes {
     frame: Arc<Mesh>,
     cells: Arc<Mesh>,
+    /// Stretched meshes: the time left until the board has kept its size long enough
+    /// for exact ones.
+    settle_in: Option<Duration>,
 }
 
 /// A mesh of the window from the mesh computed for the board.
@@ -194,10 +289,7 @@ fn draw_wooden_board(
     let pixel = 1.0 / pixels_per_point.max(0.1);
     let outer = outer_rect(layout);
     let frame = layout.frame();
-    let field = Rect::from_min_size(
-        pos2(layout.field_x, layout.field_y),
-        vec2(layout.field_size(), layout.field_size()),
-    );
+    let field = field_rect(layout);
     let radius = wood::corner_radius(frame);
     let corner = CornerRadius::same(radius as u8);
 
@@ -712,36 +804,139 @@ mod tests {
     use super::*;
     use rucheckers::ui::promotion::Promotion;
 
+    fn meshes_at(
+        art: &mut BoardArt,
+        style: BoardStyle,
+        layout: &BoardLayout,
+        ppp: f32,
+        now: f64,
+    ) -> WoodMeshes {
+        art.meshes(style, style.look().unwrap(), layout, ppp, now)
+    }
+
+    fn bounds(mesh: &Mesh) -> Rect {
+        Rect::from_points(&mesh.vertices.iter().map(|vertex| vertex.pos).collect::<Vec<_>>())
+    }
+
+    fn same_rect(a: Rect, b: Rect) -> bool {
+        (a.min - b.min).length() < 1e-3 && (a.max - b.max).length() < 1e-3
+    }
+
     #[test]
-    fn wooden_meshes_are_kept_until_the_look_or_the_placement_changes() {
+    fn wooden_meshes_are_kept_until_the_look_or_the_density_changes() {
         let layout = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
         let oak = BoardStyle::Oak;
         let mut art = BoardArt::default();
-        let first = art.meshes(oak, oak.look().unwrap(), &layout, 1.0);
+        let first = meshes_at(&mut art, oak, &layout, 1.0, 0.0);
+        assert!(first.settle_in.is_none());
         assert!(first.frame.is_valid() && first.cells.is_valid());
         assert!(!first.frame.vertices.is_empty() && !first.cells.vertices.is_empty());
-        let again = art.meshes(oak, oak.look().unwrap(), &layout, 1.0);
+        let again = meshes_at(&mut art, oak, &layout, 1.0, 5.0);
         assert!(Arc::ptr_eq(&first.frame, &again.frame) && Arc::ptr_eq(&first.cells, &again.cells));
 
-        let maple = BoardStyle::MapleWalnut;
-        let moved = BoardLayout::fit(10.0, 0.0, 640.0, 640.0, false, 1.0);
-        let larger = BoardLayout::fit(0.0, 0.0, 700.0, 700.0, false, 1.0);
-        for (style, layout, ppp) in [
-            (maple, layout, 1.0),
-            (oak, moved, 1.0),
-            (oak, larger, 1.0),
-            (oak, layout, 1.5),
-        ] {
-            let other = art.meshes(style, style.look().unwrap(), &layout, ppp);
-            assert!(
-                !Arc::ptr_eq(&first.cells, &other.cells),
-                "{style:?} {layout:?} {ppp}"
-            );
-            assert!(
-                !Arc::ptr_eq(&first.frame, &other.frame),
-                "{style:?} {layout:?} {ppp}"
-            );
+        // Another look or another screen density: computed at once, nothing stretched.
+        for (style, ppp) in [(BoardStyle::MapleWalnut, 1.0), (oak, 1.5)] {
+            let other = meshes_at(&mut art, style, &layout, ppp, 6.0);
+            assert!(other.settle_in.is_none(), "{style:?} {ppp}");
+            assert!(!Arc::ptr_eq(&first.cells, &other.cells), "{style:?} {ppp}");
+            assert!(!Arc::ptr_eq(&first.frame, &other.frame), "{style:?} {ppp}");
+            assert_eq!(art.computed, Some((style, layout, ppp.to_bits())));
         }
+    }
+
+    #[test]
+    fn while_the_window_is_resized_the_meshes_are_stretched_and_computed_once_it_settles() {
+        let oak = BoardStyle::Oak;
+        let start = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        let mut art = BoardArt::default();
+        let computed = meshes_at(&mut art, oak, &start, 1.0, 0.0);
+        let colors: Vec<Color32> = computed
+            .cells
+            .vertices
+            .iter()
+            .map(|vertex| vertex.color)
+            .collect();
+        drop(computed);
+        let size = |step: u16| {
+            BoardLayout::fit(
+                0.0,
+                0.0,
+                640.0 + 7.0 * f32::from(step),
+                600.0 + 5.0 * f32::from(step),
+                false,
+                1.0,
+            )
+        };
+        let mut copy = None;
+        for step in 1..=20 {
+            let now = f64::from(step) * 0.016;
+            let layout = size(step);
+            let meshes = meshes_at(&mut art, oak, &layout, 1.0, now);
+            assert_eq!(
+                art.computed,
+                Some((oak, start, 1.0_f32.to_bits())),
+                "nothing is computed while resizing"
+            );
+            let wait = meshes.settle_in.expect("the exact meshes are due later");
+            assert!(wait.as_secs_f64() <= SETTLE_SECONDS);
+            // The stretched meshes cover the new board exactly, in the same colours.
+            assert!(same_rect(bounds(&meshes.cells), field_rect(&layout)), "{step}");
+            assert!(same_rect(bounds(&meshes.frame), outer_rect(&layout)), "{step}");
+            assert!(meshes
+                .cells
+                .vertices
+                .iter()
+                .map(|vertex| vertex.color)
+                .eq(colors.iter().copied()));
+            // One copy serves the whole resizing: the window drops the shapes of a frame
+            // before the next one, and the copy is moved in place.
+            let pointer = Arc::as_ptr(&meshes.cells);
+            assert_eq!(*copy.get_or_insert(pointer), pointer, "{step}");
+        }
+        // The size stays: a little later the meshes are still stretched, after the pause
+        // they are computed for it.
+        let last = size(20);
+        let early = meshes_at(&mut art, oak, &last, 1.0, 0.32 + 0.1);
+        let wait = early.settle_in.expect("still settling");
+        assert!((wait.as_secs_f64() - (SETTLE_SECONDS - 0.1)).abs() < 1e-6);
+        drop(early);
+        let settled = meshes_at(&mut art, oak, &last, 1.0, 0.32 + SETTLE_SECONDS);
+        assert!(settled.settle_in.is_none());
+        assert_eq!(art.computed, Some((oak, last, 1.0_f32.to_bits())));
+        assert!(same_rect(bounds(&settled.cells), field_rect(&last)));
+    }
+
+    #[test]
+    fn a_stretched_board_asks_for_a_frame_to_draw_the_exact_one() {
+        let ctx = egui::Context::default();
+        let mut art = BoardArt::default();
+        let mut frame = |layout: BoardLayout, now: f64| {
+            let output = ctx.run(
+                egui::RawInput {
+                    time: Some(now),
+                    ..Default::default()
+                },
+                |ctx| {
+                    let painter = ctx.layer_painter(egui::LayerId::background());
+                    draw_board(&painter, &layout, 1.0, BoardStyle::AmberBirch, &mut art);
+                },
+            );
+            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay
+        };
+        let start = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        let resized = BoardLayout::fit(0.0, 0.0, 700.0, 680.0, false, 1.0);
+        // A new context asks for a few more frames at first, whatever is drawn.
+        for now in [0.8, 0.85, 0.9, 0.95] {
+            let _ = frame(start, now);
+        }
+        assert!(
+            frame(start, 1.0) > Duration::from_secs(60),
+            "a computed board waits for nothing"
+        );
+        let wait = frame(resized, 1.1);
+        assert!(wait <= Duration::from_secs_f64(SETTLE_SECONDS), "{wait:?}");
+        assert!(frame(resized, 1.1 + SETTLE_SECONDS) > Duration::from_secs(60));
+        assert_eq!(art.computed.map(|key| key.1), Some(resized));
     }
 
     #[test]
@@ -791,12 +986,12 @@ mod tests {
         };
         let (meshes, letters) = draw(BoardStyle::Standard, &mut art);
         assert_eq!(meshes, 0);
-        assert!(art.key.is_none(), "the standard board keeps nothing");
+        assert!(art.computed.is_none(), "the standard board keeps nothing");
         assert_eq!(letters, [theme::COORDINATES; 2]);
         for style in BoardStyle::ALL.into_iter().skip(1) {
             let (meshes, letters) = draw(style, &mut art);
             assert_eq!(meshes, 2, "{style:?}: the frame and the cells");
-            assert_eq!(art.key, Some((style, layout, 1.0_f32.to_bits())));
+            assert_eq!(art.computed, Some((style, layout, 1.0_f32.to_bits())));
             assert_eq!(
                 letters,
                 [solid(style.look().unwrap().coordinates); 2],
