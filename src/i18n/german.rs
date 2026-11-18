@@ -15,7 +15,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::GameRules => "Regeln",
         Text::GameMode => "Spiel",
         Text::Ugolki => "Ecken (Ugolki)",
-        Text::GameAppliesNew => "Die Spielwahl gilt ab der nächsten neuen Partie.",
         Text::UgolkiHint => "Bringen Sie alle 12 Steine ins gegenüberliegende Haus. Schritte oder Sprungketten nur waagerecht und senkrecht, ohne Schlagen. Wählen Sie das Zielfeld. Das eigene Haus muss nach 40 Zügen leer sein; Grenze: 80 Züge. Schwarz darf zuletzt antworten. Gegnerische Steine dürfen nicht eingesperrt werden.",
         Text::UgolkiHomeFilled => "Alle Steine haben das gegenüberliegende Haus erreicht",
         Text::UgolkiHomeDeadline => "Das eigene Haus wurde nicht innerhalb von 40 Zügen geräumt",
@@ -44,9 +43,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::LevelMaximum => "Maximum",
         Text::Language => "Sprache",
         Text::Sound => "Ton",
-        Text::SoundOn => "Ton an",
-        Text::SoundOff => "Ton aus",
-        Text::MovesPanel => "Zugliste",
         Text::Effects => "Spezialeffekte",
         Text::EffectsEnabled => "Spezialeffekte anzeigen",
         Text::EffectLightning => "Blitz hinter dem Stein bei Mehrfachschlägen",
@@ -59,11 +55,10 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::BoardOak => "Eiche und Räuchereiche",
         Text::BoardAshCherry => "Esche und Kirsche, Parkett",
         Text::BoardAmberBirch => "Birke unter Bernsteinlack",
-        Text::PlayStyle => "Ecken (Ugolki): Spielstil des Computers",
         Text::BlockHomeExit => "Den Ausgang aus Ihrem Haus versperren",
         Text::BlockHomeExitHint => "Der Computer umstellt Ihre Steine, die noch im Haus stehen, damit sie es bis zum 40. Zug nicht verlassen können. Die Regeln erlauben das, solange die Steine im Haus noch ziehen können.",
-        Text::ShowPanel => "Zugliste einblenden",
-        Text::HidePanel => "Zugliste ausblenden",
+        Text::ShowPanel => "Seitenleiste einblenden",
+        Text::HidePanel => "Seitenleiste ausblenden",
         Text::YourMove => "Sie sind am Zug",
         Text::MustCapture => "Sie sind am Zug: Es herrscht Schlagzwang",
         Text::Thinking => "Der Computer denkt nach…",
@@ -129,14 +124,19 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HumanName => "Spieler",
         Text::ComputerName => "Computer",
         Text::Keys => "Tasten",
-        Text::KeysHelp => {
-            "Pfeil links und rechts — durch die Züge; \
-             Pfeil auf und ab — Varianten; \
-             Pos1 und Ende — Anfang und Ende der Partie; \
-             Leertaste — von hier weiterspielen; \
-             Esc oder rechte Maustaste — Auswahl aufheben; \
-             F9 — Zugliste; \
-             Strg+N, Strg+O, Strg+S (auf macOS: Cmd) — neue Partie, öffnen, speichern"
-        }
+        Text::GameTab => "Partie",
+        Text::InterfaceSection => "Oberfläche",
+        Text::UgolkiArrived => "Im gegenüberliegenden Haus",
+        Text::KeySpace => "Leertaste",
+        Text::KeyHome => "Pos1",
+        Text::KeyEnd => "Ende",
+        Text::KeyEsc => "Esc",
+        Text::KeyCtrl => "Strg",
+        Text::KeyStepMoves => "Zug zurück und vor",
+        Text::KeyVariations => "Vorige und nächste Variante",
+        Text::KeyStartEnd => "Anfang und Ende der Partie",
+        Text::KeyContinue => "Von hier weiterspielen",
+        Text::KeyCancel => "Auswahl aufheben (auch mit der rechten Maustaste)",
+        Text::KeyPanel => "Seitenleiste aus- oder einblenden",
     }
 }

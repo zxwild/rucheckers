@@ -15,7 +15,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::GameRules => "Regole",
         Text::GameMode => "Gioco",
         Text::Ugolki => "Angoli (Ugolki)",
-        Text::GameAppliesNew => "La scelta si applica quando si avvia una nuova partita.",
         Text::UgolkiHint => "Porta tutte le 12 pedine nella casa opposta. Passi o catene di salti solo orizzontali e verticali, senza catture. Scegli la casella finale. Libera la tua casa entro 40 mosse; limite: 80. Il nero ha l’ultima risposta. È vietato bloccare le pedine avversarie.",
         Text::UgolkiHomeFilled => "Tutte le pedine hanno raggiunto la casa opposta",
         Text::UgolkiHomeDeadline => "La casa iniziale non è stata liberata in 40 mosse",
@@ -44,9 +43,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::LevelMaximum => "massimo",
         Text::Language => "Lingua",
         Text::Sound => "Audio",
-        Text::SoundOn => "Audio attivato",
-        Text::SoundOff => "Audio disattivato",
-        Text::MovesPanel => "Pannello delle mosse",
         Text::Effects => "Effetti speciali",
         Text::EffectsEnabled => "Mostra gli effetti speciali",
         Text::EffectLightning => "Fulmine dietro la pedina nelle prese multiple",
@@ -59,7 +55,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::BoardOak => "Rovere e rovere affumicato",
         Text::BoardAshCherry => "Frassino e ciliegio, parquet",
         Text::BoardAmberBirch => "Betulla con vernice ambrata",
-        Text::PlayStyle => "Angoli (Ugolki): stile di gioco del computer",
         Text::BlockHomeExit => "Bloccare l’uscita dalla tua casa",
         Text::BlockHomeExitHint => "Il computer circonda le tue pedine rimaste in casa perché non riescano a uscire entro la 40ª mossa. Le regole lo consentono finché le pedine possono ancora muoversi dentro la casa.",
         Text::ShowPanel => "Mostra il pannello",
@@ -127,14 +122,19 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HumanName => "Giocatore",
         Text::ComputerName => "Computer",
         Text::Keys => "Tasti",
-        Text::KeysHelp => {
-            "Frecce sinistra e destra — scorrere le mosse; \
-             su e giù — varianti; \
-             Home e End — inizio e fine della partita; \
-             Spazio — continua da qui; \
-             Esc o tasto destro del mouse — annulla la selezione; \
-             F9 — pannello delle mosse; \
-             Ctrl+N, Ctrl+O, Ctrl+S (Cmd su macOS) — nuova partita, apri, salva"
-        }
+        Text::GameTab => "Partita",
+        Text::InterfaceSection => "Interfaccia",
+        Text::UgolkiArrived => "Nella casa opposta",
+        Text::KeySpace => "Spazio",
+        Text::KeyHome => "Home",
+        Text::KeyEnd => "End",
+        Text::KeyEsc => "Esc",
+        Text::KeyCtrl => "Ctrl",
+        Text::KeyStepMoves => "Mossa precedente e successiva",
+        Text::KeyVariations => "Variante precedente e successiva",
+        Text::KeyStartEnd => "Inizio e fine della partita",
+        Text::KeyContinue => "Continua da qui",
+        Text::KeyCancel => "Annulla la selezione (anche con il tasto destro del mouse)",
+        Text::KeyPanel => "Nascondi o mostra il pannello",
     }
 }

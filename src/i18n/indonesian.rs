@@ -13,9 +13,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HomeLeft => "Kiri",
         Text::HomeRight => "Kanan",
         Text::GameRules => "Aturan",
-        Text::GameMode => "Permainan",
+        // The name of a game and the tab of the game being played.
+        Text::GameMode | Text::GameTab => "Permainan",
         Text::Ugolki => "Sudut (Ugolki)",
-        Text::GameAppliesNew => "Pilihan berlaku saat memulai permainan baru.",
         Text::UgolkiHint => "Pindahkan 12 bidak ke rumah seberang. Langkah atau rangkaian lompatan hanya mendatar dan tegak, tanpa menangkap. Pilih petak akhir. Kosongkan rumah dalam 40 giliran; batas 80 giliran. Hitam mendapat balasan terakhir. Dilarang mengurung bidak lawan.",
         Text::UgolkiHomeFilled => "Semua bidak tiba di rumah seberang",
         Text::UgolkiHomeDeadline => "Rumah tidak dikosongkan dalam 40 giliran",
@@ -44,9 +44,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::LevelMaximum => "maksimum",
         Text::Language => "Bahasa",
         Text::Sound => "Suara",
-        Text::SoundOn => "Suara aktif",
-        Text::SoundOff => "Suara mati",
-        Text::MovesPanel => "Panel langkah",
         Text::Effects => "Efek khusus",
         Text::EffectsEnabled => "Tampilkan efek khusus",
         Text::EffectLightning => "Petir di belakang bidak saat memakan beberapa bidak",
@@ -59,7 +56,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::BoardOak => "Ek dan ek asap",
         Text::BoardAshCherry => "Ash dan ceri, parket",
         Text::BoardAmberBirch => "Birch berpernis amber",
-        Text::PlayStyle => "Sudut (Ugolki): gaya bermain komputer",
         Text::BlockHomeExit => "Tutup jalan keluar dari rumah Anda",
         Text::BlockHomeExitHint => "Komputer mengepung bidak Anda yang masih di rumah agar tidak sempat keluar sebelum giliran ke-40. Aturan mengizinkannya selama bidak itu masih bisa bergerak di dalam rumah.",
         Text::ShowPanel => "Tampilkan panel",
@@ -123,14 +119,18 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HumanName => "Pemain",
         Text::ComputerName => "Komputer",
         Text::Keys => "Tombol",
-        Text::KeysHelp => {
-            "Panah kiri dan kanan — menelusuri langkah; \
-             atas dan bawah — variasi; \
-             Home dan End — awal dan akhir permainan; \
-             Spasi — lanjutkan dari sini; \
-             Esc atau tombol kanan tetikus — batalkan pilihan; \
-             F9 — panel langkah; \
-             Ctrl+N, Ctrl+O, Ctrl+S (Cmd di macOS) — permainan baru, buka, simpan"
-        }
+        Text::InterfaceSection => "Antarmuka",
+        Text::UgolkiArrived => "Di rumah seberang",
+        Text::KeySpace => "Spasi",
+        Text::KeyHome => "Home",
+        Text::KeyEnd => "End",
+        Text::KeyEsc => "Esc",
+        Text::KeyCtrl => "Ctrl",
+        Text::KeyStepMoves => "Langkah sebelumnya dan berikutnya",
+        Text::KeyVariations => "Variasi sebelumnya dan berikutnya",
+        Text::KeyStartEnd => "Awal dan akhir permainan",
+        Text::KeyContinue => "Lanjutkan dari sini",
+        Text::KeyCancel => "Batalkan pilihan (juga dengan tombol kanan tetikus)",
+        Text::KeyPanel => "Sembunyikan atau tampilkan panel",
     }
 }

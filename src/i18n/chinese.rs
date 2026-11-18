@@ -15,7 +15,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::GameRules => "规则",
         Text::GameMode => "游戏",
         Text::Ugolki => "角棋",
-        Text::GameAppliesNew => "此选择将在开始新对局时生效。",
         Text::UgolkiHint => "将全部12枚棋子移到对面的营地。只能横向或纵向走一步或连续跳跃，不吃子。选择最终落点。须在40回合内清空己方营地；上限为80回合。黑方有最后应手权。禁止困住对方棋子。",
         Text::UgolkiHomeFilled => "全部棋子已到达对方营地",
         Text::UgolkiHomeDeadline => "未能在40回合内清空己方营地",
@@ -44,9 +43,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::LevelMaximum => "最强",
         Text::Language => "语言",
         Text::Sound => "声音",
-        Text::SoundOn => "声音已开启",
-        Text::SoundOff => "声音已关闭",
-        Text::MovesPanel => "棋谱面板",
         Text::Effects => "特效",
         Text::EffectsEnabled => "显示特效",
         Text::EffectLightning => "连吃时棋子身后的闪电",
@@ -59,7 +55,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::BoardOak => "橡木与烟熏橡木",
         Text::BoardAshCherry => "白蜡木与樱桃木拼花",
         Text::BoardAmberBirch => "琥珀清漆桦木",
-        Text::PlayStyle => "角棋：电脑的下棋风格",
         Text::BlockHomeExit => "封堵你起始区的出口",
         Text::BlockHomeExitHint => "电脑会包围仍留在你起始区内的棋子，使它们无法在第40回合前离开。只要这些棋子在区内仍能移动，规则就允许这样做。",
         Text::ShowPanel => "显示面板",
@@ -116,14 +111,19 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HumanName => "玩家",
         Text::ComputerName => "电脑",
         Text::Keys => "按键",
-        Text::KeysHelp => {
-            "左右方向键——浏览着法；\
-             上下方向键——切换变着；\
-             Home 和 End——对局的开头和结尾；\
-             空格键——从此处继续；\
-             Esc 或鼠标右键——取消选择；\
-             F9——棋谱面板；\
-             Ctrl+N、Ctrl+O、Ctrl+S（macOS 上为 Cmd）——新对局、打开、保存"
-        }
+        Text::GameTab => "对局",
+        Text::InterfaceSection => "界面",
+        Text::UgolkiArrived => "已到达对方营地",
+        Text::KeySpace => "空格键",
+        Text::KeyHome => "Home",
+        Text::KeyEnd => "End",
+        Text::KeyEsc => "Esc",
+        Text::KeyCtrl => "Ctrl",
+        Text::KeyStepMoves => "上一步和下一步",
+        Text::KeyVariations => "上一个和下一个变着",
+        Text::KeyStartEnd => "对局的开头和结尾",
+        Text::KeyContinue => "从此处继续",
+        Text::KeyCancel => "取消选择（也可用鼠标右键）",
+        Text::KeyPanel => "隐藏或显示面板",
     }
 }

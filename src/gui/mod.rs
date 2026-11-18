@@ -1,4 +1,4 @@
-//! Graphical interface: the window, board drawing, move panel, dialogs and sound.
+//! Graphical interface: the window, board drawing, side panel, dialogs and sound.
 
 mod app;
 mod audio;
