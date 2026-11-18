@@ -11,6 +11,7 @@ mod theme;
 use eframe::egui;
 use rucheckers::i18n::{tr, Lang, Text};
 use rucheckers::settings::{default_settings_path, system_locale, Settings};
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -48,7 +49,10 @@ pub fn run() -> eframe::Result<()> {
     let lang = settings.lang;
 
     // An optional command line argument is a game file to open.
-    let initial_file = std::env::args_os().nth(1).map(PathBuf::from);
+    let initial_file = std::env::args_os()
+        .nth(1)
+        .filter(|arg| !(cfg!(target_os = "macos") && is_process_serial_number(arg)))
+        .map(PathBuf::from);
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -74,6 +78,12 @@ pub fn run() -> eframe::Result<()> {
     .inspect_err(|error| report_failure(lang, error))
 }
 
+/// Whether an argument is the process serial number that older versions of macOS pass
+/// to an application started from Finder (`-psn_0_12345`). It is not a file to open.
+fn is_process_serial_number(arg: &OsStr) -> bool {
+    arg.as_encoded_bytes().starts_with(b"-psn_")
+}
+
 /// Tells the user why the program could not start.
 fn report_failure(lang: Lang, error: &eframe::Error) {
     let message = format!("{}\n\n{error}", tr(lang, Text::StartFailed));
@@ -85,4 +95,17 @@ fn report_failure(lang: Lang, error: &eframe::Error) {
         .set_title(tr(lang, Text::AppTitle))
         .set_description(message)
         .show();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_process_serial_number_is_not_a_file() {
+        assert!(is_process_serial_number(OsStr::new("-psn_0_12345")));
+        for file in ["game.pdn", "/Users/me/-psn_0_1.pdn", "-psn", "psn_0_1", ""] {
+            assert!(!is_process_serial_number(OsStr::new(file)), "{file}");
+        }
+    }
 }

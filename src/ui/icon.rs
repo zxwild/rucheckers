@@ -12,6 +12,13 @@
 //! Both files are written by `cargo run --example icons`; a test checks that they still
 //! match the drawing code. The file formats are simple enough to be written here
 //! without a dependency: the pixels are stored uncompressed.
+//!
+//! macOS draws application icons on a grid of its own: a rounded shape smaller than the
+//! image, with a transparent margin and a shadow, so that the icon stands in line with
+//! the others in the Dock and in Finder. [`render_macos_icon`] draws that variant; the
+//! application bundle gets it as a set of images ([`ICONSET`]) that `iconutil` packs
+//! into an `.icns` file. The bundle is built by `tools/build-macos-app.sh`, so these
+//! images are not kept in the repository.
 
 use crate::board::{Color, Kind, Piece};
 use crate::ui::sprite::render_piece;
@@ -92,6 +99,125 @@ pub fn render_icon(size: usize) -> IconImage {
                 let premultiplied =
                     f32::from(top[channel]) / 255.0 + SQUARE[channel] * background * (1.0 - top_alpha);
                 // The icon is stored without premultiplication.
+                let value = if alpha > 0.0 { premultiplied / alpha } else { 0.0 };
+                rgba.push((value * 255.0).round().clamp(0.0, 255.0) as u8);
+            }
+            rgba.push((alpha * 255.0).round().clamp(0.0, 255.0) as u8);
+        }
+    }
+    IconImage { size, rgba }
+}
+
+/// The images of a macOS icon set (`rucheckers.iconset`): the names `iconutil` expects
+/// and the sides in pixels. Every size is there twice, for ordinary and for Retina
+/// screens (`@2x`).
+pub const ICONSET: [(&str, usize); 10] = [
+    ("icon_16x16.png", 16),
+    ("icon_16x16@2x.png", 32),
+    ("icon_32x32.png", 32),
+    ("icon_32x32@2x.png", 64),
+    ("icon_128x128.png", 128),
+    ("icon_128x128@2x.png", 256),
+    ("icon_256x256.png", 256),
+    ("icon_256x256@2x.png", 512),
+    ("icon_512x512.png", 512),
+    ("icon_512x512@2x.png", 1024),
+];
+
+/// Apple's grid of application icons: on an image of 1024 pixels the shape takes 824,
+/// the margin around it is left for the shadow.
+const MACOS_GRID: usize = 1024;
+const MACOS_SHAPE: usize = 824;
+/// The corner of the rounded rectangle that casts the shadow, in halves of the side of
+/// the shape. It follows the outline of the shape (see [`inside_macos_shape`]).
+const MACOS_CORNER: f32 = 0.45;
+/// The shadow under the shape: its opacity, then its offset downwards and its blur in
+/// pixels of the 1024-pixel grid.
+const MACOS_SHADOW: (f32, f32, f32) = (0.3, 10.0, 12.0);
+
+/// The transparent margin around the shape of a macOS icon with a side of `size` pixels.
+const fn macos_margin(size: usize) -> usize {
+    // The margin of the grid scaled to the image, rounded to the nearest pixel.
+    (size * (MACOS_GRID - MACOS_SHAPE) + MACOS_GRID) / (2 * MACOS_GRID)
+}
+
+/// Whether a point is inside the shape of a macOS icon. The coordinates run from −1 to
+/// 1 across the shape.
+///
+/// The outline is a superellipse, |u|⁵ + |v|⁵ ≤ 1: its corners bend smoothly into the
+/// sides, as the corners of the icons of the system do.
+fn inside_macos_shape(u: f32, v: f32) -> bool {
+    let (u, v) = (u.abs(), v.abs());
+    let (u2, v2) = (u * u, v * v);
+    u2 * u2 * u + v2 * v2 * v <= 1.0
+}
+
+/// The signed distance from a point to the rounded rectangle close to the shape of a
+/// macOS icon, in the coordinates of [`inside_macos_shape`]; negative inside.
+fn macos_shape_distance(u: f32, v: f32) -> f32 {
+    let qx = u.abs() - (1.0 - MACOS_CORNER);
+    let qy = v.abs() - (1.0 - MACOS_CORNER);
+    qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - MACOS_CORNER
+}
+
+/// Rises smoothly from 0 at `low` to 1 at `high`.
+fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
+    let t = ((x - low) / (high - low)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Draws the macOS variant of the icon with a side of `size` pixels: the same piece and
+/// square as [`render_icon`], laid out on Apple's grid — the square has the outline of
+/// the icons of the system, leaves a transparent margin and casts a soft shadow.
+#[must_use]
+pub fn render_macos_icon(size: usize) -> IconImage {
+    if size == 0 {
+        return IconImage {
+            size,
+            rgba: Vec::new(),
+        };
+    }
+    let margin = macos_margin(size);
+    let inner = size - 2 * margin;
+    let piece = render_piece(Piece::new(Color::White, Kind::Man), inner, true);
+    // Pixels in a unit of the shape coordinates, and the centre of the image.
+    let half = inner as f32 / 2.0;
+    let centre = size as f32 / 2.0;
+    let scale = size as f32 / MACOS_GRID as f32;
+    let (opacity, offset, blur) = MACOS_SHADOW;
+    let (offset, blur) = (offset * scale, (blur * scale).max(0.5));
+
+    let mut rgba = Vec::with_capacity(size * size * 4);
+    for py in 0..size {
+        for px in 0..size {
+            let mut inside = 0;
+            for sy in 0..SAMPLES {
+                for sx in 0..SAMPLES {
+                    let x = px as f32 + (sx as f32 + 0.5) / SAMPLES as f32;
+                    let y = py as f32 + (sy as f32 + 0.5) / SAMPLES as f32;
+                    inside += usize::from(inside_macos_shape((x - centre) / half, (y - centre) / half));
+                }
+            }
+            let coverage = inside as f32 / (SAMPLES * SAMPLES) as f32;
+            // The shadow is the shape moved down and blurred, black.
+            let distance = half
+                * macos_shape_distance(
+                    (px as f32 + 0.5 - centre) / half,
+                    (py as f32 + 0.5 - centre - offset) / half,
+                );
+            let shadow = opacity * (1.0 - smoothstep(-blur, blur, distance));
+            // The square over the shadow, the piece (premultiplied) over both.
+            let under = coverage + shadow * (1.0 - coverage);
+            let top = if px >= margin && py >= margin {
+                piece.pixel(px - margin, py - margin)
+            } else {
+                [0; 4]
+            };
+            let top_alpha = f32::from(top[3]) / 255.0;
+            let alpha = top_alpha + under * (1.0 - top_alpha);
+            for channel in 0..3 {
+                let premultiplied =
+                    f32::from(top[channel]) / 255.0 + SQUARE[channel] * coverage * (1.0 - top_alpha);
                 let value = if alpha > 0.0 { premultiplied / alpha } else { 0.0 };
                 rgba.push((value * 255.0).round().clamp(0.0, 255.0) as u8);
             }
@@ -514,6 +640,64 @@ mod tests {
             assert!(piece > square + 150, "{size}: piece {piece}, square {square}");
         }
         assert_eq!(render_icon(0).rgba, []);
+    }
+
+    #[test]
+    fn the_icon_set_has_every_size_macos_asks_for() {
+        for (name, size) in ICONSET {
+            let (side, retina) = match name.strip_suffix("@2x.png") {
+                Some(rest) => (rest, 2),
+                None => (name.strip_suffix(".png").unwrap(), 1),
+            };
+            let side = side.strip_prefix("icon_").unwrap();
+            let (width, height) = side.split_once('x').unwrap();
+            assert_eq!(width, height, "{name}");
+            assert_eq!(width.parse::<usize>().unwrap() * retina, size, "{name}");
+        }
+        let sides: Vec<usize> = ICONSET.iter().map(|(_, size)| *size).collect();
+        assert_eq!(sides, [16, 32, 32, 64, 128, 256, 256, 512, 512, 1024]);
+    }
+
+    #[test]
+    fn the_macos_icon_follows_apples_grid() {
+        // 100 of 1024 pixels on each side, as on Apple's template.
+        assert_eq!(macos_margin(1024), 100);
+        assert_eq!(macos_margin(512), 50);
+        let brightness = |[red, green, blue, _]: [u8; 4]| u32::from(red) + u32::from(green) + u32::from(blue);
+        for (size, margin) in [(16, 2), (32, 3), (64, 6), (128, 13), (256, 25)] {
+            assert_eq!(macos_margin(size), margin);
+            let icon = render_macos_icon(size);
+            assert_eq!(icon.rgba.len(), size * size * 4);
+            // The edges of the image are transparent: the margin and the shadow fade out
+            // before them.
+            for i in 0..size {
+                for (x, y) in [(i, 0), (0, i), (i, size - 1), (size - 1, i)] {
+                    assert_eq!(icon.pixel(x, y)[3], 0, "edge ({x}, {y}) of {size} pixels");
+                }
+            }
+            // The shape starts right after the margin, at the middle of the top side…
+            let middle = size / 2;
+            assert_eq!(icon.pixel(middle, margin)[3], 255, "{size}");
+            assert_eq!(icon.pixel(middle, margin - 1)[3], 0, "{size}");
+            assert_eq!(icon.pixel(margin, middle)[3], 255, "{size}");
+            // Beside the shape only the blurred edge of the shadow shows.
+            assert!(icon.pixel(margin - 1, middle)[3] < 40, "{size}");
+            // …and its corners are rounded off.
+            assert!(icon.pixel(margin, margin)[3] < 128, "{size}");
+            // The piece in the centre is lighter than the square around it.
+            let inner = size - 2 * margin;
+            let uncovered = margin + inner * 12 / 100;
+            assert_eq!(icon.pixel(uncovered, uncovered)[3], 255, "{size}");
+            let piece = brightness(icon.pixel(middle, middle));
+            let square = brightness(icon.pixel(uncovered, uncovered));
+            assert!(piece > square + 150, "{size}: piece {piece}, square {square}");
+        }
+        // The shadow falls below the shape, not above it.
+        let icon = render_macos_icon(256);
+        let below = icon.pixel(128, 256 - 25 + 2)[3];
+        let above = icon.pixel(128, 25 - 2)[3];
+        assert!(below > above + 20, "below {below}, above {above}");
+        assert_eq!(render_macos_icon(0).rgba, []);
     }
 
     /// The largest difference between the channels of two images of the same size.

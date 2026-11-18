@@ -65,7 +65,7 @@ The same move from its first jump to the last one:
 | System | Versions | How it is checked |
 | --- | --- | --- |
 | Windows | 10 and 11, x64 and ARM64 | CI builds the program and runs all tests on Windows (x64 and ARM64), and starts the program on Windows x64 |
-| macOS | Apple Silicon and Intel | CI builds the program and runs all tests on both |
+| macOS | Apple Silicon and Intel | CI builds the program and runs all tests on both, builds the application bundle and starts it on both |
 | Linux | Ubuntu 22.04, 24.04 and 26.04; Debian 12 and 13; Fedora; Arch Linux; openSUSE Tumbleweed | CI builds the program inside each distribution from the packages listed below, runs all tests and starts the program on a virtual display |
 
 Distributions based on these — Linux Mint, Pop!_OS, Manjaro, EndeavourOS and others —
@@ -126,6 +126,57 @@ cargo build --release
 
 The Command Line Tools provide the linker and `libclang`, which the sound library needs
 while building (its bindings to CoreAudio are generated at build time).
+
+To make an application of it, one that Finder, the Dock, Launchpad and Spotlight show
+like any other:
+
+```bash
+tools/build-macos-app.sh --install
+```
+
+The script builds `target/macos/Russian Draughts.app` and copies it into
+`/Applications`. The bundle holds the executable, the icon in every size macOS asks for
+and the name of the program in the twelve languages of the interface: on a Mac set to
+Russian, Finder and the menu bar call it «Русские шашки». The options can be combined:
+
+| Option | What it does |
+| --- | --- |
+| none | builds the bundle for the processor of this Mac |
+| `--universal` | builds one executable for Apple silicon and Intel |
+| `--dmg` | also packs the bundle into a disk image with a link to Applications to drag it onto: `target/macos/rucheckers-VERSION-macos-ARCH.dmg` |
+| `--install` | also copies the bundle into `/Applications`; `APPLICATIONS=~/Applications` installs it for the current user only |
+| `--uninstall` | removes the installed bundle; the settings stay in `~/Library/Application Support/rucheckers` |
+
+`MACOSX_DEPLOYMENT_TARGET` sets the oldest version of macOS the executable is built
+for, 11.0 by default; CI starts the program only on current versions.
+
+Without `CODESIGN_IDENTITY` the bundle is signed ad hoc. That is enough on the Mac that
+built it and for a copy made without a browser or a messenger: Gatekeeper checks only
+files marked as downloaded. A downloaded bundle signed ad hoc does not open at the
+first attempt; it opens after "Open Anyway" in System Settings → Privacy & Security, or
+after the mark is removed:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Russian Draughts.app"
+```
+
+To hand the program out without that step, it has to be signed with a Developer ID
+certificate of the Apple Developer Program and notarized by Apple. The script signs with
+the hardened runtime and a secure timestamp, as notarization requires; the submission
+itself is done by hand (`xcrun notarytool store-credentials` saves the credentials
+under a profile name once):
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: NAME (TEAM)" tools/build-macos-app.sh --universal --dmg
+```
+
+```bash
+xcrun notarytool submit target/macos/rucheckers-1.0.0-macos-universal.dmg --keychain-profile PROFILE --wait
+```
+
+```bash
+xcrun stapler staple target/macos/rucheckers-1.0.0-macos-universal.dmg
+```
 
 ### Linux
 
@@ -230,6 +281,10 @@ for in the right place on each system, and that the icon files match the drawing
   Linux, Windows and macOS;
 - on Windows: a check that the release executable depends on system libraries only,
   and a start of the program;
+- on macOS: the universal application bundle and its disk image, with checks of the
+  description of the bundle, the signature, the processors, the oldest version of macOS,
+  the icon and the name in every language; then a start of the program from the bundle
+  on Apple silicon and, after copying it from the disk image, on Intel;
 - inside Debian, Ubuntu, Fedora, Arch Linux and openSUSE containers: a build from the
   packages listed above, the tests, and a start of the program on a virtual display
   under X11 and under Wayland.
@@ -247,7 +302,13 @@ tools/smoke-test.sh wayland
 ```
 
 It needs Xvfb and xdotool for X11, Weston for Wayland, and ImageMagick. On Windows
-the same check is `tools/smoke-test.ps1`.
+the same check is `tools/smoke-test.ps1`. On macOS it is `tools/smoke-test-macos.sh`,
+which starts the application bundle with `open`, the way Finder does, and needs the
+Command Line Tools:
+
+```bash
+tools/smoke-test-macos.sh "target/macos/Russian Draughts.app"
+```
 
 ### Code quality
 
@@ -430,8 +491,9 @@ Around the code:
 | `assets/icons/` | the icon as `.ico` (Windows) and `.png` (Linux), written by the program |
 | `assets/windows/` | the application manifest: Windows 10 and 11, sharp drawing on dense screens |
 | `assets/linux/` | the desktop entry with the name of the program in every language |
-| `tools/` | installation into the Linux application menu, the smoke tests, the font subsetting script |
-| `examples/icons.rs` | writes the icon files |
+| `assets/macos/` | the description of the application bundle (`Info.plist`) and the name of the program in every language |
+| `tools/` | the macOS application bundle, installation into the Linux application menu, the smoke tests, the font subsetting script |
+| `examples/icons.rs` | writes the icon files, and the images of the macOS icon for the bundle |
 | `docs/screenshots/` | the pictures of this file |
 
 Dependencies: `eframe` (window and vector drawing), `winit` (the windowing library
@@ -465,6 +527,10 @@ again (a test fails until they match the drawing code):
 ```bash
 cargo run --example icons
 ```
+
+The macOS icon is a rounded square in the proportions of the system icons, with the
+same piece on it. It is not kept in the repository: `tools/build-macos-app.sh` draws it
+at every build.
 
 ## Assumptions
 
@@ -600,6 +666,19 @@ Windows
       installing anything.
 - [ ] With the display scale at 150 % or 200 % the picture is sharp, also after the
       window is moved to a monitor of another scale.
+
+macOS
+
+- [ ] After `tools/build-macos-app.sh --install` the program is in Launchpad and found by
+      Spotlight; Finder, the Dock and the menu bar show its name in the language of the
+      system.
+- [ ] The Dock shows the icon of the program, in the same size and shape as the other
+      applications, both while it runs and when it is kept in the Dock; there is no
+      second icon.
+- [ ] The disk image made with `--dmg` opens with the program and a link to
+      Applications; the program dragged from it starts.
+- [ ] A bundle downloaded from the internet opens after "Open Anyway" in System
+      Settings → Privacy & Security.
 
 Linux
 

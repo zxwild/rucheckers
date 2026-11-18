@@ -228,3 +228,112 @@ jobs:
           path: screenshot-${{ matrix.id }}-*.png
           if-no-files-found: ignore
           retention-days: 14
+
+  # The application bundle of tools/build-macos-app.sh: built for both processors, packed
+  # into a disk image and installed, then checked the way the system reads it and started
+  # the way Finder starts it. The disk image is kept for the next job and to try it out.
+  macos-app:
+    name: macOS · application bundle
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install into a folder of the job
+        run: echo "APPLICATIONS=$RUNNER_TEMP/Applications" >>"$GITHUB_ENV"
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Build, pack and install the bundle
+        run: tools/build-macos-app.sh --universal --dmg --install
+      - name: Check the bundle
+        run: |
+          app="$APPLICATIONS/Russian Draughts.app"
+          exe="$app/Contents/MacOS/Russian Draughts"
+          plutil -lint "$app/Contents/Info.plist" "$app"/Contents/Resources/*.lproj/InfoPlist.strings
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")" = "$version"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --display --verbose=2 "$app" 2>&1 | grep -E '^(Identifier|Format|Signature)='
+          archs=$(lipo -archs "$exe")
+          echo "architectures: $archs"
+          case " $archs " in *" arm64 "*) ;; *) exit 1 ;; esac
+          case " $archs " in *" x86_64 "*) ;; *) exit 1 ;; esac
+          # The oldest macOS each processor's build asks for.
+          minos=$(otool -arch all -l "$exe" | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { print $2; found = 0 }' | sort -u)
+          echo "minimum macOS: $minos"
+          test "$minos" = 11.0
+          iconutil -c iconset -o "$RUNNER_TEMP/check.iconset" "$app/Contents/Resources/rucheckers.icns"
+          test "$(find "$RUNNER_TEMP/check.iconset" -name "*.png" | wc -l)" -eq 10
+          hdiutil verify target/macos/*.dmg
+      # Finder shows the name of the program in the language of the user's account.
+      - name: Check the name in every language
+        run: |
+          app="$APPLICATIONS/Russian Draughts.app"
+          cat >"$RUNNER_TEMP/name.swift" <<'EOF'
+          import Foundation
+          print(FileManager.default.displayName(atPath: CommandLine.arguments[1]))
+          EOF
+          xcrun swiftc -o "$RUNNER_TEMP/name" "$RUNNER_TEMP/name.swift"
+          status=0
+          for lproj in assets/macos/*.lproj; do
+            lang=$(basename "$lproj" .lproj)
+            want=$(plutil -extract CFBundleDisplayName raw -o - "$lproj/InfoPlist.strings")
+            got=$("$RUNNER_TEMP/name" "$app" -AppleLanguages "($lang)")
+            echo "$lang: $got"
+            if [ "$got" != "$want" ]; then
+              echo "::error::$lang: Finder shows \"$got\" instead of \"$want\""
+              status=1
+            fi
+          done
+          exit "$status"
+      - name: Start the program
+        run: tools/smoke-test-macos.sh "$APPLICATIONS/Russian Draughts.app" screenshot-macos-arm64.png
+      - name: Uninstall the bundle
+        run: |
+          tools/build-macos-app.sh --uninstall
+          test ! -e "$APPLICATIONS/Russian Draughts.app"
+      - name: Keep the disk image
+        uses: actions/upload-artifact@v5
+        with:
+          name: macos-dmg
+          path: target/macos/*.dmg
+          retention-days: 14
+      - name: Keep the screenshot
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: screenshots-macos-arm64
+          path: screenshot-macos-arm64.png
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The disk image of the previous job on an Intel Mac, which runs the other half of the
+  # universal executable: the bundle is taken out of the image and started.
+  macos-app-intel:
+    name: macOS (Intel) · application bundle from the disk image
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: macos-app
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: macos-dmg
+          path: dmg
+      - name: Take the bundle out of the disk image
+        run: |
+          test "$(uname -m)" = x86_64
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" dmg/*.dmg
+          ls -l "$RUNNER_TEMP/dmg"
+          ditto "$RUNNER_TEMP/dmg/Russian Draughts.app" "$RUNNER_TEMP/Russian Draughts.app"
+          hdiutil detach "$RUNNER_TEMP/dmg"
+          codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/Russian Draughts.app"
+      - name: Start the program
+        run: tools/smoke-test-macos.sh "$RUNNER_TEMP/Russian Draughts.app" screenshot-macos-intel.png
+      - name: Keep the screenshot
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: screenshots-macos-intel
+          path: screenshot-macos-intel.png
+          if-no-files-found: ignore
+          retention-days: 14
