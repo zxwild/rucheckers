@@ -87,8 +87,9 @@ fn every_text_is_translated_into_every_language() {
 
 #[test]
 fn translations_are_written_in_the_script_of_their_language() {
-    // Texts that may consist of an international word only.
-    let international = [Text::Ok];
+    // Texts that may consist of an international word only: key names are printed on
+    // the keys in Latin letters.
+    let international = [Text::Ok, Text::KeyHome, Text::KeyEnd, Text::KeyEsc, Text::KeyCtrl];
     for lang in Lang::ALL {
         for &key in Text::ALL {
             let text = tr(lang, key);
@@ -437,13 +438,34 @@ fn level_labels_name_the_level() {
 }
 
 #[test]
-fn key_help_lists_the_same_shortcuts_in_every_language() {
+fn key_table_texts_are_short_lines_and_tooltips_name_their_keys() {
     for lang in Lang::ALL {
-        // One paragraph that the dialog wraps to its own width.
-        let help = tr(lang, Text::KeysHelp);
-        assert!(!help.contains('\n'), "{lang:?}");
-        for shortcut in ["F9", "End", "+N", "+O", "+S", "Cmd", "macOS"] {
-            assert!(help.contains(shortcut), "{lang:?}: {shortcut} is missing");
+        // Each row of the table of keys is one short line beside a key.
+        for key in [
+            Text::KeySpace,
+            Text::KeyHome,
+            Text::KeyEnd,
+            Text::KeyEsc,
+            Text::KeyCtrl,
+            Text::KeyStepMoves,
+            Text::KeyVariations,
+            Text::KeyStartEnd,
+            Text::KeyContinue,
+            Text::KeyCancel,
+            Text::KeyPanel,
+        ] {
+            let text = tr(lang, key);
+            assert!(!text.contains('\n') && !text.contains(';'), "{lang:?} / {key:?}");
+        }
+        // Key names fit on a key cap.
+        for key in [
+            Text::KeySpace,
+            Text::KeyHome,
+            Text::KeyEnd,
+            Text::KeyEsc,
+            Text::KeyCtrl,
+        ] {
+            assert!(tr(lang, key).chars().count() <= 10, "{lang:?} / {key:?}");
         }
         // Tooltips name the key that does the same as the button.
         for key in [
@@ -457,6 +479,17 @@ fn key_help_lists_the_same_shortcuts_in_every_language() {
             assert!(
                 text.contains('(') || text.contains('（'),
                 "{lang:?} / {key:?}: {text:?} names no key"
+            );
+        }
+        // The tooltips name the keys as the table does.
+        for (tooltip, key) in [
+            (Text::ContinueHere, Text::KeySpace),
+            (Text::ToStart, Text::KeyHome),
+            (Text::ToEnd, Text::KeyEnd),
+        ] {
+            assert!(
+                tr(lang, tooltip).contains(tr(lang, key)),
+                "{lang:?} / {tooltip:?}"
             );
         }
     }

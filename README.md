@@ -41,8 +41,8 @@ The same move from its first jump to the last one:
       move they replace, and stepping into one shows its position on the board.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/en/settings.png" alt="The settings dialog: language, sound, move panel and special effects">
-      <p><b>Settings.</b> The language, the sound, the move panel and every special
+      <img src="docs/screenshots/en/settings.png" alt="The settings tab of the side panel: computer, new game, interface, special effects">
+      <p><b>Settings.</b> The second tab of the side panel: the level, the game, the language, the board, the sound and every special
       effect are switched here; the choice is remembered between runs.</p>
     </td>
   </tr>
@@ -277,12 +277,28 @@ lints of its own.
 - Left and Right arrows: step through the moves; Up and Down: neighbouring variations;
   `Home` and `End`: the start and the end of the game.
 - `Space`: "Continue from here" — the computer makes a move from the position shown.
-- `F9`: hide or show the move panel.
+- `F9`: hide or show the side panel.
 - `Ctrl+N`, `Ctrl+O`, `Ctrl+S` (`Cmd` on macOS): new game, open, save.
 
 While the history is being browsed the computer does not move. The game resumes with a
 move by the human (if it differs from the recorded one, a variation is created) or with
 "Continue from here".
+
+### Side panel
+
+The panel on the right has two tabs. "Game" holds the buttons for a new game, opening and
+saving, then what is being played (the game, the player's colour, the level; in Ugolki
+also how many pieces of each side have reached the opposite home, and the rules), whose
+move it is, the list of moves and the navigation buttons. "Settings" holds every setting
+in groups: the computer (the level, which applies to the game being played, and the
+Ugolki style), the new game (the game and the home), the interface (the language, the
+board, the sound), the special effects and a table of keys. Each tab scrolls when its
+contents do not fit; the navigation buttons stay at the bottom of the game tab, and the
+list of moves takes the room that is left.
+
+The button at the right end of the tab bar hides the panel; its icon is a window with a
+filled column on the right. With the panel hidden, the same icon with an empty column in
+the top right corner of the window shows it again. `F9` does both.
 
 ### Board
 
@@ -368,8 +384,8 @@ Ugolki), `sound`, `panel`, `effects` (the main switch of the special effects),
 `effect_lightning`, `effect_sparks` and `effect_flashes` with the values `on` and `off`. Missing and damaged
 lines are replaced with default values.
 
-The file is written after every change — a new game, the level list, any switch in the
-settings dialog — so nothing depends on how the program is closed. Writing is atomic
+The file is written after every change — a new game, any setting, hiding or showing the
+panel — so nothing depends on how the program is closed. Writing is atomic
 (a temporary file replaces the old one in one step). If the file cannot be written, the
 program says so once and goes on working.
 
@@ -377,9 +393,9 @@ Select the game in the settings or in the new-game dialog. The settings choice
 applies to the next game; the active game and its history stay available. Both modes
 remember the same level, colour, language and switches. Ugolki also offers a left or
 right home, relative to the player; this choice is saved in settings and game files.
-The panel shows the number of arrived pieces and a short rules explanation. Under
-"Ugolki: computer's playing style" the settings have the switch "Block the way out of
-your home" (on by default): with it, the computer surrounds the player's pieces still
+The game tab shows the number of arrived pieces and a short rules explanation. In the
+"Computer" group the settings have the Ugolki switch "Block the way out of your home"
+(on by default): with it, the computer surrounds the player's pieces still
 at home so that they miss the move-40 deadline. Switched off, the computer still minds
 its own deadline; the switch applies from the computer's next move.
 
@@ -524,7 +540,10 @@ Scaling
 - [ ] The window resizes freely; the board stays square and centred.
 - [ ] Cell borders and pieces are sharp at any window size.
 - [ ] On a high-density screen (Retina; 150–200 % scale on Linux) the picture is crisp.
-- [ ] With the panel hidden (`F9`) the board takes the whole window.
+- [ ] With the panel hidden (`F9` or the button at the right of the tab bar) the board takes
+      the whole window, and a button in the top right corner of the window brings the panel back.
+- [ ] The "Settings" tab scrolls with the mouse wheel when it does not fit the window; in the
+      "Game" tab the navigation buttons are always visible at the bottom.
 
 Play
 
@@ -554,7 +573,7 @@ Animation and sound
       by one.
 - [ ] The sounds of a move, a capture, a discharge, a promotion and the end of a game
       are distinct and not harsh.
-- [ ] The sound button switches the sound off and on; the program works without a sound
+- [ ] The "Sound" switch in the settings turns the sound off and on; the program works without a sound
       device.
 
 Files and settings

@@ -13,9 +13,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HomeLeft => "Слева",
         Text::HomeRight => "Справа",
         Text::GameRules => "Правила",
-        Text::GameMode => "Игра",
+        // The name of a game and the tab of the game being played.
+        Text::GameMode | Text::GameTab => "Игра",
         Text::Ugolki => "Уголки",
-        Text::GameAppliesNew => "Выбор игры применяется при начале новой партии.",
         Text::UgolkiHint => "Переведите 12 шашек в противоположный дом. Шаг или цепочка прыжков — только по горизонтали и вертикали, без взятий. Выберите конечную клетку. Свой дом нужно освободить за 40 ходов; предел — 80 ходов. Чёрные имеют право на последний ответный ход. Запирать шашки соперника нельзя.",
         Text::UgolkiHomeFilled => "Все шашки переведены в дом соперника",
         Text::UgolkiHomeDeadline => "Свой дом не освобождён за 40 ходов",
@@ -44,9 +44,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::LevelMaximum => "максимум",
         Text::Language => "Язык",
         Text::Sound => "Звук",
-        Text::SoundOn => "Звук включён",
-        Text::SoundOff => "Звук выключен",
-        Text::MovesPanel => "Панель ходов",
         Text::Effects => "Спецэффекты",
         Text::EffectsEnabled => "Показывать спецэффекты",
         Text::EffectLightning => "Молния за шашкой при взятии нескольких шашек",
@@ -59,7 +56,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::BoardOak => "Дуб и морёный дуб",
         Text::BoardAshCherry => "Ясень и вишня, паркет",
         Text::BoardAmberBirch => "Берёза под янтарным лаком",
-        Text::PlayStyle => "Уголки: стиль игры компьютера",
         Text::BlockHomeExit => "Перекрывать выход из вашего дома",
         Text::BlockHomeExitHint => "Компьютер окружает ваши шашки, оставшиеся в доме, чтобы они не успели выйти к 40-му ходу. Правила это допускают, пока у шашек есть ходы внутри дома.",
         Text::ShowPanel => "Показать панель",
@@ -121,14 +117,18 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HumanName => "Игрок",
         Text::ComputerName => "Компьютер",
         Text::Keys => "Клавиши",
-        Text::KeysHelp => {
-            "Стрелки влево и вправо — по ходам; \
-             вверх и вниз — варианты; \
-             Home и End — начало и конец партии; \
-             Пробел — продолжить отсюда; \
-             Esc или правая кнопка мыши — отменить выбор; \
-             F9 — панель ходов; \
-             Ctrl+N, Ctrl+O, Ctrl+S (на macOS — Cmd) — новая партия, открыть, сохранить"
-        }
+        Text::InterfaceSection => "Интерфейс",
+        Text::UgolkiArrived => "В доме соперника",
+        Text::KeySpace => "Пробел",
+        Text::KeyHome => "Home",
+        Text::KeyEnd => "End",
+        Text::KeyEsc => "Esc",
+        Text::KeyCtrl => "Ctrl",
+        Text::KeyStepMoves => "Ход назад и вперёд",
+        Text::KeyVariations => "Предыдущий и следующий вариант",
+        Text::KeyStartEnd => "Начало и конец партии",
+        Text::KeyContinue => "Продолжить отсюда",
+        Text::KeyCancel => "Отменить выбор (также правой кнопкой мыши)",
+        Text::KeyPanel => "Скрыть или показать панель",
     }
 }

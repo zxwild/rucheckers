@@ -15,7 +15,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::GameRules => "Regras",
         Text::GameMode => "Jogo",
         Text::Ugolki => "Cantos (Ugolki)",
-        Text::GameAppliesNew => "A escolha aplica-se ao iniciar uma nova partida.",
         Text::UgolkiHint => "Leve as 12 peças à casa oposta. Passos ou sequências de saltos apenas na horizontal e vertical, sem capturas. Escolha a casa final. Esvazie a sua casa em 40 jogadas; limite: 80. As pretas têm a última resposta. É proibido bloquear peças adversárias.",
         Text::UgolkiHomeFilled => "Todas as peças chegaram à casa oposta",
         Text::UgolkiHomeDeadline => "A casa inicial não foi esvaziada em 40 jogadas",
@@ -44,9 +43,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::LevelMaximum => "máximo",
         Text::Language => "Idioma",
         Text::Sound => "Som",
-        Text::SoundOn => "Som ligado",
-        Text::SoundOff => "Som desligado",
-        Text::MovesPanel => "Painel de lances",
         Text::Effects => "Efeitos especiais",
         Text::EffectsEnabled => "Mostrar efeitos especiais",
         Text::EffectLightning => "Raio atrás da peça nas capturas múltiplas",
@@ -59,7 +55,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::BoardOak => "Carvalho e carvalho defumado",
         Text::BoardAshCherry => "Freixo e cerejeira, parquê",
         Text::BoardAmberBirch => "Bétula com verniz âmbar",
-        Text::PlayStyle => "Cantos (Ugolki): estilo de jogo do computador",
         Text::BlockHomeExit => "Bloquear a saída da sua casa",
         Text::BlockHomeExitHint => "O computador cerca as suas peças que ainda estão em casa para que não consigam sair até a 40ª jogada. As regras permitem isso enquanto as peças ainda puderem se mover dentro da casa.",
         Text::ShowPanel => "Mostrar painel",
@@ -125,14 +120,19 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HumanName => "Jogador",
         Text::ComputerName => "Computador",
         Text::Keys => "Teclas",
-        Text::KeysHelp => {
-            "Setas esquerda e direita — percorrer os lances; \
-             para cima e para baixo — variantes; \
-             Home e End — início e fim da partida; \
-             Espaço — continuar daqui; \
-             Esc ou botão direito do mouse — cancelar a seleção; \
-             F9 — painel de lances; \
-             Ctrl+N, Ctrl+O, Ctrl+S (Cmd no macOS) — nova partida, abrir, salvar"
-        }
+        Text::GameTab => "Partida",
+        Text::InterfaceSection => "Interface",
+        Text::UgolkiArrived => "Na casa oposta",
+        Text::KeySpace => "Espaço",
+        Text::KeyHome => "Home",
+        Text::KeyEnd => "End",
+        Text::KeyEsc => "Esc",
+        Text::KeyCtrl => "Ctrl",
+        Text::KeyStepMoves => "Lance anterior e seguinte",
+        Text::KeyVariations => "Variante anterior e seguinte",
+        Text::KeyStartEnd => "Início e fim da partida",
+        Text::KeyContinue => "Continuar daqui",
+        Text::KeyCancel => "Cancelar a seleção (também com o botão direito do mouse)",
+        Text::KeyPanel => "Ocultar ou mostrar o painel",
     }
 }

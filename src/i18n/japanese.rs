@@ -15,7 +15,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::GameRules => "ルール",
         Text::GameMode => "ゲーム",
         Text::Ugolki => "ウゴルキ",
-        Text::GameAppliesNew => "この選択は新しい対局の開始時に適用されます。",
         Text::UgolkiHint => "12個の駒を反対側の陣地へ移動させます。縦横の一歩、または連続ジャンプで進み、駒は取りません。最後の移動先を選んでください。40手で自陣を空け、上限は80手です。黒には最後の応手があります。相手の駒を閉じ込めてはいけません。",
         Text::UgolkiHomeFilled => "すべての駒が相手の陣地に到着しました",
         Text::UgolkiHomeDeadline => "40手以内に自陣を空けられませんでした",
@@ -44,9 +43,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::LevelMaximum => "最強",
         Text::Language => "言語",
         Text::Sound => "サウンド",
-        Text::SoundOn => "サウンド：オン",
-        Text::SoundOff => "サウンド：オフ",
-        Text::MovesPanel => "棋譜パネル",
         Text::Effects => "特殊効果",
         Text::EffectsEnabled => "特殊効果を表示する",
         Text::EffectLightning => "連続で取るときに駒の後ろを走る稲妻",
@@ -59,7 +55,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::BoardOak => "オークとスモークオーク",
         Text::BoardAshCherry => "アッシュとチェリーの寄木",
         Text::BoardAmberBirch => "琥珀色ニス仕上げのバーチ",
-        Text::PlayStyle => "ウゴルキ：コンピューターのプレースタイル",
         Text::BlockHomeExit => "あなたの陣地の出口をふさぐ",
         Text::BlockHomeExitHint => "コンピューターは陣地に残ったあなたの駒を囲み、40手目までに出られないようにします。駒が陣地の中でまだ動ける限り、ルール上は認められています。",
         Text::ShowPanel => "パネルを表示",
@@ -122,14 +117,19 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HumanName => "プレイヤー",
         Text::ComputerName => "コンピューター",
         Text::Keys => "キー操作",
-        Text::KeysHelp => {
-            "左右の矢印 — 手を進める・戻す。\
-             上下の矢印 — 変化の切り替え。\
-             Home と End — 対局の最初と最後。\
-             スペース — ここから続ける。\
-             Esc またはマウスの右ボタン — 選択を取り消す。\
-             F9 — 棋譜パネル。\
-             Ctrl+N、Ctrl+O、Ctrl+S（macOS では Cmd）— 新しい対局、開く、保存"
-        }
+        Text::GameTab => "対局",
+        Text::InterfaceSection => "インターフェース",
+        Text::UgolkiArrived => "相手の陣地に到着",
+        Text::KeySpace => "スペース",
+        Text::KeyHome => "Home",
+        Text::KeyEnd => "End",
+        Text::KeyEsc => "Esc",
+        Text::KeyCtrl => "Ctrl",
+        Text::KeyStepMoves => "一手戻る・進む",
+        Text::KeyVariations => "前後の変化に切り替える",
+        Text::KeyStartEnd => "対局の最初と最後",
+        Text::KeyContinue => "ここから続ける",
+        Text::KeyCancel => "選択を取り消す（マウスの右ボタンでも可）",
+        Text::KeyPanel => "パネルを隠す・表示する",
     }
 }

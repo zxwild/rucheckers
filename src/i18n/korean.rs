@@ -15,7 +15,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::GameRules => "규칙",
         Text::GameMode => "게임",
         Text::Ugolki => "우골키",
-        Text::GameAppliesNew => "새 게임을 시작할 때 적용됩니다.",
         Text::UgolkiHint => "말 12개를 모두 반대편 진영으로 옮기세요. 가로나 세로로 한 칸 이동하거나 연속해서 뛰어넘으며 말을 잡지 않습니다. 마지막 도착 칸을 선택하세요. 40수 안에 자기 진영을 비워야 하며 최대 80수입니다. 흑은 마지막 응수 기회를 갖습니다. 상대 말을 가두면 안 됩니다.",
         Text::UgolkiHomeFilled => "모든 말이 상대 진영에 도착했습니다",
         Text::UgolkiHomeDeadline => "40수 안에 자기 진영을 비우지 못했습니다",
@@ -44,9 +43,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::LevelMaximum => "최강",
         Text::Language => "언어",
         Text::Sound => "소리",
-        Text::SoundOn => "소리 켜짐",
-        Text::SoundOff => "소리 꺼짐",
-        Text::MovesPanel => "기보 패널",
         Text::Effects => "특수 효과",
         Text::EffectsEnabled => "특수 효과 표시",
         Text::EffectLightning => "여러 말을 잡을 때 말 뒤를 따르는 번개",
@@ -59,7 +55,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::BoardOak => "오크와 스모크 오크",
         Text::BoardAshCherry => "애쉬와 체리 쪽매붙임",
         Text::BoardAmberBirch => "호박색 니스를 바른 자작나무",
-        Text::PlayStyle => "우골키: 컴퓨터의 플레이 스타일",
         Text::BlockHomeExit => "내 진영의 출구 막기",
         Text::BlockHomeExitHint => "컴퓨터가 진영에 남아 있는 내 말을 둘러싸 40수까지 나가지 못하게 합니다. 말이 진영 안에서 아직 움직일 수 있는 동안에는 규칙상 허용됩니다.",
         Text::ShowPanel => "패널 표시",
@@ -121,14 +116,19 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HumanName => "플레이어",
         Text::ComputerName => "컴퓨터",
         Text::Keys => "키",
-        Text::KeysHelp => {
-            "왼쪽·오른쪽 화살표 — 수 넘기기; \
-             위·아래 화살표 — 변화 전환; \
-             Home과 End — 대국의 처음과 끝; \
-             스페이스 — 여기서 계속하기; \
-             Esc 또는 마우스 오른쪽 버튼 — 선택 취소; \
-             F9 — 기보 패널; \
-             Ctrl+N, Ctrl+O, Ctrl+S (macOS에서는 Cmd) — 새 대국, 열기, 저장"
-        }
+        Text::GameTab => "대국",
+        Text::InterfaceSection => "인터페이스",
+        Text::UgolkiArrived => "상대 진영에 도착",
+        Text::KeySpace => "스페이스",
+        Text::KeyHome => "Home",
+        Text::KeyEnd => "End",
+        Text::KeyEsc => "Esc",
+        Text::KeyCtrl => "Ctrl",
+        Text::KeyStepMoves => "이전 수와 다음 수",
+        Text::KeyVariations => "이전 변화와 다음 변화",
+        Text::KeyStartEnd => "대국의 처음과 끝",
+        Text::KeyContinue => "여기서 계속하기",
+        Text::KeyCancel => "선택 취소 (마우스 오른쪽 버튼으로도 가능)",
+        Text::KeyPanel => "패널 숨기기·표시",
     }
 }

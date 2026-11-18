@@ -13,9 +13,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HomeLeft => "Left",
         Text::HomeRight => "Right",
         Text::GameRules => "Rules",
-        Text::GameMode => "Game",
+        // The name of a game and the tab of the game being played.
+        Text::GameMode | Text::GameTab => "Game",
         Text::Ugolki => "Ugolki",
-        Text::GameAppliesNew => "The game choice applies when starting a new game.",
         Text::UgolkiHint => "Move all 12 pieces to the opposite home. Step or jump chains horizontally or vertically, without captures. Choose the final cell. Clear your home by move 40; the limit is 80 moves. Black gets the final reply. Locking enemy pieces is forbidden.",
         Text::UgolkiHomeFilled => "All pieces have reached the opposite home",
         Text::UgolkiHomeDeadline => "The home was not cleared within 40 moves",
@@ -44,9 +44,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::LevelMaximum => "maximum",
         Text::Language => "Language",
         Text::Sound => "Sound",
-        Text::SoundOn => "Sound on",
-        Text::SoundOff => "Sound off",
-        Text::MovesPanel => "Move panel",
         Text::Effects => "Special effects",
         Text::EffectsEnabled => "Show special effects",
         Text::EffectLightning => "Lightning behind the piece in multi-captures",
@@ -59,7 +56,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::BoardOak => "Oak and smoked oak",
         Text::BoardAshCherry => "Ash and cherry parquet",
         Text::BoardAmberBirch => "Birch under amber lacquer",
-        Text::PlayStyle => "Ugolki: computer's playing style",
         Text::BlockHomeExit => "Block the way out of your home",
         Text::BlockHomeExitHint => "The computer surrounds your pieces still at home so that they cannot get out by move 40. The rules allow this while the pieces can still move inside the home.",
         Text::ShowPanel => "Show panel",
@@ -121,14 +117,18 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HumanName => "Player",
         Text::ComputerName => "Computer",
         Text::Keys => "Keys",
-        Text::KeysHelp => {
-            "Left and Right arrows — step through moves; \
-             Up and Down — variations; \
-             Home and End — start and end of the game; \
-             Space — continue from here; \
-             Esc or right mouse button — cancel selection; \
-             F9 — move panel; \
-             Ctrl+N, Ctrl+O, Ctrl+S (Cmd on macOS) — new game, open, save"
-        }
+        Text::InterfaceSection => "Interface",
+        Text::UgolkiArrived => "In the opposite home",
+        Text::KeySpace => "Space",
+        Text::KeyHome => "Home",
+        Text::KeyEnd => "End",
+        Text::KeyEsc => "Esc",
+        Text::KeyCtrl => "Ctrl",
+        Text::KeyStepMoves => "Previous and next move",
+        Text::KeyVariations => "Previous and next variation",
+        Text::KeyStartEnd => "Start and end of the game",
+        Text::KeyContinue => "Continue from here",
+        Text::KeyCancel => "Cancel the selection (the right mouse button too)",
+        Text::KeyPanel => "Hide or show the panel",
     }
 }

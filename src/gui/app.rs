@@ -1,5 +1,7 @@
-//! The main window: the board, the move panel and the dialogs. It ties the game session
+//! The main window: the board, the side panel and the dialogs. It ties the game session
 //! to drawing, animation and sound.
+
+mod panel;
 
 use super::audio::Audio;
 use super::board;
@@ -7,17 +9,18 @@ use super::files::{with_extension, FileAction, FileJob, FileJobState};
 use super::fonts;
 use super::theme;
 use eframe::egui::{
-    self, pos2, Align, Align2, Color32, Context, CornerRadius, Id, Key, Layout, Margin, Order, Painter, Pos2,
-    RichText, Stroke, Ui,
+    self, pos2, Align2, Color32, Context, CornerRadius, Id, Key, Margin, Order, Painter, Pos2, RichText,
+    Stroke, Ui,
 };
+use panel::PanelTab;
 use rucheckers::games::anim::{segment_seconds, MoveAnimation, CAPTURED_ALPHA};
 use rucheckers::games::difficulty::{MAX_LEVEL, MIN_LEVEL};
 use rucheckers::games::input::InputEvent;
 use rucheckers::games::record as pdn;
 use rucheckers::games::session::{Nav, Session, SessionEvent};
-use rucheckers::games::tree::{GameTree, NodeId};
-use rucheckers::games::ugolki::{self, HomeSide};
-use rucheckers::games::{format_move, outcome_reason, outcome_title};
+use rucheckers::games::tree::NodeId;
+use rucheckers::games::ugolki::HomeSide;
+use rucheckers::games::{outcome_reason, outcome_title};
 use rucheckers::games::{squares_of, Color, GameKind, Kind, Move, Piece, Position, Square};
 use rucheckers::i18n::{level_label, pdn_error_text, tr, Lang, Text};
 use rucheckers::rng::entropy_seed;
@@ -31,12 +34,6 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// The greatest and the smallest width of the move panel.
-const PANEL_WIDTH: f32 = 352.0;
-const PANEL_MIN_WIDTH: f32 = 250.0;
-/// The greatest height of a drop-down list: all ten levels and all twelve languages
-/// are visible without scrolling.
-const LIST_HEIGHT: f32 = 440.0;
 /// Pause between the last move of a game and the sound of its end, s.
 const END_SOUND_DELAY: f64 = 0.45;
 /// Distance the pointer travels with the button held before the piece follows it, points.
@@ -132,8 +129,8 @@ enum Action {
     Save,
     ToggleSound,
     TogglePanel,
-    OpenSettings,
-    CloseSettings,
+    /// Shows a tab of the side panel.
+    ShowTab(PanelTab),
     SetLang(Lang),
     /// The look of the board.
     SetBoard(BoardStyle),
@@ -153,10 +150,6 @@ enum Action {
 }
 
 /// The application.
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "the flags are independent facts about the window, not states of one machine"
-)]
 pub struct CheckersApp {
     settings: Settings,
     settings_path: Option<PathBuf>,
@@ -178,7 +171,8 @@ pub struct CheckersApp {
     /// Delayed sounds: the time and the signal.
     sounds: Vec<(f64, Sound)>,
     new_game: Option<NewGameDraft>,
-    settings_open: bool,
+    /// The tab shown in the side panel.
+    tab: PanelTab,
     message: Option<String>,
     /// The player has been told that the settings cannot be saved; the message is not
     /// repeated until saving works again.
@@ -229,7 +223,7 @@ impl CheckersApp {
                 human: settings.human,
                 level: settings.level,
             }),
-            settings_open: false,
+            tab: PanelTab::Game,
             message: None,
             save_failure_reported: false,
             file_job: None,
@@ -282,7 +276,7 @@ impl CheckersApp {
 
     /// Whether a dialog covers the board, the system file dialog included.
     const fn modal_open(&self) -> bool {
-        self.new_game.is_some() || self.settings_open || self.message.is_some() || self.file_job.is_some()
+        self.new_game.is_some() || self.message.is_some() || self.file_job.is_some()
     }
 
     fn reset_view(&mut self) {
@@ -481,8 +475,11 @@ impl CheckersApp {
                     self.file_job = Some(FileJob::start(FileAction::Save(text), lang, &name));
                 }
             }
-            Action::OpenSettings => self.settings_open = true,
-            Action::CloseSettings => self.settings_open = false,
+            Action::ShowTab(tab) => {
+                self.tab = tab;
+                // Back in the game tab, the list shows the current move.
+                self.scroll_to_current = true;
+            }
             Action::ToggleSound
             | Action::TogglePanel
             | Action::ToggleEffects
@@ -1263,314 +1260,16 @@ impl CheckersApp {
     }
 
     // -----------------------------------------------------------------------
-    // The move panel
-    // -----------------------------------------------------------------------
-
-    fn side_panel(&mut self, ctx: &Context, actions: &mut Vec<Action>) {
-        // In a narrow window the panel shrinks to leave room for the board.
-        let screen = ctx.screen_rect();
-        let width = (screen.width() - screen.height())
-            .clamp(PANEL_MIN_WIDTH, PANEL_WIDTH)
-            .min(screen.width() * 0.5);
-        let frame = egui::Frame::new()
-            .fill(theme::PANEL)
-            .inner_margin(Margin::same(10));
-        let mut scrolled = false;
-        egui::SidePanel::right("moves_panel")
-            .resizable(false)
-            .exact_width(width)
-            .frame(frame)
-            .show(ctx, |ui| {
-                self.panel_header(ui, actions);
-                ui.separator();
-                self.panel_status(ui, actions);
-                ui.separator();
-                let nav_height = 44.0;
-                let list_height = (ui.available_height() - nav_height).max(60.0);
-                egui::Frame::new()
-                    .fill(theme::PAPER)
-                    .stroke(Stroke::new(1.0_f32, theme::BORDER))
-                    .corner_radius(CornerRadius::same(6))
-                    .inner_margin(Margin::same(6))
-                    .show(ui, |ui| {
-                        ui.set_height(list_height - 14.0);
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                scrolled = self.move_list(ui, actions);
-                            });
-                    });
-                ui.add_space(2.0);
-                self.panel_navigation(ui, actions);
-            });
-        if scrolled {
-            self.scroll_to_current = false;
-        }
-    }
-
-    fn panel_header(&self, ui: &mut Ui, actions: &mut Vec<Action>) {
-        let lang = self.lang();
-        ui.horizontal_wrapped(|ui| {
-            if ui.button(tr(lang, Text::NewGame)).clicked() {
-                actions.push(Action::AskNewGame);
-            }
-            if ui.button(tr(lang, Text::Open)).clicked() {
-                actions.push(Action::Open);
-            }
-            if ui.button(tr(lang, Text::Save)).clicked() {
-                actions.push(Action::Save);
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .button("⏵")
-                    .on_hover_text(format!("{} (F9)", tr(lang, Text::HidePanel)))
-                    .clicked()
-                {
-                    actions.push(Action::TogglePanel);
-                }
-                if ui.button("⚙").on_hover_text(tr(lang, Text::Settings)).clicked() {
-                    actions.push(Action::OpenSettings);
-                }
-                let (icon, hint) = if self.settings.sound {
-                    ("🔊", Text::SoundOn)
-                } else {
-                    ("🔇", Text::SoundOff)
-                };
-                if ui.button(icon).on_hover_text(tr(lang, hint)).clicked() {
-                    actions.push(Action::ToggleSound);
-                }
-                // The caption takes the remaining room on the left and is cut off when it
-                // does not fit.
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    let who = if self.session.human() == Color::White {
-                        Text::YouPlayWhite
-                    } else {
-                        Text::YouPlayBlack
-                    };
-                    ui.add(egui::Label::new(RichText::new(tr(lang, who)).color(theme::TEXT_WEAK)).truncate());
-                });
-            });
-        });
-        ui.horizontal(|ui| {
-            ui.label(tr(lang, Text::Level));
-            let mut level = self.session.level();
-            egui::ComboBox::from_id_salt("level_combo")
-                .selected_text(level_label(lang, level))
-                .width(ui.available_width() - 8.0)
-                .height(LIST_HEIGHT)
-                .show_ui(ui, |ui| {
-                    for value in MIN_LEVEL..=MAX_LEVEL {
-                        ui.selectable_value(&mut level, value, level_label(lang, value));
-                    }
-                });
-            if level != self.session.level() {
-                actions.push(Action::SetLevel(level));
-            }
-        });
-    }
-
-    fn panel_status(&self, ui: &mut Ui, actions: &mut Vec<Action>) {
-        let lang = self.lang();
-        let session = &self.session;
-        ui.label(RichText::new(tr(lang, session.game().text_key())).strong());
-        if session.game() == GameKind::Ugolki {
-            let pos = session.tree().current_node().position();
-            let arrived =
-                |color| (pos.pieces(color) & ugolki::home_for(color.opponent(), pos.home_side)).count_ones();
-            ui.label(format!(
-                "{}: {}/12 · {}: {}/12",
-                tr(lang, Text::White),
-                arrived(Color::White),
-                tr(lang, Text::Black),
-                arrived(Color::Black)
-            ));
-            egui::CollapsingHeader::new(tr(lang, Text::GameRules))
-                .id_salt("ugolki_rules")
-                .show(ui, |ui| {
-                    ui.label(tr(lang, Text::UgolkiHint));
-                });
-        }
-        if let Some(outcome) = session.outcome() {
-            ui.label(RichText::new(outcome_title(lang, &outcome, session.human())).strong());
-            ui.label(RichText::new(outcome_reason(lang, &outcome)).color(theme::TEXT_WEAK));
-            return;
-        }
-        ui.horizontal(|ui| {
-            if session.is_thinking() {
-                ui.add(egui::Spinner::new().size(14.0).color(theme::TEXT_WEAK));
-                ui.label(tr(lang, Text::Thinking));
-            } else if !self.started {
-                ui.label(RichText::new(tr(lang, Text::NewGame)).color(theme::TEXT_WEAK));
-            } else if session.human_to_move() {
-                let key = if session.input().must_capture() {
-                    Text::MustCapture
-                } else {
-                    Text::YourMove
-                };
-                ui.label(tr(lang, key));
-            } else if session.is_live() {
-                ui.label(tr(lang, Text::ComputerToMove));
-            } else {
-                ui.label(RichText::new(format!("{}:", tr(lang, Text::Review))).color(theme::TEXT_WEAK));
-                ui.label(tr(lang, Text::ComputerToMove));
-            }
-        });
-        if session.can_continue() && ui.button(tr(lang, Text::ContinueHere)).clicked() {
-            actions.push(Action::Continue);
-        }
-    }
-
-    /// The list of moves of the active branch with variations. Returns `true` if the
-    /// current move was shown and scrolled into view.
-    fn move_list(&self, ui: &mut Ui, actions: &mut Vec<Action>) -> bool {
-        let lang = self.lang();
-        let tree = self.session.tree();
-        let current = tree.current();
-        let line = tree.active_line();
-        if line.len() <= 1 {
-            ui.label(RichText::new(tr(lang, Text::NoMovesYet)).color(theme::TEXT_WEAK));
-            return true;
-        }
-        let first_index: u32 = u32::from(tree.root().position().side == Color::Black);
-        let number_width = 34.0;
-        let cell_width =
-            ((ui.available_width() - number_width - 2.0 * ui.spacing().item_spacing.x) / 2.0).max(60.0);
-        let row_height = 24.0;
-        let mut scrolled = false;
-
-        let cell = |ui: &mut Ui, id: NodeId, actions: &mut Vec<Action>, scrolled: &mut bool| {
-            let Some(mv) = tree.get(id).and_then(|n| n.mv()) else {
-                return;
-            };
-            let selected = id == current;
-            let label = egui::SelectableLabel::new(selected, format_move(mv));
-            let response = ui.add_sized([cell_width, row_height], label);
-            if response.clicked() {
-                actions.push(Action::Navigate(Nav::To(id)));
-            }
-            if selected && self.scroll_to_current {
-                response.scroll_to_me(Some(Align::Center));
-                *scrolled = true;
-            }
-        };
-
-        let mut index = 1;
-        while index < line.len() {
-            let id = line[index];
-            let Some(node) = tree.get(id) else { break };
-            let move_index = node.ply() - 1 + first_index;
-            let number = move_index / 2 + 1;
-            let white_first = move_index % 2 == 0;
-            let mut row: Vec<NodeId> = vec![id];
-            if white_first && index + 1 < line.len() {
-                row.push(line[index + 1]);
-            }
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [number_width, row_height],
-                    egui::Label::new(RichText::new(format!("{number}.")).color(theme::TEXT_WEAK)),
-                );
-                if !white_first {
-                    ui.add_sized(
-                        [cell_width, row_height],
-                        egui::Label::new(RichText::new("…").color(theme::TEXT_WEAK)),
-                    );
-                }
-                for &id in &row {
-                    cell(ui, id, actions, &mut scrolled);
-                }
-            });
-            // The variations of the moves of this row.
-            for &id in &row {
-                let siblings = tree.siblings(id);
-                if siblings.len() < 2 {
-                    continue;
-                }
-                let is_white = tree.get(id).is_some_and(|n| (n.ply() - 1 + first_index) % 2 == 0);
-                // The indent is kept when a long list of variations wraps to a new line.
-                ui.indent(("variations", id), |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        let prefix = if is_white {
-                            format!("{number}.")
-                        } else {
-                            format!("{number}…")
-                        };
-                        let caption = format!("{} {prefix}", tr(lang, Text::Variations));
-                        ui.label(RichText::new(caption).small().color(theme::TEXT_WEAK));
-                        for &sibling in siblings {
-                            let Some(mv) = tree.get(sibling).and_then(|n| n.mv()) else {
-                                continue;
-                            };
-                            let text = RichText::new(format_move(mv)).small();
-                            if ui.selectable_label(sibling == id, text).clicked() && sibling != id {
-                                actions.push(Action::Navigate(Nav::To(sibling)));
-                            }
-                        }
-                    });
-                });
-            }
-            index += row.len();
-        }
-        // The current position is the start of the game: there is nothing to scroll to.
-        scrolled || current == GameTree::ROOT
-    }
-
-    fn panel_navigation(&self, ui: &mut Ui, actions: &mut Vec<Action>) {
-        let lang = self.lang();
-        let tree = self.session.tree();
-        let at_start = tree.current() == GameTree::ROOT;
-        let at_end = tree.current_node().preferred_child().is_none();
-        ui.columns(4, |columns| {
-            let buttons = [
-                ("⏮", Text::ToStart, Nav::Start, !at_start),
-                ("◀", Text::StepBack, Nav::Back, !at_start),
-                ("▶", Text::StepForward, Nav::Forward, !at_end),
-                ("⏭", Text::ToEnd, Nav::End, !at_end),
-            ];
-            for (column, (icon, hint, nav, enabled)) in columns.iter_mut().zip(buttons) {
-                column.vertical_centered_justified(|ui| {
-                    let button = egui::Button::new(RichText::new(icon).size(17.0));
-                    if ui
-                        .add_enabled(enabled, button)
-                        .on_hover_text(tr(lang, hint))
-                        .clicked()
-                    {
-                        actions.push(Action::Navigate(nav));
-                    }
-                });
-            }
-        });
-    }
-
-    /// The button that shows the panel when it is hidden and the board takes the whole window.
-    fn panel_toggle(&self, ctx: &Context, actions: &mut Vec<Action>) {
-        egui::Area::new(Id::new("panel_toggle"))
-            .order(Order::Foreground)
-            .anchor(Align2::RIGHT_TOP, [-6.0, 6.0])
-            .show(ctx, |ui| {
-                let button = egui::Button::new(RichText::new("☰").size(16.0));
-                let hint = format!("{} (F9)", self.text(Text::ShowPanel));
-                if ui.add(button).on_hover_text(hint).clicked() {
-                    actions.push(Action::TogglePanel);
-                }
-            });
-    }
-
-    // -----------------------------------------------------------------------
     // Dialogs
     // -----------------------------------------------------------------------
 
-    /// Shows the dialog that is open, if any. An error message comes first, then the
-    /// new game dialog, then the settings.
+    /// Shows the dialog that is open, if any. An error message comes before the new game
+    /// dialog.
     fn dialogs(&mut self, ctx: &Context, actions: &mut Vec<Action>) {
         if self.message.is_some() {
             self.message_dialog(ctx, actions);
         } else if self.new_game.is_some() {
             self.new_game_dialog(ctx, actions);
-        } else if self.settings_open {
-            self.settings_dialog(ctx, actions);
         }
     }
 
@@ -1613,7 +1312,10 @@ impl CheckersApp {
             });
             if draft.game == GameKind::Ugolki {
                 ui.add_space(8.0);
-                home_side_choice(ui, lang, &mut draft.home_side);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(tr(lang, Text::YourHome));
+                    home_side_radios(ui, lang, &mut draft.home_side);
+                });
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new(tr(lang, Text::UgolkiHint))
@@ -1647,140 +1349,6 @@ impl CheckersApp {
             actions.push(Action::CancelNewGame);
         }
     }
-
-    /// The game chosen for the next game, its home side and, for Ugolki, the computer's
-    /// style.
-    fn game_settings(&self, ui: &mut egui::Ui, lang: Lang, actions: &mut Vec<Action>) {
-        let mut game = self.settings.game;
-        ui.horizontal(|ui| {
-            ui.label(tr(lang, Text::GameMode));
-            egui::ComboBox::from_id_salt("game_mode_settings")
-                .selected_text(tr(lang, game.text_key()))
-                .show_ui(ui, |ui| {
-                    for value in GameKind::ALL {
-                        ui.selectable_value(&mut game, value, tr(lang, value.text_key()));
-                    }
-                });
-        });
-        ui.label(
-            RichText::new(tr(lang, Text::GameAppliesNew))
-                .small()
-                .color(theme::TEXT_WEAK),
-        );
-        if game == GameKind::Ugolki {
-            let mut home_side = self.settings.ugolki_home_side;
-            home_side_choice(ui, lang, &mut home_side);
-            if home_side != self.settings.ugolki_home_side {
-                actions.push(Action::SetHomePreference(home_side));
-            }
-        }
-        if game != self.settings.game {
-            actions.push(Action::SetGamePreference(game));
-        }
-        // The style matters for the game being played or chosen for the next one.
-        if game == GameKind::Ugolki || self.session.game() == GameKind::Ugolki {
-            ui.add_space(8.0);
-            ui.label(RichText::new(tr(lang, Text::PlayStyle)).strong());
-            let mut block = self.settings.computer_style.block_home_exit;
-            if ui.checkbox(&mut block, tr(lang, Text::BlockHomeExit)).changed() {
-                actions.push(Action::ToggleBlockHomeExit);
-            }
-            ui.label(
-                RichText::new(tr(lang, Text::BlockHomeExitHint))
-                    .small()
-                    .color(theme::TEXT_WEAK),
-            );
-        }
-    }
-
-    fn settings_dialog(&self, ctx: &Context, actions: &mut Vec<Action>) {
-        let lang = self.lang();
-        let settings = &self.settings;
-        let modal = modal_window("settings_dialog").show(ctx, |ui| {
-            ui.set_width(430.0);
-            ui.heading(tr(lang, Text::Settings));
-            ui.add_space(8.0);
-            self.game_settings(ui, lang, actions);
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.label(tr(lang, Text::Language));
-                // Every language is listed under its own name, so the list can be
-                // read whatever the current language is.
-                let mut chosen = lang;
-                egui::ComboBox::from_id_salt("language_combo")
-                    .selected_text(lang.native_name())
-                    .height(LIST_HEIGHT)
-                    .show_ui(ui, |ui| {
-                        for value in Lang::ALL {
-                            ui.selectable_value(&mut chosen, value, value.native_name());
-                        }
-                    });
-                if chosen != lang {
-                    actions.push(Action::SetLang(chosen));
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label(tr(lang, Text::Board));
-                let mut chosen = settings.board;
-                egui::ComboBox::from_id_salt("board_style_combo")
-                    .selected_text(tr(lang, chosen.text_key()))
-                    .show_ui(ui, |ui| {
-                        for value in BoardStyle::ALL {
-                            ui.selectable_value(&mut chosen, value, tr(lang, value.text_key()));
-                        }
-                    });
-                if chosen != settings.board {
-                    actions.push(Action::SetBoard(chosen));
-                }
-            });
-            let mut sound = settings.sound;
-            if ui.checkbox(&mut sound, tr(lang, Text::Sound)).changed() {
-                actions.push(Action::ToggleSound);
-            }
-            let mut panel = settings.panel;
-            if ui.checkbox(&mut panel, tr(lang, Text::MovesPanel)).changed() {
-                actions.push(Action::TogglePanel);
-            }
-
-            // Special effects: one switch for all of them and one for each.
-            ui.add_space(8.0);
-            ui.label(RichText::new(tr(lang, Text::Effects)).strong());
-            let mut all = settings.effects_enabled;
-            if ui.checkbox(&mut all, tr(lang, Text::EffectsEnabled)).changed() {
-                actions.push(Action::ToggleEffects);
-            }
-            ui.indent("effects_list", |ui| {
-                ui.add_enabled_ui(settings.effects_enabled, |ui| {
-                    for (kind, text, on) in [
-                        (
-                            EffectKind::Lightning,
-                            Text::EffectLightning,
-                            settings.effects.lightning,
-                        ),
-                        (EffectKind::Sparks, Text::EffectSparks, settings.effects.sparks),
-                        (EffectKind::Flashes, Text::EffectFlashes, settings.effects.flashes),
-                    ] {
-                        let mut value = on;
-                        if ui.checkbox(&mut value, tr(lang, text)).changed() {
-                            actions.push(Action::ToggleEffect(kind));
-                        }
-                    }
-                });
-            });
-            ui.add_space(8.0);
-            ui.label(RichText::new(tr(lang, Text::Keys)).strong());
-            ui.label(
-                RichText::new(tr(lang, Text::KeysHelp))
-                    .small()
-                    .color(theme::TEXT_WEAK),
-            );
-            ui.add_space(10.0);
-            ui.button(tr(lang, Text::Close)).clicked()
-        });
-        if modal.inner || modal.should_close() {
-            actions.push(Action::CloseSettings);
-        }
-    }
 }
 
 /// A dialog over the window that dims the rest of the interface.
@@ -1801,14 +1369,12 @@ fn modal_window(id: &str) -> egui::Modal {
         .backdrop_color(Color32::from_black_alpha(90))
 }
 
-/// The side is relative to the player, independent of their colour.
-fn home_side_choice(ui: &mut Ui, lang: Lang, side: &mut HomeSide) {
-    ui.horizontal_wrapped(|ui| {
-        ui.label(tr(lang, Text::YourHome));
-        for value in HomeSide::ALL {
-            ui.radio_value(side, value, tr(lang, value.text_key()));
-        }
-    });
+/// The choice of the player's home. The side is relative to the player, independent of
+/// their colour.
+fn home_side_radios(ui: &mut Ui, lang: Lang, side: &mut HomeSide) {
+    for value in HomeSide::ALL {
+        ui.radio_value(side, value, tr(lang, value.text_key()));
+    }
 }
 
 /// The sound of a step of a move: a promotion, a capture or a quiet move.
@@ -1888,6 +1454,7 @@ mod tests {
     use eframe::egui::{vec2, Rect};
     use rucheckers::games::session::DEFAULT_MIN_THINK_SECONDS;
     use rucheckers::games::tree::GameTree;
+    use rucheckers::games::ugolki;
     use rucheckers::games::Position;
 
     fn square(name: &str) -> Square {
@@ -2428,105 +1995,6 @@ mod tests {
             vec![primary(away, true), primary(away, false)],
         );
         assert_eq!(app.session.input().origin(), None);
-    }
-
-    /// One frame of the settings dialog: the texts it shows with their places, and the
-    /// actions chosen in it.
-    fn settings_frame(
-        app: &CheckersApp,
-        ctx: &Context,
-        now: f64,
-        events: Vec<egui::Event>,
-    ) -> (Vec<(String, Rect)>, Vec<Action>) {
-        let mut actions = Vec::new();
-        let output = ctx.run(
-            egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1120.0, 900.0))),
-                time: Some(now),
-                events,
-                ..Default::default()
-            },
-            |ctx| app.settings_dialog(ctx, &mut actions),
-        );
-        let texts = output
-            .shapes
-            .iter()
-            .filter_map(|clipped| match &clipped.shape {
-                egui::Shape::Text(text) => Some((
-                    text.galley.text().to_owned(),
-                    clipped.shape.visual_bounding_rect(),
-                )),
-                _ => None,
-            })
-            .collect();
-        (texts, actions)
-    }
-
-    fn click(at: Pos2) -> Vec<egui::Event> {
-        vec![
-            egui::Event::PointerMoved(at),
-            primary(at, true),
-            primary(at, false),
-        ]
-    }
-
-    #[test]
-    fn the_board_is_chosen_in_the_settings_from_six_names_and_kept() {
-        let path = std::env::temp_dir().join(format!("rucheckers-board-{}.conf", std::process::id()));
-        let ctx = Context::default();
-        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
-        let settings = Settings {
-            sound: false,
-            ..Settings::default()
-        };
-        let mut app = CheckersApp::new(&cc, settings, Some(path.clone()), None);
-        assert_eq!(
-            app.settings.board,
-            BoardStyle::Standard,
-            "the earlier board stays the default"
-        );
-        let lang = app.lang();
-        let name = |style: BoardStyle| tr(lang, style.text_key());
-        let find = |texts: &[(String, Rect)], wanted: &str| {
-            texts
-                .iter()
-                .find(|(text, _)| text == wanted)
-                .map(|(_, rect)| *rect)
-        };
-
-        // The first frame of a window only measures it.
-        let _ = settings_frame(&app, &ctx, 0.0, Vec::new());
-        let (texts, _) = settings_frame(&app, &ctx, 0.05, Vec::new());
-        assert!(find(&texts, tr(lang, Text::Board)).is_some());
-        let combo = find(&texts, name(BoardStyle::Standard)).expect("the chosen board is shown");
-        // A click opens the list of all six boards, each under its name.
-        let _ = settings_frame(&app, &ctx, 0.1, click(combo.center()));
-        let (texts, _) = settings_frame(&app, &ctx, 0.2, Vec::new());
-        for style in BoardStyle::ALL {
-            assert!(find(&texts, name(style)).is_some(), "{style:?} is listed");
-        }
-        // The chosen board applies at once, is saved and comes back after a restart.
-        let maple = find(&texts, name(BoardStyle::MapleWalnut)).unwrap();
-        let (_, actions) = settings_frame(&app, &ctx, 0.3, click(maple.center()));
-        let chosen: Vec<BoardStyle> = actions
-            .iter()
-            .filter_map(|action| match action {
-                Action::SetBoard(style) => Some(*style),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(chosen, [BoardStyle::MapleWalnut]);
-        for action in actions {
-            app.apply(action, &ctx, 0.3);
-        }
-        assert_eq!(app.settings.board, BoardStyle::MapleWalnut);
-        let stored = Settings::load(&path, Settings::default());
-        assert_eq!(stored.board, BoardStyle::MapleWalnut);
-        assert_eq!(
-            CheckersApp::new(&cc, stored, None, None).settings.board,
-            BoardStyle::MapleWalnut
-        );
-        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

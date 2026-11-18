@@ -13,9 +13,9 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HomeLeft => "Solda",
         Text::HomeRight => "Sağda",
         Text::GameRules => "Kurallar",
-        Text::GameMode => "Oyun",
+        // The name of a game and the tab of the game being played.
+        Text::GameMode | Text::GameTab => "Oyun",
         Text::Ugolki => "Köşeler (Ugolki)",
-        Text::GameAppliesNew => "Seçim yeni oyun başlatıldığında uygulanır.",
         Text::UgolkiHint => "12 taşın tümünü karşı yuvaya taşıyın. Yalnız yatay ve dikey adım veya sıralı atlayışlar; taş alınmaz. Son kareyi seçin. Yuvanızı 40 hamlede boşaltın; sınır 80 hamledir. Siyahın son yanıt hakkı vardır. Rakip taşları hapsetmek yasaktır.",
         Text::UgolkiHomeFilled => "Tüm taşlar karşı yuvaya ulaştı",
         Text::UgolkiHomeDeadline => "Başlangıç yuvası 40 hamlede boşaltılmadı",
@@ -44,9 +44,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::LevelMaximum => "en yüksek",
         Text::Language => "Dil",
         Text::Sound => "Ses",
-        Text::SoundOn => "Ses açık",
-        Text::SoundOff => "Ses kapalı",
-        Text::MovesPanel => "Hamle paneli",
         Text::Effects => "Özel efektler",
         Text::EffectsEnabled => "Özel efektleri göster",
         Text::EffectLightning => "Çoklu taş almada taşın ardından şimşek",
@@ -59,7 +56,6 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::BoardOak => "Meşe ve füme meşe",
         Text::BoardAshCherry => "Dişbudak ve kiraz, parke",
         Text::BoardAmberBirch => "Kehribar vernikli huş",
-        Text::PlayStyle => "Köşeler (Ugolki): bilgisayarın oyun tarzı",
         Text::BlockHomeExit => "Yuvanızın çıkışını kapat",
         Text::BlockHomeExitHint => "Bilgisayar, yuvanızda kalan taşlarınızı 40. hamleye kadar çıkamayacakları şekilde çevreler. Taşlar yuvanın içinde hâlâ hareket edebildiği sürece kurallar buna izin verir.",
         Text::ShowPanel => "Paneli göster",
@@ -123,14 +119,18 @@ pub(super) const fn text(key: Text) -> &'static str {
         Text::HumanName => "Oyuncu",
         Text::ComputerName => "Bilgisayar",
         Text::Keys => "Tuşlar",
-        Text::KeysHelp => {
-            "Sol ve sağ ok — hamleler arasında gezinme; \
-             yukarı ve aşağı ok — varyantlar; \
-             Home ve End — oyunun başı ve sonu; \
-             Boşluk — buradan devam et; \
-             Esc veya sağ fare düğmesi — seçimi iptal et; \
-             F9 — hamle paneli; \
-             Ctrl+N, Ctrl+O, Ctrl+S (macOS'ta Cmd) — yeni oyun, aç, kaydet"
-        }
+        Text::InterfaceSection => "Arayüz",
+        Text::UgolkiArrived => "Karşı yuvada",
+        Text::KeySpace => "Boşluk",
+        Text::KeyHome => "Home",
+        Text::KeyEnd => "End",
+        Text::KeyEsc => "Esc",
+        Text::KeyCtrl => "Ctrl",
+        Text::KeyStepMoves => "Önceki ve sonraki hamle",
+        Text::KeyVariations => "Önceki ve sonraki varyant",
+        Text::KeyStartEnd => "Oyunun başı ve sonu",
+        Text::KeyContinue => "Buradan devam et",
+        Text::KeyCancel => "Seçimi iptal et (sağ fare düğmesiyle de)",
+        Text::KeyPanel => "Paneli gizle veya göster",
     }
 }

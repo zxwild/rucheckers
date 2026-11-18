@@ -188,7 +188,6 @@ text_keys! {
     GameRules,
     GameMode,
     Ugolki,
-    GameAppliesNew,
     UgolkiHint,
     UgolkiHomeFilled,
     UgolkiHomeDeadline,
@@ -216,9 +215,6 @@ text_keys! {
     LevelMaximum,
     Language,
     Sound,
-    SoundOn,
-    SoundOff,
-    MovesPanel,
     Effects,
     EffectsEnabled,
     EffectLightning,
@@ -232,7 +228,6 @@ text_keys! {
     BoardOak,
     BoardAshCherry,
     BoardAmberBirch,
-    PlayStyle,
     BlockHomeExit,
     BlockHomeExitHint,
     ShowPanel,
@@ -302,7 +297,25 @@ text_keys! {
     HumanName,
     ComputerName,
     Keys,
-    KeysHelp,
+    /// The first tab of the side panel: the game being played.
+    GameTab,
+    /// The section of the settings with the language, the board and the sound.
+    InterfaceSection,
+    /// Ugolki: the caption of the count of pieces that have reached the opposite home.
+    UgolkiArrived,
+    /// Names of keys in the table of keys, as the keyboards of the language label them.
+    KeySpace,
+    KeyHome,
+    KeyEnd,
+    KeyEsc,
+    KeyCtrl,
+    /// What the keys of the table do.
+    KeyStepMoves,
+    KeyVariations,
+    KeyStartEnd,
+    KeyContinue,
+    KeyCancel,
+    KeyPanel,
 }
 
 /// The interface string for `key` in the chosen language. Templates are returned as
