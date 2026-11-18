@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The description of the macOS application bundle. tools/build-macos-app.sh copies it
+  into the bundle as Contents/Info.plist and fills in the placeholders: @VERSION@ with
+  the version from Cargo.toml and @MINIMUM_SYSTEM_VERSION@ with the oldest macOS the
+  executable is built for. The names in other languages are in the .lproj directories
+  next to this file.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.zxwild.rucheckers</string>
+	<key>CFBundleName</key>
+	<string>Russian Draughts</string>
+	<key>CFBundleDisplayName</key>
+	<string>Russian Draughts</string>
+	<key>CFBundleExecutable</key>
+	<string>Russian Draughts</string>
+	<key>CFBundleIconFile</key>
+	<string>rucheckers</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>@MINIMUM_SYSTEM_VERSION@</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.board-games</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
+	<true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>de</string>
+		<string>es</string>
+		<string>fr</string>
+		<string>id</string>
+		<string>it</string>
+		<string>ja</string>
+		<string>ko</string>
+		<string>pt</string>
+		<string>ru</string>
+		<string>tr</string>
+		<string>zh-Hans</string>
+	</array>
+	<key>LSHasLocalizedDisplayName</key>
+	<true/>
+</dict>
+</plist>

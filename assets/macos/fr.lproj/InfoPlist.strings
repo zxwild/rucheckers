@@ -1,0 +1,3 @@
+/* The name of the application in Finder, the Dock and the menu bar. */
+"CFBundleName" = "Dames russes";
+"CFBundleDisplayName" = "Dames russes";

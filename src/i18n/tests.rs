@@ -530,3 +530,113 @@ fn the_desktop_entry_names_the_program_in_every_language() {
     assert_eq!(value("Exec"), "rucheckers %f");
     assert_eq!(value("Terminal"), "false");
 }
+
+/// The application bundle for macOS (`tools/build-macos-app.sh`) takes its name in Finder,
+/// the Dock and the menu bar from `assets/macos/<language>.lproj/InfoPlist.strings`, so
+/// every language of the interface has such a file with the title in it.
+#[test]
+fn the_macos_bundle_names_the_program_in_every_language() {
+    let strings = [
+        (
+            "de",
+            include_str!("../../assets/macos/de.lproj/InfoPlist.strings"),
+        ),
+        (
+            "en",
+            include_str!("../../assets/macos/en.lproj/InfoPlist.strings"),
+        ),
+        (
+            "es",
+            include_str!("../../assets/macos/es.lproj/InfoPlist.strings"),
+        ),
+        (
+            "fr",
+            include_str!("../../assets/macos/fr.lproj/InfoPlist.strings"),
+        ),
+        (
+            "id",
+            include_str!("../../assets/macos/id.lproj/InfoPlist.strings"),
+        ),
+        (
+            "it",
+            include_str!("../../assets/macos/it.lproj/InfoPlist.strings"),
+        ),
+        (
+            "ja",
+            include_str!("../../assets/macos/ja.lproj/InfoPlist.strings"),
+        ),
+        (
+            "ko",
+            include_str!("../../assets/macos/ko.lproj/InfoPlist.strings"),
+        ),
+        (
+            "pt",
+            include_str!("../../assets/macos/pt.lproj/InfoPlist.strings"),
+        ),
+        (
+            "ru",
+            include_str!("../../assets/macos/ru.lproj/InfoPlist.strings"),
+        ),
+        (
+            "tr",
+            include_str!("../../assets/macos/tr.lproj/InfoPlist.strings"),
+        ),
+        (
+            "zh-Hans",
+            include_str!("../../assets/macos/zh-Hans.lproj/InfoPlist.strings"),
+        ),
+    ];
+    let info = include_str!("../../assets/macos/Info.plist");
+    // The value of a key in the template, which keeps every value on the line after its key.
+    let plist_value = |key: &str| {
+        let mut lines = info.lines().map(str::trim);
+        lines.find(|line| *line == format!("<key>{key}</key>"));
+        lines.next().unwrap_or_else(|| panic!("Info.plist has no {key}"))
+    };
+    let english = tr(Lang::En, Text::AppTitle);
+    for key in ["CFBundleName", "CFBundleDisplayName", "CFBundleExecutable"] {
+        assert_eq!(plist_value(key), format!("<string>{english}</string>"), "{key}");
+    }
+    assert_eq!(plist_value("CFBundleDevelopmentRegion"), "<string>en</string>");
+    assert_eq!(plist_value("LSHasLocalizedDisplayName"), "<true/>");
+    assert_eq!(
+        plist_value("CFBundleShortVersionString"),
+        "<string>@VERSION@</string>"
+    );
+    assert_eq!(
+        plist_value("LSMinimumSystemVersion"),
+        "<string>@MINIMUM_SYSTEM_VERSION@</string>"
+    );
+
+    let localizations: HashSet<&str> = info
+        .split("<key>CFBundleLocalizations</key>")
+        .nth(1)
+        .and_then(|rest| rest.split("</array>").next())
+        .expect("Info.plist lists the localizations")
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("<string>")?.strip_suffix("</string>"))
+        .collect();
+    assert_eq!(localizations.len(), Lang::ALL.len());
+    assert_eq!(strings.len(), Lang::ALL.len());
+    for lang in Lang::ALL {
+        // macOS names Chinese by its script, not by its territory as Linux does.
+        let dir = match lang {
+            Lang::Zh => "zh-Hans",
+            _ => lang.code(),
+        };
+        assert!(localizations.contains(dir), "{lang:?}");
+        let (_, text) = strings
+            .iter()
+            .find(|(name, _)| *name == dir)
+            .unwrap_or_else(|| panic!("no {dir}.lproj"));
+        // The lines are `"Key" = "Value";`.
+        let value = |key: &str| {
+            text.lines()
+                .find_map(|line| line.strip_prefix(&format!("\"{key}\" = \""))?.strip_suffix("\";"))
+                .unwrap_or_else(|| panic!("{dir}.lproj has no {key}"))
+        };
+        for key in ["CFBundleName", "CFBundleDisplayName"] {
+            assert_eq!(value(key), tr(lang, Text::AppTitle), "{lang:?} / {key}");
+        }
+    }
+}
