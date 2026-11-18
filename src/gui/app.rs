@@ -26,6 +26,7 @@ use rucheckers::sound::Sound;
 use rucheckers::ui::fx::{ease, Discharge};
 use rucheckers::ui::geometry::BoardLayout;
 use rucheckers::ui::promotion::Promotion;
+use rucheckers::ui::wood::BoardStyle;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -134,6 +135,8 @@ enum Action {
     OpenSettings,
     CloseSettings,
     SetLang(Lang),
+    /// The look of the board.
+    SetBoard(BoardStyle),
     /// The main switch of the special effects.
     ToggleEffects,
     /// A single special effect.
@@ -185,6 +188,8 @@ pub struct CheckersApp {
     scroll_to_current: bool,
     /// Images of the pieces for the current cell size.
     sprites: Option<board::PieceSprites>,
+    /// The meshes of a wooden board, kept between frames.
+    board_art: board::BoardArt,
 }
 
 impl CheckersApp {
@@ -231,6 +236,7 @@ impl CheckersApp {
             dismissed_result: None,
             scroll_to_current: false,
             sprites: None,
+            board_art: board::BoardArt::default(),
         };
         app.session.set_style(settings.computer_style);
         if let Some(path) = initial_file {
@@ -482,6 +488,7 @@ impl CheckersApp {
             | Action::ToggleEffects
             | Action::ToggleEffect(_)
             | Action::SetLang(_)
+            | Action::SetBoard(_)
             | Action::SetGamePreference(_)
             | Action::SetHomePreference(_)
             | Action::ToggleBlockHomeExit => self.apply_preference(action, ctx),
@@ -539,6 +546,10 @@ impl CheckersApp {
                         tr(lang, self.session.game().text_key()).to_string(),
                     ));
                 }
+            }
+            Action::SetBoard(style) => {
+                self.settings.board = style;
+                self.save_settings();
             }
             Action::SetGamePreference(game) => {
                 self.settings.game = game;
@@ -947,7 +958,7 @@ impl CheckersApp {
         now: f64,
     ) {
         let ppp = ctx.pixels_per_point();
-        board::draw_board(painter, layout, ppp);
+        board::draw_board(painter, layout, ppp, self.settings.board, &mut self.board_art);
         self.prepare_frame(ctx, layout, now);
         let Some(sprites) = self.sprites.as_ref() else {
             return;
@@ -1708,6 +1719,20 @@ impl CheckersApp {
                     actions.push(Action::SetLang(chosen));
                 }
             });
+            ui.horizontal(|ui| {
+                ui.label(tr(lang, Text::Board));
+                let mut chosen = settings.board;
+                egui::ComboBox::from_id_salt("board_style_combo")
+                    .selected_text(tr(lang, chosen.text_key()))
+                    .show_ui(ui, |ui| {
+                        for value in BoardStyle::ALL {
+                            ui.selectable_value(&mut chosen, value, tr(lang, value.text_key()));
+                        }
+                    });
+                if chosen != settings.board {
+                    actions.push(Action::SetBoard(chosen));
+                }
+            });
             let mut sound = settings.sound;
             if ui.checkbox(&mut sound, tr(lang, Text::Sound)).changed() {
                 actions.push(Action::ToggleSound);
@@ -2403,6 +2428,105 @@ mod tests {
             vec![primary(away, true), primary(away, false)],
         );
         assert_eq!(app.session.input().origin(), None);
+    }
+
+    /// One frame of the settings dialog: the texts it shows with their places, and the
+    /// actions chosen in it.
+    fn settings_frame(
+        app: &CheckersApp,
+        ctx: &Context,
+        now: f64,
+        events: Vec<egui::Event>,
+    ) -> (Vec<(String, Rect)>, Vec<Action>) {
+        let mut actions = Vec::new();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1120.0, 900.0))),
+                time: Some(now),
+                events,
+                ..Default::default()
+            },
+            |ctx| app.settings_dialog(ctx, &mut actions),
+        );
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some((
+                    text.galley.text().to_owned(),
+                    clipped.shape.visual_bounding_rect(),
+                )),
+                _ => None,
+            })
+            .collect();
+        (texts, actions)
+    }
+
+    fn click(at: Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(at),
+            primary(at, true),
+            primary(at, false),
+        ]
+    }
+
+    #[test]
+    fn the_board_is_chosen_in_the_settings_from_six_names_and_kept() {
+        let path = std::env::temp_dir().join(format!("rucheckers-board-{}.conf", std::process::id()));
+        let ctx = Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let settings = Settings {
+            sound: false,
+            ..Settings::default()
+        };
+        let mut app = CheckersApp::new(&cc, settings, Some(path.clone()), None);
+        assert_eq!(
+            app.settings.board,
+            BoardStyle::Standard,
+            "the earlier board stays the default"
+        );
+        let lang = app.lang();
+        let name = |style: BoardStyle| tr(lang, style.text_key());
+        let find = |texts: &[(String, Rect)], wanted: &str| {
+            texts
+                .iter()
+                .find(|(text, _)| text == wanted)
+                .map(|(_, rect)| *rect)
+        };
+
+        // The first frame of a window only measures it.
+        let _ = settings_frame(&app, &ctx, 0.0, Vec::new());
+        let (texts, _) = settings_frame(&app, &ctx, 0.05, Vec::new());
+        assert!(find(&texts, tr(lang, Text::Board)).is_some());
+        let combo = find(&texts, name(BoardStyle::Standard)).expect("the chosen board is shown");
+        // A click opens the list of all six boards, each under its name.
+        let _ = settings_frame(&app, &ctx, 0.1, click(combo.center()));
+        let (texts, _) = settings_frame(&app, &ctx, 0.2, Vec::new());
+        for style in BoardStyle::ALL {
+            assert!(find(&texts, name(style)).is_some(), "{style:?} is listed");
+        }
+        // The chosen board applies at once, is saved and comes back after a restart.
+        let maple = find(&texts, name(BoardStyle::MapleWalnut)).unwrap();
+        let (_, actions) = settings_frame(&app, &ctx, 0.3, click(maple.center()));
+        let chosen: Vec<BoardStyle> = actions
+            .iter()
+            .filter_map(|action| match action {
+                Action::SetBoard(style) => Some(*style),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(chosen, [BoardStyle::MapleWalnut]);
+        for action in actions {
+            app.apply(action, &ctx, 0.3);
+        }
+        assert_eq!(app.settings.board, BoardStyle::MapleWalnut);
+        let stored = Settings::load(&path, Settings::default());
+        assert_eq!(stored.board, BoardStyle::MapleWalnut);
+        assert_eq!(
+            CheckersApp::new(&cc, stored, None, None).settings.board,
+            BoardStyle::MapleWalnut
+        );
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

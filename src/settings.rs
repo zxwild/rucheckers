@@ -1,5 +1,5 @@
 //! Settings kept between runs: language, level, the player's colour, sound, visibility
-//! of the move panel and special effects.
+//! of the move panel, the look of the board and special effects.
 //!
 //! The file is plain text of the form `key=value`. Unknown keys and damaged values are
 //! ignored: the default values are used instead.
@@ -10,6 +10,7 @@ use crate::games::ugolki::HomeSide;
 use crate::games::{GameKind, Style};
 use crate::i18n::Lang;
 use crate::ui::fx::EffectSet;
+use crate::ui::wood::BoardStyle;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -35,6 +36,8 @@ pub struct Settings {
     pub human: Color,
     pub sound: bool,
     pub panel: bool,
+    /// The look of the board.
+    pub board: BoardStyle,
     /// The main switch of the special effects: with `false` none of them is shown.
     pub effects_enabled: bool,
     /// Which special effects are chosen one by one.
@@ -52,6 +55,7 @@ impl Default for Settings {
             human: Color::White,
             sound: true,
             panel: true,
+            board: BoardStyle::default(),
             effects_enabled: true,
             effects: EffectSet::ALL,
         }
@@ -100,7 +104,7 @@ impl Settings {
     pub fn to_text(&self) -> String {
         format!(
             "# rucheckers settings\ngame={}\nugolki_home={}\nugolki_block_exit={}\nlanguage={}\nlevel={}\ncolor={}\n\
-             sound={}\npanel={}\neffects={}\neffect_lightning={}\neffect_sparks={}\neffect_flashes={}\n",
+             sound={}\npanel={}\nboard={}\neffects={}\neffect_lightning={}\neffect_sparks={}\neffect_flashes={}\n",
             self.game.code(),
             self.ugolki_home_side.code(),
             switch(self.computer_style.block_home_exit),
@@ -112,6 +116,7 @@ impl Settings {
             },
             switch(self.sound),
             switch(self.panel),
+            self.board.code(),
             switch(self.effects_enabled),
             switch(self.effects.lightning),
             switch(self.effects.sparks),
@@ -173,6 +178,11 @@ impl Settings {
                 "panel" => {
                     if let Some(on) = parse_switch(value) {
                         settings.panel = on;
+                    }
+                }
+                "board" => {
+                    if let Some(style) = BoardStyle::from_code(value) {
+                        settings.board = style;
                     }
                 }
                 "effects" => {
@@ -371,6 +381,7 @@ mod tests {
                                 human,
                                 sound: switches & 1 != 0,
                                 panel: switches & 2 != 0,
+                                board: BoardStyle::ALL[checked % BoardStyle::ALL.len()],
                                 effects_enabled: switches & 4 != 0,
                                 effects,
                             };
@@ -387,6 +398,7 @@ mod tests {
                                 human: human.opponent(),
                                 sound: !settings.sound,
                                 panel: !settings.panel,
+                                board: BoardStyle::ALL[(checked + 1) % BoardStyle::ALL.len()],
                                 effects_enabled: !settings.effects_enabled,
                                 effects: EffectSet {
                                     lightning: !effects.lightning,
@@ -412,8 +424,9 @@ mod tests {
         let restart = || Settings::load(&path, Settings::default());
         assert_eq!(restart(), Settings::default(), "first start: no file yet");
 
-        let changes: [fn(&mut Settings); 10] = [
+        let changes: [fn(&mut Settings); 11] = [
             |s| s.level = 7,
+            |s| s.board = BoardStyle::AshCherry,
             |s| s.computer_style.block_home_exit = false,
             |s| s.human = Color::Black,
             |s| s.lang = Lang::Ja,
@@ -445,6 +458,7 @@ mod tests {
                 human: Color::Black,
                 sound: false,
                 panel: false,
+                board: BoardStyle::AshCherry,
                 effects_enabled: false,
                 effects: EffectSet {
                     lightning: false,
@@ -464,6 +478,7 @@ mod tests {
             "level=abc\nlanguage=xx\ncolor=green\nsound=maybe\npanel=",
             "effects=sometimes\neffect_lightning=\neffect_sparks=2\neffect_flashes=はい",
             "ugolki_block_exit=sometimes\nugolki_block_exit=",
+            "board=marble\nboard=\nboard=standart\nboard=1",
             "level=0\nlevel=11\nlevel=-3\nlevel=999999999999",
             "====\n=\nlevel\n# comment",
             "レベル=5",
@@ -499,6 +514,7 @@ mod tests {
                 human: Color::Black,
                 sound: false,
                 panel: true,
+                board: BoardStyle::Standard,
                 effects_enabled: true,
                 effects: EffectSet::ALL,
             }
@@ -584,6 +600,7 @@ mod tests {
                 "color=black",
                 "sound=on",
                 "panel=on",
+                "board=standard",
                 "effects=on",
                 "effect_lightning=on",
                 "effect_sparks=on",
@@ -614,6 +631,7 @@ mod tests {
             human: Color::Black,
             sound: false,
             panel: true,
+            board: BoardStyle::Oak,
             effects_enabled: true,
             effects: EffectSet {
                 lightning: true,

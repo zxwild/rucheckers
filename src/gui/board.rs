@@ -1,17 +1,21 @@
-//! Drawing of the board and pieces. The board is drawn with vector shapes, the pieces
-//! with images computed for the exact cell size, so the picture stays sharp at any
-//! window size and screen density.
+//! Drawing of the board and pieces. The board is drawn with vector shapes and meshes,
+//! the pieces with images computed for the exact cell size, so the picture stays sharp
+//! at any window size and screen density.
 
 use super::theme;
 use eframe::egui::{
-    self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind,
+    self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Mesh, Painter, Pos2, Rect, Shape, Stroke,
+    StrokeKind,
 };
 use rucheckers::games::{Color, Kind, Piece, Square};
 use rucheckers::ui::fx::{self, DischargeFrame};
 use rucheckers::ui::geometry::BoardLayout;
 use rucheckers::ui::promotion::PromotionFrame;
 use rucheckers::ui::sprite::{self, PIECE_RADIUS};
-use std::f32::consts::TAU;
+use rucheckers::ui::wood::{self, BoardStyle, ColorMesh, Look};
+use std::f32::consts::{FRAC_1_SQRT_2, TAU};
+use std::sync::Arc;
+use std::time::Duration;
 
 /// A colour with a changed opacity (0…1).
 fn faded(color: Color32, alpha: f32) -> Color32 {
@@ -37,6 +41,14 @@ fn noise(key: u32) -> f32 {
 pub fn cell_rect(layout: &BoardLayout, file: u8, rank: u8) -> Rect {
     let (x, y) = layout.cell_origin(file, rank);
     Rect::from_min_size(pos2(x, y), vec2(layout.cell, layout.cell))
+}
+
+/// Rectangle of the playing field: the 64 cells without the frame.
+fn field_rect(layout: &BoardLayout) -> Rect {
+    Rect::from_min_size(
+        pos2(layout.field_x, layout.field_y),
+        vec2(layout.field_size(), layout.field_size()),
+    )
 }
 
 /// Rectangle of the whole board with its frame.
@@ -69,8 +81,263 @@ fn wood_grain(painter: &Painter, rect: Rect, key: u32, color: Color32, count: u3
     }
 }
 
-/// The board: the frame with coordinates and the 64 cells.
-pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32) {
+/// The board: the frame with coordinates and the 64 cells, in the chosen look.
+///
+/// `art` keeps the meshes of a wooden board between frames. They are computed again at
+/// once when the look or the screen density changes. While the window is being resized
+/// they are stretched to each new size, and computed for the new size once it has stayed
+/// the same for [`SETTLE_SECONDS`].
+pub fn draw_board(
+    painter: &Painter,
+    layout: &BoardLayout,
+    pixels_per_point: f32,
+    style: BoardStyle,
+    art: &mut BoardArt,
+) {
+    match style.look() {
+        None => draw_standard_board(painter, layout, pixels_per_point),
+        Some(look) => {
+            let now = painter.ctx().input(|input| input.time);
+            let meshes = art.meshes(style, look, layout, pixels_per_point, now);
+            if let Some(wait) = meshes.settle_in {
+                // A frame for the exact meshes, in case nothing else redraws the window.
+                painter.ctx().request_repaint_after(wait);
+            }
+            draw_wooden_board(painter, layout, pixels_per_point, look, meshes);
+        }
+    }
+}
+
+/// How long, in seconds, the board must keep its size before its meshes are computed
+/// for that size; until then the meshes of the last computed size are stretched to it.
+pub const SETTLE_SECONDS: f64 = 0.25;
+
+/// The meshes of a wooden board.
+///
+/// Computing them takes milliseconds, which is too long for every frame of a window
+/// being resized. Stretching the computed meshes to a new size only moves their
+/// vertices, and the wood scales with the board anyway: its pattern is measured in cells.
+/// What stretching loses until the meshes are computed again is only the alignment of the
+/// cell borders to whole pixels.
+#[derive(Default)]
+pub struct BoardArt {
+    /// The look, placement and screen density the meshes were computed for.
+    computed: Option<(BoardStyle, BoardLayout, u32)>,
+    frame: Arc<Mesh>,
+    cells: Arc<Mesh>,
+    /// The computed meshes stretched to a placement that has not settled yet.
+    stretched: Option<Stretched>,
+}
+
+/// The computed meshes moved to another placement of the board.
+struct Stretched {
+    layout: BoardLayout,
+    /// When the board took this placement.
+    since: f64,
+    frame: Arc<Mesh>,
+    cells: Arc<Mesh>,
+}
+
+impl BoardArt {
+    /// The frame and cell meshes for `style` at `layout`, at the time `now` (seconds).
+    fn meshes(
+        &mut self,
+        style: BoardStyle,
+        look: &Look,
+        layout: &BoardLayout,
+        pixels_per_point: f32,
+        now: f64,
+    ) -> WoodMeshes {
+        let key = (style, *layout, pixels_per_point.to_bits());
+        if let Some((computed_style, computed_layout, density)) = self.computed {
+            if computed_style == style && density == key.2 && computed_layout != *layout {
+                let since = match &self.stretched {
+                    Some(stretched) if stretched.layout == *layout => stretched.since,
+                    _ => now,
+                };
+                let left = SETTLE_SECONDS - (now - since);
+                if left > 0.0 {
+                    return self.stretch(computed_layout, layout, since, left);
+                }
+            }
+        }
+        if self.computed != Some(key) {
+            self.frame = Arc::new(egui_mesh(look.frame_mesh(layout, pixels_per_point)));
+            self.cells = Arc::new(egui_mesh(look.cells_mesh(layout, pixels_per_point)));
+            self.computed = Some(key);
+        }
+        self.stretched = None;
+        WoodMeshes {
+            frame: Arc::clone(&self.frame),
+            cells: Arc::clone(&self.cells),
+            settle_in: None,
+        }
+    }
+
+    /// The meshes computed for `computed` moved and scaled to `layout`: the frame from
+    /// the old outer edge to the new one, the cells from the old field to the new one.
+    fn stretch(&mut self, computed: BoardLayout, layout: &BoardLayout, since: f64, left: f64) -> WoodMeshes {
+        let stretched = self.stretched.get_or_insert_with(|| Stretched {
+            layout: computed,
+            since,
+            frame: Arc::new(Mesh::clone(&self.frame)),
+            cells: Arc::new(Mesh::clone(&self.cells)),
+        });
+        if stretched.layout != *layout {
+            // The shapes of the previous frame are gone by now, so this reuses the copy
+            // made at the start of the resizing instead of making a new one.
+            move_vertices(
+                Arc::make_mut(&mut stretched.frame),
+                &self.frame,
+                outer_rect(&computed),
+                outer_rect(layout),
+            );
+            move_vertices(
+                Arc::make_mut(&mut stretched.cells),
+                &self.cells,
+                field_rect(&computed),
+                field_rect(layout),
+            );
+            stretched.layout = *layout;
+        }
+        stretched.since = since;
+        WoodMeshes {
+            frame: Arc::clone(&stretched.frame),
+            cells: Arc::clone(&stretched.cells),
+            settle_in: Some(Duration::from_secs_f64(left)),
+        }
+    }
+}
+
+/// Puts into `target`, a copy of `source`, the vertices of `source` moved from the square
+/// `from` to the square `to`.
+fn move_vertices(target: &mut Mesh, source: &Mesh, from: Rect, to: Rect) {
+    let scale = to.width() / from.width().max(1e-6);
+    for (vertex, original) in target.vertices.iter_mut().zip(&source.vertices) {
+        vertex.pos = to.min + (original.pos - from.min) * scale;
+    }
+}
+
+/// The two meshes of a wooden board, shared with the cache.
+struct WoodMeshes {
+    frame: Arc<Mesh>,
+    cells: Arc<Mesh>,
+    /// Stretched meshes: the time left until the board has kept its size long enough
+    /// for exact ones.
+    settle_in: Option<Duration>,
+}
+
+/// A mesh of the window from the mesh computed for the board.
+fn egui_mesh(mesh: ColorMesh) -> Mesh {
+    let vertices = mesh
+        .positions
+        .iter()
+        .zip(&mesh.colors)
+        .map(|(&[x, y], &[red, green, blue])| egui::epaint::Vertex {
+            pos: pos2(x, y),
+            uv: egui::epaint::WHITE_UV,
+            color: Color32::from_rgb(red, green, blue),
+        })
+        .collect();
+    Mesh {
+        indices: mesh.indices,
+        vertices,
+        texture_id: egui::TextureId::default(),
+    }
+}
+
+const fn solid(rgb: [u8; 3]) -> Color32 {
+    Color32::from_rgb(rgb[0], rgb[1], rgb[2])
+}
+
+/// A band of `width` around `inner`, made of four rectangles. Meshes are not smoothed,
+/// so the band stays crisp: its edges lie on pixel borders.
+fn band_around(mesh: &mut Mesh, inner: Rect, width: f32, color: Color32) {
+    let outer = inner.expand(width);
+    mesh.add_colored_rect(
+        Rect::from_min_max(outer.min, pos2(outer.right(), inner.top())),
+        color,
+    );
+    mesh.add_colored_rect(
+        Rect::from_min_max(pos2(outer.left(), inner.bottom()), outer.max),
+        color,
+    );
+    mesh.add_colored_rect(
+        Rect::from_min_max(
+            pos2(outer.left(), inner.top()),
+            pos2(inner.left(), inner.bottom()),
+        ),
+        color,
+    );
+    mesh.add_colored_rect(
+        Rect::from_min_max(
+            pos2(inner.right(), inner.top()),
+            pos2(outer.right(), inner.bottom()),
+        ),
+        color,
+    );
+}
+
+/// A wooden board: the mitred frame, the cells, the edging of the field and the coordinates.
+fn draw_wooden_board(
+    painter: &Painter,
+    layout: &BoardLayout,
+    pixels_per_point: f32,
+    look: &Look,
+    meshes: WoodMeshes,
+) {
+    let pixel = 1.0 / pixels_per_point.max(0.1);
+    let outer = outer_rect(layout);
+    let frame = layout.frame();
+    let field = field_rect(layout);
+    let radius = wood::corner_radius(frame);
+    let corner = CornerRadius::same(radius as u8);
+
+    // The shadow under the board, as under the standard one.
+    painter.rect_filled(
+        outer.translate(vec2(0.0, frame * 0.10)).expand(frame * 0.03),
+        corner,
+        Color32::from_black_alpha(46),
+    );
+    // A solid base: where the strips of the frame meet, it shows instead of the window,
+    // and its rounded edge is smooth.
+    painter.rect_filled(outer, corner, solid(look.frame_base()));
+    painter.add(Shape::Mesh(meshes.frame));
+    // The joints of the mitred corners.
+    let joint = Stroke::new(pixel, Color32::from_black_alpha(40));
+    let cut = radius * (1.0 - FRAC_1_SQRT_2);
+    for (inner, outer_corner) in [
+        (field.left_top(), outer.left_top() + vec2(cut, cut)),
+        (field.right_top(), outer.right_top() + vec2(-cut, cut)),
+        (field.left_bottom(), outer.left_bottom() + vec2(cut, -cut)),
+        (field.right_bottom(), outer.right_bottom() + vec2(-cut, -cut)),
+    ] {
+        painter.line_segment([inner, outer_corner], joint);
+    }
+    // A smooth outline over the steps of the mesh along the rounded corners.
+    painter.rect_stroke(
+        outer,
+        corner,
+        Stroke::new(pixel.max(1.0), solid(look.edge)),
+        StrokeKind::Inside,
+    );
+    painter.add(Shape::Mesh(meshes.cells));
+
+    // The edging of the field: a dark line, or a light inlay between two dark lines.
+    let mut lines = Mesh::default();
+    let edge = (frame * pixels_per_point * 0.045).round().max(1.0) * pixel;
+    band_around(&mut lines, field, edge, solid(look.edge));
+    if let Some(inlay) = look.inlay {
+        let strip = (frame * pixels_per_point * 0.05).round().max(1.0) * pixel;
+        band_around(&mut lines, field.expand(edge), strip, solid(inlay));
+        band_around(&mut lines, field.expand(edge + strip), edge, solid(look.edge));
+    }
+    painter.add(Shape::mesh(lines));
+    draw_coordinates(painter, layout, solid(look.coordinates));
+}
+
+/// The standard board: plain light and dark cells with a few fine veins.
+fn draw_standard_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32) {
     let pixel = 1.0 / pixels_per_point.max(0.1);
     let outer = outer_rect(layout);
     let frame = layout.frame();
@@ -80,7 +347,7 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
     );
 
     // The shadow under the board and the frame.
-    let radius = CornerRadius::same((frame * 0.28).clamp(2.0, 14.0) as u8);
+    let radius = CornerRadius::same(wood::corner_radius(frame) as u8);
     painter.rect_filled(
         outer.translate(vec2(0.0, frame * 0.10)).expand(frame * 0.03),
         radius,
@@ -137,8 +404,13 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
         Stroke::new((frame * 0.05).max(pixel), theme::FRAME_DARK),
         StrokeKind::Outside,
     );
+    draw_coordinates(painter, layout, theme::COORDINATES);
+}
 
-    // Coordinates: letters above and below, digits on the left and right.
+/// Coordinates on the frame: letters above and below, digits on the left and right.
+fn draw_coordinates(painter: &Painter, layout: &BoardLayout, color: Color32) {
+    let outer = outer_rect(layout);
+    let frame = layout.frame();
     let font_size = frame * 0.52;
     if font_size >= 6.0 {
         let font = FontId::proportional(font_size);
@@ -149,22 +421,10 @@ pub fn draw_board(painter: &Painter, layout: &BoardLayout, pixels_per_point: f32
             let x = layout.field_x + along;
             let y = layout.field_y + along;
             for cy in [outer.top() + frame / 2.0, outer.bottom() - frame / 2.0] {
-                painter.text(
-                    pos2(x, cy),
-                    Align2::CENTER_CENTER,
-                    &letter,
-                    font.clone(),
-                    theme::COORDINATES,
-                );
+                painter.text(pos2(x, cy), Align2::CENTER_CENTER, &letter, font.clone(), color);
             }
             for cx in [outer.left() + frame / 2.0, outer.right() - frame / 2.0] {
-                painter.text(
-                    pos2(cx, y),
-                    Align2::CENTER_CENTER,
-                    &digit,
-                    font.clone(),
-                    theme::COORDINATES,
-                );
+                painter.text(pos2(cx, y), Align2::CENTER_CENTER, &digit, font.clone(), color);
             }
         }
     }
@@ -543,6 +803,202 @@ pub const fn cursor_for(hover: bool, dragging: bool) -> egui::CursorIcon {
 mod tests {
     use super::*;
     use rucheckers::ui::promotion::Promotion;
+
+    fn meshes_at(
+        art: &mut BoardArt,
+        style: BoardStyle,
+        layout: &BoardLayout,
+        ppp: f32,
+        now: f64,
+    ) -> WoodMeshes {
+        art.meshes(style, style.look().unwrap(), layout, ppp, now)
+    }
+
+    fn bounds(mesh: &Mesh) -> Rect {
+        Rect::from_points(&mesh.vertices.iter().map(|vertex| vertex.pos).collect::<Vec<_>>())
+    }
+
+    fn same_rect(a: Rect, b: Rect) -> bool {
+        (a.min - b.min).length() < 1e-3 && (a.max - b.max).length() < 1e-3
+    }
+
+    #[test]
+    fn wooden_meshes_are_kept_until_the_look_or_the_density_changes() {
+        let layout = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        let oak = BoardStyle::Oak;
+        let mut art = BoardArt::default();
+        let first = meshes_at(&mut art, oak, &layout, 1.0, 0.0);
+        assert!(first.settle_in.is_none());
+        assert!(first.frame.is_valid() && first.cells.is_valid());
+        assert!(!first.frame.vertices.is_empty() && !first.cells.vertices.is_empty());
+        let again = meshes_at(&mut art, oak, &layout, 1.0, 5.0);
+        assert!(Arc::ptr_eq(&first.frame, &again.frame) && Arc::ptr_eq(&first.cells, &again.cells));
+
+        // Another look or another screen density: computed at once, nothing stretched.
+        for (style, ppp) in [(BoardStyle::MapleWalnut, 1.0), (oak, 1.5)] {
+            let other = meshes_at(&mut art, style, &layout, ppp, 6.0);
+            assert!(other.settle_in.is_none(), "{style:?} {ppp}");
+            assert!(!Arc::ptr_eq(&first.cells, &other.cells), "{style:?} {ppp}");
+            assert!(!Arc::ptr_eq(&first.frame, &other.frame), "{style:?} {ppp}");
+            assert_eq!(art.computed, Some((style, layout, ppp.to_bits())));
+        }
+    }
+
+    #[test]
+    fn while_the_window_is_resized_the_meshes_are_stretched_and_computed_once_it_settles() {
+        let oak = BoardStyle::Oak;
+        let start = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        let mut art = BoardArt::default();
+        let computed = meshes_at(&mut art, oak, &start, 1.0, 0.0);
+        let colors: Vec<Color32> = computed
+            .cells
+            .vertices
+            .iter()
+            .map(|vertex| vertex.color)
+            .collect();
+        drop(computed);
+        let size = |step: u16| {
+            BoardLayout::fit(
+                0.0,
+                0.0,
+                640.0 + 7.0 * f32::from(step),
+                600.0 + 5.0 * f32::from(step),
+                false,
+                1.0,
+            )
+        };
+        let mut copy = None;
+        for step in 1..=20 {
+            let now = f64::from(step) * 0.016;
+            let layout = size(step);
+            let meshes = meshes_at(&mut art, oak, &layout, 1.0, now);
+            assert_eq!(
+                art.computed,
+                Some((oak, start, 1.0_f32.to_bits())),
+                "nothing is computed while resizing"
+            );
+            let wait = meshes.settle_in.expect("the exact meshes are due later");
+            assert!(wait.as_secs_f64() <= SETTLE_SECONDS);
+            // The stretched meshes cover the new board exactly, in the same colours.
+            assert!(same_rect(bounds(&meshes.cells), field_rect(&layout)), "{step}");
+            assert!(same_rect(bounds(&meshes.frame), outer_rect(&layout)), "{step}");
+            assert!(meshes
+                .cells
+                .vertices
+                .iter()
+                .map(|vertex| vertex.color)
+                .eq(colors.iter().copied()));
+            // One copy serves the whole resizing: the window drops the shapes of a frame
+            // before the next one, and the copy is moved in place.
+            let pointer = Arc::as_ptr(&meshes.cells);
+            assert_eq!(*copy.get_or_insert(pointer), pointer, "{step}");
+        }
+        // The size stays: a little later the meshes are still stretched, after the pause
+        // they are computed for it.
+        let last = size(20);
+        let early = meshes_at(&mut art, oak, &last, 1.0, 0.32 + 0.1);
+        let wait = early.settle_in.expect("still settling");
+        assert!((wait.as_secs_f64() - (SETTLE_SECONDS - 0.1)).abs() < 1e-6);
+        drop(early);
+        let settled = meshes_at(&mut art, oak, &last, 1.0, 0.32 + SETTLE_SECONDS);
+        assert!(settled.settle_in.is_none());
+        assert_eq!(art.computed, Some((oak, last, 1.0_f32.to_bits())));
+        assert!(same_rect(bounds(&settled.cells), field_rect(&last)));
+    }
+
+    #[test]
+    fn a_stretched_board_asks_for_a_frame_to_draw_the_exact_one() {
+        let ctx = egui::Context::default();
+        let mut art = BoardArt::default();
+        let mut frame = |layout: BoardLayout, now: f64| {
+            let output = ctx.run(
+                egui::RawInput {
+                    time: Some(now),
+                    ..Default::default()
+                },
+                |ctx| {
+                    let painter = ctx.layer_painter(egui::LayerId::background());
+                    draw_board(&painter, &layout, 1.0, BoardStyle::AmberBirch, &mut art);
+                },
+            );
+            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay
+        };
+        let start = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        let resized = BoardLayout::fit(0.0, 0.0, 700.0, 680.0, false, 1.0);
+        // A new context asks for a few more frames at first, whatever is drawn.
+        for now in [0.8, 0.85, 0.9, 0.95] {
+            let _ = frame(start, now);
+        }
+        assert!(
+            frame(start, 1.0) > Duration::from_secs(60),
+            "a computed board waits for nothing"
+        );
+        let wait = frame(resized, 1.1);
+        assert!(wait <= Duration::from_secs_f64(SETTLE_SECONDS), "{wait:?}");
+        assert!(frame(resized, 1.1 + SETTLE_SECONDS) > Duration::from_secs(60));
+        assert_eq!(art.computed.map(|key| key.1), Some(resized));
+    }
+
+    #[test]
+    fn the_mesh_for_the_window_keeps_every_vertex_and_colour() {
+        let look = BoardStyle::AmberBirch.look().unwrap();
+        let layout = BoardLayout::fit(0.0, 0.0, 300.0, 300.0, false, 1.0);
+        let computed = look.cells_mesh(&layout, 1.0);
+        let mesh = egui_mesh(computed.clone());
+        assert!(mesh.is_valid());
+        assert_eq!(mesh.indices, computed.indices);
+        assert_eq!(mesh.vertices.len(), computed.positions.len());
+        for (vertex, (position, rgb)) in mesh
+            .vertices
+            .iter()
+            .zip(computed.positions.iter().zip(&computed.colors))
+        {
+            assert_eq!([vertex.pos.x, vertex.pos.y], *position);
+            assert_eq!(vertex.color, solid(*rgb));
+            assert_eq!(vertex.uv, egui::epaint::WHITE_UV);
+        }
+    }
+
+    #[test]
+    fn only_wooden_boards_compute_meshes_and_each_draws_its_coordinates() {
+        let ctx = egui::Context::default();
+        let layout = BoardLayout::fit(0.0, 0.0, 640.0, 640.0, false, 1.0);
+        let mut art = BoardArt::default();
+        let draw = |style: BoardStyle, art: &mut BoardArt| {
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                let painter = ctx.layer_painter(egui::LayerId::background());
+                draw_board(&painter, &layout, 1.0, style, art);
+            });
+            let meshes = output
+                .shapes
+                .iter()
+                .filter(|clipped| matches!(&clipped.shape, Shape::Mesh(mesh) if mesh.vertices.len() > 1000))
+                .count();
+            let letters: Vec<Color32> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) if text.galley.text() == "a" => Some(text.fallback_color),
+                    _ => None,
+                })
+                .collect();
+            (meshes, letters)
+        };
+        let (meshes, letters) = draw(BoardStyle::Standard, &mut art);
+        assert_eq!(meshes, 0);
+        assert!(art.computed.is_none(), "the standard board keeps nothing");
+        assert_eq!(letters, [theme::COORDINATES; 2]);
+        for style in BoardStyle::ALL.into_iter().skip(1) {
+            let (meshes, letters) = draw(style, &mut art);
+            assert_eq!(meshes, 2, "{style:?}: the frame and the cells");
+            assert_eq!(art.computed, Some((style, layout, 1.0_f32.to_bits())));
+            assert_eq!(
+                letters,
+                [solid(style.look().unwrap().coordinates); 2],
+                "{style:?}"
+            );
+        }
+    }
 
     #[test]
     fn promotion_covers_the_coordinate_frame_but_stops_at_the_outer_board_edge() {
