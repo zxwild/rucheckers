@@ -236,10 +236,10 @@ jobs:
     name: macOS · application bundle
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-latest
-    env:
-      APPLICATIONS: ${{ runner.temp }}/Applications
     steps:
       - uses: actions/checkout@v5
+      - name: Install into a folder of the job
+        run: echo "APPLICATIONS=$RUNNER_TEMP/Applications" >>"$GITHUB_ENV"
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Build, pack and install the bundle
@@ -262,7 +262,7 @@ jobs:
           echo "minimum macOS: $minos"
           test "$minos" = 11.0
           iconutil -c iconset -o "$RUNNER_TEMP/check.iconset" "$app/Contents/Resources/rucheckers.icns"
-          test "$(ls "$RUNNER_TEMP/check.iconset" | wc -l)" -eq 10
+          test "$(find "$RUNNER_TEMP/check.iconset" -name "*.png" | wc -l)" -eq 10
           hdiutil verify target/macos/*.dmg
       # Finder shows the name of the program in the language of the user's account.
       - name: Check the name in every language
