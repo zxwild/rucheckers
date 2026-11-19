@@ -8,6 +8,7 @@ use super::board;
 use super::files::{with_extension, FileAction, FileJob, FileJobState};
 use super::fonts;
 use super::theme;
+use super::window;
 use eframe::egui::{
     self, pos2, Align2, Color32, Context, CornerRadius, Id, Key, Margin, Order, Painter, Pos2, RichText,
     Stroke, Ui,
@@ -24,7 +25,7 @@ use rucheckers::games::{outcome_reason, outcome_title};
 use rucheckers::games::{squares_of, Color, GameKind, Kind, Move, Piece, Position, Square};
 use rucheckers::i18n::{level_label, pdn_error_text, tr, Lang, Text};
 use rucheckers::rng::entropy_seed;
-use rucheckers::settings::Settings;
+use rucheckers::settings::{Settings, WindowGeometry};
 use rucheckers::sound::Sound;
 use rucheckers::ui::fx::{ease, Discharge};
 use rucheckers::ui::geometry::BoardLayout;
@@ -184,6 +185,8 @@ pub struct CheckersApp {
     sprites: Option<board::PieceSprites>,
     /// The meshes of a wooden board, kept between frames.
     board_art: board::BoardArt,
+    /// Watches the size and place of the window.
+    window: window::Tracker,
 }
 
 impl CheckersApp {
@@ -231,6 +234,7 @@ impl CheckersApp {
             scroll_to_current: false,
             sprites: None,
             board_art: board::BoardArt::default(),
+            window: window::Tracker::new(settings.window),
         };
         app.session.set_style(settings.computer_style);
         if let Some(path) = initial_file {
@@ -271,6 +275,14 @@ impl CheckersApp {
                 ));
             }
             Err(_) => {}
+        }
+    }
+
+    /// Saves the size and place of the window when they differ from the saved ones.
+    fn keep_window(&mut self, window: WindowGeometry) {
+        if window != self.settings.window {
+            self.settings.window = window;
+            self.save_settings();
         }
     }
 
@@ -1440,6 +1452,16 @@ impl eframe::App for CheckersApp {
         {
             // It is the computer's turn: the next frame starts the calculation.
             ctx.request_repaint();
+        }
+
+        if let Some(window) = self.window.update(ctx, now) {
+            self.keep_window(window);
+        }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(window) = self.window.last() {
+            self.keep_window(window);
         }
     }
 

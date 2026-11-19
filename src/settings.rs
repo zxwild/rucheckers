@@ -1,5 +1,6 @@
 //! Settings kept between runs: language, level, the player's colour, sound, visibility
-//! of the move panel, the look of the board and special effects.
+//! of the move panel, the look of the board, special effects and the size and place of
+//! the main window.
 //!
 //! The file is plain text of the form `key=value`. Unknown keys and damaged values are
 //! ignored: the default values are used instead.
@@ -24,6 +25,181 @@ const APP_DIR: &str = "rucheckers";
 /// Name of the settings file.
 const FILE_NAME: &str = "settings.conf";
 
+/// Size of the inside of the main window at the first start, in points.
+pub const DEFAULT_WINDOW_SIZE: [u32; 2] = [1120, 760];
+/// The smallest size of the inside of the main window, in points.
+pub const MIN_WINDOW_SIZE: [u32; 2] = [440, 380];
+/// The longest side of the window taken from the file, in points.
+pub const MAX_WINDOW_SIDE: u32 = 16_384;
+/// The farthest the corner of the window may be from the origin of the desktop.
+const MAX_WINDOW_OFFSET: i32 = 65_535;
+/// The longest side of a screen taken from the file.
+const MAX_SCREEN_SIDE: u32 = 65_535;
+/// The scales of a screen taken from the file, in percent.
+const SCALES: std::ops::RangeInclusive<u32> = 25..=1000;
+
+/// Size and place of the main window.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct WindowGeometry {
+    /// Width of the inside of the window in points: the units of the interface at the
+    /// usual zoom, so that the window keeps its look on screens of any density.
+    pub width: u32,
+    /// Height of the inside of the window in points.
+    pub height: u32,
+    /// The window is maximized. Size and place are then those it returns to when it is
+    /// restored.
+    pub maximized: bool,
+    /// Where the window stands; `None` leaves the choice to the system.
+    pub place: Option<WindowPlace>,
+}
+
+impl Default for WindowGeometry {
+    fn default() -> Self {
+        Self {
+            width: DEFAULT_WINDOW_SIZE[0],
+            height: DEFAULT_WINDOW_SIZE[1],
+            maximized: false,
+            place: None,
+        }
+    }
+}
+
+impl WindowGeometry {
+    /// Whether the size is one the window can take.
+    #[must_use]
+    pub const fn size_is_valid(width: u32, height: u32) -> bool {
+        width >= MIN_WINDOW_SIZE[0]
+            && height >= MIN_WINDOW_SIZE[1]
+            && width <= MAX_WINDOW_SIDE
+            && height <= MAX_WINDOW_SIDE
+    }
+}
+
+/// Place of the main window on the desktop.
+///
+/// The units are those in which the system places windows: physical pixels on Windows
+/// and Linux, points on macOS.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct WindowPlace {
+    /// Left edge of the window frame.
+    pub x: i32,
+    /// Top edge of the window frame.
+    pub y: i32,
+    /// Width of the screen the window stood on. If the window comes up on a screen of
+    /// another size, that screen is gone or changed, and the window is centred instead.
+    pub screen_width: u32,
+    /// Height of that screen.
+    pub screen_height: u32,
+    /// Scale of that screen in percent: how many pixels make a point, times 100.
+    pub scale: u32,
+}
+
+impl WindowPlace {
+    /// Whether all the values are within the limits read from a file.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        let offset = -MAX_WINDOW_OFFSET..=MAX_WINDOW_OFFSET;
+        let screen = 1..=MAX_SCREEN_SIDE;
+        offset.contains(&self.x)
+            && offset.contains(&self.y)
+            && screen.contains(&self.screen_width)
+            && screen.contains(&self.screen_height)
+            && SCALES.contains(&self.scale)
+    }
+}
+
+/// The `window_position` line of a settings file.
+#[derive(Clone, Copy)]
+enum Corner {
+    /// The system chooses the place.
+    Auto,
+    At(i32, i32),
+}
+
+/// The lines of a settings file about the main window.
+#[derive(Default)]
+struct WindowLines {
+    size: Option<(u32, u32)>,
+    maximized: Option<bool>,
+    position: Option<Corner>,
+    screen: Option<(u32, u32)>,
+    scale: Option<u32>,
+}
+
+impl WindowLines {
+    /// Takes the value of a line if the line is about the window.
+    fn read(&mut self, key: &str, value: &str) {
+        let size = || parse_pair::<u32>(&value.to_ascii_lowercase(), 'x');
+        match key {
+            "window_size" => {
+                if let Some(size) = size().filter(|&(w, h)| WindowGeometry::size_is_valid(w, h)) {
+                    self.size = Some(size);
+                }
+            }
+            "window_maximized" => {
+                if let Some(on) = parse_switch(value) {
+                    self.maximized = Some(on);
+                }
+            }
+            "window_position" => {
+                if value.eq_ignore_ascii_case("auto") {
+                    self.position = Some(Corner::Auto);
+                } else if let Some((x, y)) = parse_pair(value, ',') {
+                    self.position = Some(Corner::At(x, y));
+                }
+            }
+            "window_screen" => {
+                if let Some(screen) = size() {
+                    self.screen = Some(screen);
+                }
+            }
+            "window_scale" => {
+                if let Ok(percent) = value.parse() {
+                    self.scale = Some(percent);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Puts the values read into `window`. The place of the window is taken only as a
+    /// whole: a corner without the screen it was measured on could put the window out
+    /// of sight.
+    fn apply(self, window: &mut WindowGeometry) {
+        if let Some((width, height)) = self.size {
+            window.width = width;
+            window.height = height;
+        }
+        if let Some(on) = self.maximized {
+            window.maximized = on;
+        }
+        match self.position {
+            Some(Corner::Auto) => window.place = None,
+            Some(Corner::At(x, y)) => {
+                if let (Some((screen_width, screen_height)), Some(scale)) = (self.screen, self.scale) {
+                    let place = WindowPlace {
+                        x,
+                        y,
+                        screen_width,
+                        screen_height,
+                        scale,
+                    };
+                    if place.is_valid() {
+                        window.place = Some(place);
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+}
+
+/// A pair of numbers written as `AxB` or `A,B`.
+fn parse_pair<T: std::str::FromStr>(value: &str, separator: char) -> Option<(T, T)> {
+    let (first, second) = value.split_once(separator)?;
+    Some((first.trim().parse().ok()?, second.trim().parse().ok()?))
+}
+
 /// User settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Settings {
@@ -42,6 +218,8 @@ pub struct Settings {
     pub effects_enabled: bool,
     /// Which special effects are chosen one by one.
     pub effects: EffectSet,
+    /// Size and place of the main window.
+    pub window: WindowGeometry,
 }
 
 impl Default for Settings {
@@ -58,6 +236,7 @@ impl Default for Settings {
             board: BoardStyle::default(),
             effects_enabled: true,
             effects: EffectSet::ALL,
+            window: WindowGeometry::default(),
         }
     }
 }
@@ -102,9 +281,18 @@ impl Settings {
     /// Text of the settings file.
     #[must_use]
     pub fn to_text(&self) -> String {
+        let window = &self.window;
+        let place = match window.place {
+            Some(place) => format!(
+                "window_position={},{}\nwindow_screen={}x{}\nwindow_scale={}\n",
+                place.x, place.y, place.screen_width, place.screen_height, place.scale
+            ),
+            None => "window_position=auto\n".to_string(),
+        };
         format!(
             "# rucheckers settings\ngame={}\nugolki_home={}\nugolki_block_exit={}\nlanguage={}\nlevel={}\ncolor={}\n\
-             sound={}\npanel={}\nboard={}\neffects={}\neffect_lightning={}\neffect_sparks={}\neffect_flashes={}\n",
+             sound={}\npanel={}\nboard={}\neffects={}\neffect_lightning={}\neffect_sparks={}\neffect_flashes={}\n\
+             window_size={}x{}\nwindow_maximized={}\n{place}",
             self.game.code(),
             self.ugolki_home_side.code(),
             switch(self.computer_style.block_home_exit),
@@ -121,6 +309,9 @@ impl Settings {
             switch(self.effects.lightning),
             switch(self.effects.sparks),
             switch(self.effects.flashes),
+            window.width,
+            window.height,
+            switch(window.maximized),
         )
     }
 
@@ -128,6 +319,7 @@ impl Settings {
     #[must_use]
     pub fn from_text(text: &str, base: Self) -> Self {
         let mut settings = base;
+        let mut window = WindowLines::default();
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -205,9 +397,10 @@ impl Settings {
                         settings.effects.flashes = on;
                     }
                 }
-                _ => {}
+                key => window.read(key, value),
             }
         }
+        window.apply(&mut settings.window);
         settings
     }
 
@@ -362,6 +555,50 @@ mod tests {
         })
     }
 
+    /// A window geometry for case `n`: sizes, corners on every side of the origin,
+    /// screens and scales change from case to case, and every third has no place.
+    fn window_for(n: usize) -> WindowGeometry {
+        let n32 = n as u32;
+        WindowGeometry {
+            width: MIN_WINDOW_SIZE[0] + n32 % 3000,
+            height: MIN_WINDOW_SIZE[1] + n32 * 7 % 2000,
+            maximized: n % 2 == 1,
+            place: (n % 3 != 0).then(|| WindowPlace {
+                x: (n as i32 % 9000) - 4000,
+                y: (n as i32 * 13 % 5000) - 1200,
+                screen_width: 640 + n32 % 7000,
+                screen_height: 480 + n32 % 4000,
+                scale: [100, 125, 150, 175, 200, 250, 300][n % 7],
+            }),
+        }
+    }
+
+    /// A geometry that differs from `window` in every value, with or without a place.
+    fn other_window(window: WindowGeometry) -> WindowGeometry {
+        WindowGeometry {
+            width: window.width + 1,
+            height: window.height + 1,
+            maximized: !window.maximized,
+            place: match window.place {
+                None => Some(WindowPlace {
+                    x: 10,
+                    y: 20,
+                    screen_width: 1280,
+                    screen_height: 1024,
+                    scale: 400,
+                }),
+                Some(place) if place.x % 2 == 0 => None,
+                Some(place) => Some(WindowPlace {
+                    x: place.x + 1,
+                    y: place.y + 1,
+                    screen_width: place.screen_width + 1,
+                    screen_height: place.screen_height + 1,
+                    scale: place.scale + 1,
+                }),
+            },
+        }
+    }
+
     #[test]
     fn every_combination_of_settings_survives_writing_and_reading() {
         let mut checked = 0;
@@ -384,6 +621,7 @@ mod tests {
                                 board: BoardStyle::ALL[checked % BoardStyle::ALL.len()],
                                 effects_enabled: switches & 4 != 0,
                                 effects,
+                                window: window_for(checked),
                             };
                             // The base differs from the saved value in every field, so
                             // a field that is not written or not read shows up.
@@ -405,6 +643,7 @@ mod tests {
                                     sparks: !effects.sparks,
                                     flashes: !effects.flashes,
                                 },
+                                window: other_window(window_for(checked)),
                             };
                             assert_eq!(Settings::from_text(&settings.to_text(), base), settings);
                             checked += 1;
@@ -424,7 +663,7 @@ mod tests {
         let restart = || Settings::load(&path, Settings::default());
         assert_eq!(restart(), Settings::default(), "first start: no file yet");
 
-        let changes: [fn(&mut Settings); 11] = [
+        let changes: [fn(&mut Settings); 14] = [
             |s| s.level = 7,
             |s| s.board = BoardStyle::AshCherry,
             |s| s.computer_style.block_home_exit = false,
@@ -436,6 +675,20 @@ mod tests {
             |s| s.effects_enabled = false,
             |s| s.effects.lightning = false,
             |s| s.level = 10,
+            |s| {
+                s.window.width = 1500;
+                s.window.height = 900;
+            },
+            |s| {
+                s.window.place = Some(WindowPlace {
+                    x: -1910,
+                    y: 64,
+                    screen_width: 1920,
+                    screen_height: 1200,
+                    scale: 125,
+                });
+            },
+            |s| s.window.maximized = true,
         ];
         let mut expected = Settings::default();
         for change in changes {
@@ -465,6 +718,18 @@ mod tests {
                     sparks: false,
                     flashes: true,
                 },
+                window: WindowGeometry {
+                    width: 1500,
+                    height: 900,
+                    maximized: true,
+                    place: Some(WindowPlace {
+                        x: -1910,
+                        y: 64,
+                        screen_width: 1920,
+                        screen_height: 1200,
+                        scale: 125,
+                    }),
+                },
             }
         );
     }
@@ -482,6 +747,23 @@ mod tests {
             "level=0\nlevel=11\nlevel=-3\nlevel=999999999999",
             "====\n=\nlevel\n# comment",
             "レベル=5",
+            "window_size=100x100\nwindow_size=440x379\nwindow_size=16385x900\nwindow_size=-800x600",
+            "window_size=800\nwindow_size=800x\nwindow_size=x600\nwindow_size=800,600\nwindow_size=wide",
+            "window_maximized=half\nwindow_maximized=",
+            // A corner without its screen and scale, or with values out of bounds, is not used.
+            "window_position=10,20",
+            "window_position=10,20\nwindow_screen=1920x1080",
+            "window_position=10,20\nwindow_scale=100",
+            "window_screen=1920x1080\nwindow_scale=100",
+            "window_position=10;20\nwindow_screen=1920x1080\nwindow_scale=100",
+            "window_position=99999,0\nwindow_screen=1920x1080\nwindow_scale=100",
+            "window_position=0,-70000\nwindow_screen=1920x1080\nwindow_scale=100",
+            "window_position=0,0\nwindow_screen=0x1080\nwindow_scale=100",
+            "window_position=0,0\nwindow_screen=1920x99999\nwindow_scale=100",
+            "window_position=0,0\nwindow_screen=1920x1080\nwindow_scale=0",
+            "window_position=0,0\nwindow_screen=1920x1080\nwindow_scale=1001",
+            "window_position=0,0\nwindow_screen=1920x1080\nwindow_scale=1.5",
+            "window_position=center\nwindow_screen=1920x1080\nwindow_scale=100",
         ] {
             assert_eq!(Settings::from_text(text, base), base, "{text:?}");
         }
@@ -517,6 +799,7 @@ mod tests {
                 board: BoardStyle::Standard,
                 effects_enabled: true,
                 effects: EffectSet::ALL,
+                window: WindowGeometry::default(),
             }
         );
     }
@@ -605,6 +888,9 @@ mod tests {
                 "effect_lightning=on",
                 "effect_sparks=on",
                 "effect_flashes=on",
+                "window_size=1120x760",
+                "window_maximized=off",
+                "window_position=auto",
             ]
         );
         // A level outside the range (it cannot come from the interface) is written clamped.
@@ -637,6 +923,18 @@ mod tests {
                 lightning: true,
                 sparks: true,
                 flashes: false,
+            },
+            window: WindowGeometry {
+                width: 980,
+                height: 700,
+                maximized: false,
+                place: Some(WindowPlace {
+                    x: 2600,
+                    y: -30,
+                    screen_width: 2560,
+                    screen_height: 1440,
+                    scale: 150,
+                }),
             },
         };
         first.save(&path).unwrap();
@@ -912,5 +1210,68 @@ mod tests {
             ..Settings::for_locale(Some("tr_TR"))
         };
         assert_eq!(everything_else, Settings::default());
+    }
+
+    #[test]
+    fn the_window_is_read_with_its_size_and_place() {
+        let base = Settings::default();
+        let read = Settings::from_text(
+            "Window_Size = 1500X900\nwindow_maximized=ON\nwindow_position= -1910 , 64\n\
+             window_screen=1920X1200\nwindow_scale=125\n",
+            base,
+        );
+        let place = WindowPlace {
+            x: -1910,
+            y: 64,
+            screen_width: 1920,
+            screen_height: 1200,
+            scale: 125,
+        };
+        assert_eq!(
+            read.window,
+            WindowGeometry {
+                width: 1500,
+                height: 900,
+                maximized: true,
+                place: Some(place),
+            }
+        );
+        assert_eq!(Settings::from_text(&read.to_text(), base), read);
+
+        // The smallest and the largest sizes are kept; the place keys may come in any order.
+        let edges = Settings::from_text(
+            "window_scale=1000\nwindow_size=440x380\nwindow_screen=65535x1\n\
+             window_position=65535,-65535",
+            base,
+        );
+        assert_eq!((edges.window.width, edges.window.height), (440, 380));
+        assert_eq!(
+            edges.window.place,
+            Some(WindowPlace {
+                x: 65_535,
+                y: -65_535,
+                screen_width: 65_535,
+                screen_height: 1,
+                scale: 1000,
+            })
+        );
+        let largest = Settings::from_text("window_size=16384x16384", base);
+        assert_eq!((largest.window.width, largest.window.height), (16_384, 16_384));
+
+        // "auto" forgets the place read before, while a broken place keeps it.
+        assert_eq!(
+            Settings::from_text("window_position=auto", read).window.place,
+            None
+        );
+        assert_eq!(
+            Settings::from_text("window_position=AUTO", read).window.place,
+            None
+        );
+        assert_eq!(
+            Settings::from_text("window_position=5,5\nwindow_scale=7", read).window,
+            read.window
+        );
+        // A file without the window keys keeps the size and place from before.
+        assert_eq!(Settings::from_text("level=3", read).window, read.window);
     }
 }

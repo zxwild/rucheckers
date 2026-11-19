@@ -7,10 +7,11 @@ mod files;
 mod fonts;
 mod icon;
 mod theme;
+mod window;
 
 use eframe::egui;
 use rucheckers::i18n::{tr, Lang, Text};
-use rucheckers::settings::{default_settings_path, system_locale, Settings};
+use rucheckers::settings::{default_settings_path, system_locale, Settings, MIN_WINDOW_SIZE};
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -54,13 +55,13 @@ pub fn run() -> eframe::Result<()> {
         .filter(|arg| !(cfg!(target_os = "macos") && is_process_serial_number(arg)))
         .map(PathBuf::from);
 
+    let viewport = egui::ViewportBuilder::default()
+        .with_title(tr(lang, settings.game.text_key()))
+        .with_app_id("rucheckers")
+        .with_min_inner_size(MIN_WINDOW_SIZE.map(|side| side as f32))
+        .with_icon(Arc::new(icon::app_icon()));
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(tr(lang, settings.game.text_key()))
-            .with_app_id("rucheckers")
-            .with_inner_size([1120.0, 760.0])
-            .with_min_inner_size([440.0, 380.0])
-            .with_icon(Arc::new(icon::app_icon())),
+        viewport: window::restore(viewport, &settings.window),
         ..Default::default()
     };
     eframe::run_native(

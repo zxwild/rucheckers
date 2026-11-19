@@ -445,8 +445,23 @@ Ugolki), `sound`, `panel`, `effects` (the main switch of the special effects),
 `effect_lightning`, `effect_sparks` and `effect_flashes` with the values `on` and `off`. Missing and damaged
 lines are replaced with default values.
 
+The size and place of the main window are kept in the same file:
+
+| Key | Value |
+| --- | --- |
+| `window_size` | size of the inside of the window in points, `1120x760`; from `440x380` to `16384x16384` |
+| `window_maximized` | `on` or `off` |
+| `window_position` | top left corner of the window frame in desktop units, `300,200`, or `auto` when the system has not told it |
+| `window_screen` | size of the screen the window stood on, in the same units |
+| `window_scale` | scale of that screen in percent, `100`; from `25` to `1000` |
+
+Desktop units are pixels on Windows and under X11 and points on macOS. A position is
+used only together with the screen and the scale; a size or position out of bounds is
+ignored, and the system places the window itself.
+
 The file is written after every change — a new game, any setting, hiding or showing the
-panel — so nothing depends on how the program is closed. Writing is atomic
+panel, a new size or place of the window once it has stood for 0.7 seconds — so nothing
+depends on how the program is closed. Writing is atomic
 (a temporary file replaces the old one in one step). If the file cannot be written, the
 program says so once and goes on working.
 
@@ -459,6 +474,46 @@ The game tab shows the number of arrived pieces and a short rules explanation. I
 (on by default): with it, the computer surrounds the player's pieces still
 at home so that they miss the move-40 deadline. Switched off, the computer still minds
 its own deadline; the switch applies from the computer's next move.
+
+### Size and place of the window
+
+The window opens with the size, place and maximized state it had when it was last
+changed. A window that was minimized or full-screen keeps the size and place it had
+before. When a maximized window is restored to its normal size, it returns to its
+normal size and place.
+
+The system is asked for the saved place when the window is created, and after the
+window appears the program checks where it has come up:
+
+- once the window has stood still for a quarter of a second (at most 1.5 seconds after
+  the start), a window put elsewhere by the window manager is moved to the saved place
+  once; if the window manager does not let it go there, the program does not insist;
+- if the window has come up on a screen of another size than the saved one — the
+  monitor has been disconnected or its resolution changed — the window is centred on
+  the main screen;
+- a window saved on a screen of another scale gets the place in the units of that
+  screen, and its size in points stays the same;
+- a window saved maximized and shown in its normal size is maximized again.
+
+Limits:
+
+- Wayland does not tell programs where their windows are and does not let them choose:
+  only the size and the maximized state are restored; the compositor chooses the place,
+  and `window_position` keeps the last place known under X11.
+- macOS reports whether a window is zoomed only when it is created. A zoomed window is
+  saved as an ordinary window of the same size and place, so after a restart it is not
+  zoomed, but covers the same area.
+- A disconnected monitor is noticed by the size of the screen the window comes up on. If
+  the remaining monitor has the same size, the window manager decides where the window
+  goes; Windows and macOS usually move it into view themselves.
+- A maximized window is maximized on the screen the system puts it on; the program does
+  not move it.
+- When the window has to be moved, it may be seen in its first place for a moment.
+- A window manager that moves the window more than 1.5 seconds after it appears has the
+  last word.
+- Placement was tested under X11 (Openbox) with one screen of different sizes and
+  scales, and the size under Wayland (Weston). Several monitors and the behaviour on
+  Windows and macOS have not been tested on real systems.
 
 ## Structure
 
@@ -650,6 +705,9 @@ Files and settings
 - [ ] A foreign or damaged file gives a clear message, and the game does not change.
 - [ ] The language, level, colour, sound, panel visibility, the board and the choice of
       special effects are restored after a restart.
+- [ ] The window opens with the size and place it had; a window closed maximized opens
+      maximized and returns to its earlier size and place when restored. With the
+      monitor the window stood on disconnected, it opens centred on the main screen.
 - [ ] The "Board" list in the settings offers six looks; a choice changes the board at
       once, and "Standard" is the board of the earlier versions.
 - [ ] With a wooden board the window resizes as smoothly as with the standard one, and
